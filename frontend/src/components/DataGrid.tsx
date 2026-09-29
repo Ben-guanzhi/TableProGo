@@ -1512,6 +1512,11 @@ const DataGrid: React.FC<DataGridProps> = ({
       <div className="flex items-center gap-3 px-3 py-1 bg-panel border-t border-line text-2xs text-muted shrink-0">
         <span>
           {isFiltered ? `显示 ${view.length} / ${result.rowCount} 行` : `${result.rowCount} 行`}
+          {result.truncated && (
+            <span className="text-warning" title="结果达到行数上限，后面还有数据。调高设置里的行数上限可看到更多">
+              {' '}· 已截断（还有更多行）
+            </span>
+          )}
           {counts.inserts > 0 && <span className="text-success"> + {counts.inserts} 新增</span>}
           {counts.deletes > 0 && <span className="text-danger"> − {counts.deletes} 删除</span>}
         </span>

@@ -394,8 +394,9 @@ type Connection struct {
 	DB       *sql.DB           `json:"-"`
 	Config   ConnectionConfig  `json:"-"`
 
-	poolsMu sync.Mutex
-	pools   map[string]*sql.DB
+	poolsMu   sync.Mutex
+	pools     map[string]*sql.DB
+	poolOrder []string // per-database pool LRU, least-recently-used first
 }
 
 // poolFor returns the *sql.DB to introspect the given database with. PostgreSQL
@@ -431,6 +432,7 @@ func (a *App) perDatabasePool(conn *Connection, database string) (*sql.DB, error
 	conn.poolsMu.Lock()
 	defer conn.poolsMu.Unlock()
 	if db, ok := conn.pools[database]; ok {
+		conn.touchPool(database)
 		return db, nil
 	}
 
@@ -447,8 +449,42 @@ func (a *App) perDatabasePool(conn *Connection, database string) (*sql.DB, error
 	if conn.pools == nil {
 		conn.pools = make(map[string]*sql.DB)
 	}
+	// Browsing a server with hundreds of databases must not accumulate one
+	// live pool per database; the oldest-unused pool is closed instead.
+	// Desktop requests are short and serialized per pool, so the evicted
+	// pool is not in use in practice.
+	for len(conn.pools) >= maxPoolsPerConnection {
+		conn.evictOldestPool()
+	}
 	conn.pools[database] = db
+	conn.poolOrder = append(conn.poolOrder, database)
 	return db, nil
+}
+
+// touchPool moves database to the most-recently-used end of the LRU order.
+// Callers hold poolsMu.
+func (c *Connection) touchPool(database string) {
+	for i, name := range c.poolOrder {
+		if name == database {
+			c.poolOrder = append(c.poolOrder[:i], c.poolOrder[i+1:]...)
+			break
+		}
+	}
+	c.poolOrder = append(c.poolOrder, database)
+}
+
+// evictOldestPool closes the least-recently-used cached pool. Callers hold
+// poolsMu.
+func (c *Connection) evictOldestPool() {
+	if len(c.poolOrder) == 0 {
+		return
+	}
+	oldest := c.poolOrder[0]
+	c.poolOrder = c.poolOrder[1:]
+	if db, ok := c.pools[oldest]; ok {
+		db.Close()
+		delete(c.pools, oldest)
+	}
 }
 
 func (c *Connection) closePools() {
@@ -458,6 +494,7 @@ func (c *Connection) closePools() {
 		db.Close()
 		delete(c.pools, name)
 	}
+	c.poolOrder = nil
 }
 
 type ConnectionConfig struct {
@@ -536,6 +573,9 @@ type QueryResult struct {
 	LastInsertID  int64           `json:"lastInsertId"`
 	ExecutionTime float64         `json:"executionTime"`
 	Error         string          `json:"error,omitempty"`
+	// Truncated says the row cap cut the answer short, so a grid full of
+	// exactly "limit" rows is not mistaken for the whole story.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 type Column struct {
@@ -636,6 +676,9 @@ func (a *App) DeleteConnection(id string) error {
 }
 
 func (a *App) Connect(id string) error {
+	a.connectionsMu.Lock()
+	defer a.connectionsMu.Unlock()
+
 	var index int
 	n, err := fmt.Sscanf(id, "conn_%d", &index)
 	if err != nil || n != 1 || index < 0 || index >= len(a.savedConnections) {
@@ -643,9 +686,6 @@ func (a *App) Connect(id string) error {
 	}
 
 	config := a.savedConnections[index]
-
-	a.connectionsMu.Lock()
-	defer a.connectionsMu.Unlock()
 
 	if existing, ok := a.connections[id]; ok {
 		if existing.DB != nil {
@@ -744,6 +784,8 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 // applies to an already-open connection without reconnecting. IDs are
 // index-based, matching Connect.
 func (a *App) savedDatabaseFilter(connID string) DatabaseFilter {
+	a.connectionsMu.RLock()
+	defer a.connectionsMu.RUnlock()
 	for i, saved := range a.savedConnections {
 		if fmt.Sprintf("conn_%d", i) == connID {
 			return saved.DatabaseFilter
@@ -806,54 +848,30 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 }
 
 func (a *App) GetTables(connID string, database string, schema string) ([]TableInfo, error) {
+	return a.getTablesFiltered(connID, database, schema, "", false)
+}
+
+// getTablesFiltered is GetTables with an optional predicate on the object's
+// name. A caller that needs to know whether the database holds one particular
+// object asks directly instead of pulling the whole catalog: the payload stays
+// one row no matter how many tables the schema has.
+func (a *App) getTablesFiltered(connID string, database string, schema string, exact string, insensitive bool) ([]TableInfo, error) {
 	conn, err := a.connection(connID)
 	if err != nil {
 		return nil, err
 	}
 
-	if schema == "" {
-		switch conn.Type {
-		case "sqlserver":
-			schema = "dbo"
-		case "postgresql":
-			schema = "public"
-		}
-	}
+	schema = defaultSchema(conn.Type, schema)
 
 	db := conn.DB
-	var query string
-	var args []interface{}
-	switch conn.Type {
-	case "mysql":
-		query = `SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES
-			WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`
-		args = []interface{}{database}
-	case "postgresql":
+	if conn.Type == "postgresql" {
 		if db, err = a.poolFor(conn, database); err != nil {
 			return nil, err
 		}
-		query = `SELECT tablename, 'BASE TABLE', '' FROM pg_tables WHERE schemaname = $1
-			UNION ALL
-			SELECT viewname, 'VIEW', '' FROM pg_views WHERE schemaname = $1
-			ORDER BY 1`
-		args = []interface{}{schema}
-	case "sqlite":
-		query = `SELECT name, type, '' FROM sqlite_master
-			WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%' ORDER BY name`
-	case "sqlserver":
-		name, err := quoteIdent(conn.Type, database)
-		if err != nil {
-			return nil, err
-		}
-		// go-mssqldb leaves "?" markers untouched in some statements, so the
-		// schema is inlined as an escaped literal instead.
-		query = fmt.Sprintf(`SELECT TABLE_NAME, TABLE_TYPE, '' FROM %s.INFORMATION_SCHEMA.TABLES
-			WHERE TABLE_SCHEMA = %s ORDER BY TABLE_NAME`, name, quotedLiteral("sqlserver", schema))
-	case "oracle":
-		query = `SELECT OBJECT_NAME, OBJECT_TYPE, '' FROM ALL_OBJECTS
-			WHERE OBJECT_TYPE IN ('TABLE', 'VIEW') AND OWNER = USER ORDER BY OBJECT_NAME`
-	default:
-		return nil, fmt.Errorf("unsupported type: %s", conn.Type)
+	}
+	query, args, err := tablesQuery(conn.Type, database, schema, exact, insensitive)
+	if err != nil {
+		return nil, err
 	}
 
 	rows, err := db.Query(query, args...)
@@ -873,6 +891,107 @@ func (a *App) GetTables(connID string, database string, schema string) ([]TableI
 		tables = append(tables, t)
 	}
 	return tables, nil
+}
+
+// tablesQuery is the catalog statement behind GetTables, one dialect switch
+// kept honest by tests. With an exact name it narrows the listing to that
+// object; insensitive lowercases both sides, which is how the rename
+// collision check has always compared names, while an action's target has to
+// match the catalog's own spelling exactly.
+func tablesQuery(dbType, database, schema, exact string, insensitive bool) (string, []interface{}, error) {
+	switch dbType {
+	case "mysql":
+		query := `SELECT TABLE_NAME, TABLE_TYPE, TABLE_COMMENT FROM information_schema.TABLES
+			WHERE TABLE_SCHEMA = ?`
+		args := []interface{}{database}
+		if exact != "" {
+			if insensitive {
+				query += ` AND LOWER(TABLE_NAME) = LOWER(?)`
+			} else {
+				query += ` AND TABLE_NAME = ?`
+			}
+			args = append(args, exact)
+		}
+		return query + ` ORDER BY TABLE_NAME`, args, nil
+	case "postgresql":
+		tables, views := "", ""
+		args := []interface{}{schema}
+		if exact != "" {
+			if insensitive {
+				tables = ` AND LOWER(tablename) = LOWER($2)`
+				views = ` AND LOWER(viewname) = LOWER($3)`
+			} else {
+				tables = ` AND tablename = $2`
+				views = ` AND viewname = $3`
+			}
+			args = append(args, exact, exact)
+		}
+		query := fmt.Sprintf(`SELECT tablename, 'BASE TABLE', '' FROM pg_tables WHERE schemaname = $1%s
+			UNION ALL
+			SELECT viewname, 'VIEW', '' FROM pg_views WHERE schemaname = $1%s
+			ORDER BY 1`, tables, views)
+		return query, args, nil
+	case "sqlite":
+		query := `SELECT name, type, '' FROM sqlite_master
+			WHERE type IN ('table', 'view') AND name NOT LIKE 'sqlite_%'`
+		var args []interface{}
+		if exact != "" {
+			if insensitive {
+				query += ` AND LOWER(name) = LOWER(?)`
+			} else {
+				query += ` AND name = ?`
+			}
+			args = append(args, exact)
+		}
+		return query + ` ORDER BY name`, args, nil
+	case "sqlserver":
+		name, err := quoteIdent(dbType, database)
+		if err != nil {
+			return "", nil, err
+		}
+		// go-mssqldb leaves "?" markers untouched in some statements, so the
+		// names are inlined as escaped literals instead.
+		return fmt.Sprintf(`SELECT TABLE_NAME, TABLE_TYPE, '' FROM %s.INFORMATION_SCHEMA.TABLES
+			WHERE TABLE_SCHEMA = %s%s ORDER BY TABLE_NAME`, name,
+			quotedLiteral(dbType, schema), namePredicate(dbType, "TABLE_NAME", exact, insensitive)), nil, nil
+	case "oracle":
+		// go-ora wants ":name" markers and the catalog lookups elsewhere in
+		// this file inline escaped literals instead, which it never rewrites.
+		return `SELECT OBJECT_NAME, OBJECT_TYPE, '' FROM ALL_OBJECTS
+			WHERE OBJECT_TYPE IN ('TABLE', 'VIEW') AND OWNER = USER` +
+			namePredicate(dbType, "OBJECT_NAME", exact, insensitive) + ` ORDER BY OBJECT_NAME`, nil, nil
+	default:
+		return "", nil, fmt.Errorf("unsupported type: %s", dbType)
+	}
+}
+
+// namePredicate is the inlined-literal form of the exact-name filter, for the
+// engines whose drivers make binds unreliable.
+func namePredicate(dbType, column, exact string, insensitive bool) string {
+	if exact == "" {
+		return ""
+	}
+	literal := quotedLiteral(dbType, exact)
+	if insensitive {
+		return fmt.Sprintf(` AND LOWER(%s) = LOWER(%s)`, column, literal)
+	}
+	return fmt.Sprintf(` AND %s = %s`, column, literal)
+}
+
+// lookupObject answers "is this name in this schema, and what is it" without
+// dragging the whole catalog back with it.
+func (a *App) lookupObject(connID, database, schema, name string, insensitive bool) (*TableInfo, error) {
+	if name == "" {
+		return nil, nil
+	}
+	matches, err := a.getTablesFiltered(connID, database, schema, name, insensitive)
+	if err != nil {
+		return nil, err
+	}
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	return &matches[0], nil
 }
 
 func (a *App) GetColumns(connID string, database string, schema string, table string) ([]ColumnInfo, error) {
@@ -1711,8 +1830,14 @@ func (a *App) Preview(connID string, database string, schema string, table strin
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}
-	orderBy := a.pageOrder(connID, database, schema, table, conn.Type)
-	where, err := a.tableWhere(connID, database, schema, table, filters)
+	// One catalog read serves the page: the key ORDER BY and the filter WHERE
+	// both need the columns, and a page flip used to pay two round trips.
+	columns, columnsErr := a.GetColumns(connID, database, schema, table)
+	if columnsErr != nil && len(filters) > 0 {
+		return QueryResult{Error: columnsErr.Error()}
+	}
+	orderBy := pageOrderFrom(conn.Type, columns, columnsErr)
+	where, err := tableWhereFrom(conn, table, columns, filters)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}
@@ -1740,12 +1865,11 @@ func (a *App) Preview(connID string, database string, schema string, table strin
 	return runSelect(db, query, time.Now())
 }
 
-// pageOrder sorts a browsed table by its key so consecutive pages cannot show
-// one row twice or skip it. An object with no key - or one whose columns cannot
-// be read - gets no ordering at all rather than a guessed one.
-func (a *App) pageOrder(connID string, database string, schema string, table string, dbType string) string {
-	columns, err := a.GetColumns(connID, database, schema, table)
-	if err != nil {
+// pageOrderFrom sorts a browsed table by its key so consecutive pages cannot
+// show one row twice or skip it. An object with no key - or one whose columns
+// could not be read - gets no ordering at all rather than a guessed one.
+func pageOrderFrom(dbType string, columns []ColumnInfo, columnsErr error) string {
+	if columnsErr != nil {
 		return ""
 	}
 	var keys []string
@@ -1822,7 +1946,21 @@ func (a *App) runQuery(connID string, query string, database string) QueryResult
 
 	start := time.Now()
 	if isSelectQuery(query) {
-		return runSelect(db, withRowLimit(query, conn.Type, a.GetSettings().ResultLimit), start)
+		limit := a.GetSettings().ResultLimit
+		fetch := limit
+		if limit > 0 {
+			fetch = limit + 1
+		}
+		probe := withRowLimit(query, conn.Type, fetch)
+		result := runSelect(db, probe, start)
+		// The extra row is a probe only when the cap is ours: a statement with
+		// a cap of its own runs untouched and is never marked truncated.
+		if limit > 0 && probe != query && result.Error == "" && len(result.Rows) > limit {
+			result.Rows = result.Rows[:limit]
+			result.RowCount = limit
+			result.Truncated = true
+		}
+		return result
 	}
 	return executeCommand(db, query, start)
 }
@@ -2052,23 +2190,37 @@ func executeCommand(db *sql.DB, query string, start time.Time) QueryResult {
 	}
 }
 
+// Connection-pool bounds. Without these database/sql defaults to unlimited
+// open connections, so a fan-out (per-database metadata browse, concurrent
+// grid requests) could open one server-side connection per goroutine.
+// Values mirror the conservative caps the reference desktop clients use.
+const (
+	dbMaxOpenConns        = 10
+	dbMaxIdleConns        = 5
+	dbConnMaxLifetime     = 30 * time.Minute
+	maxPoolsPerConnection = 32
+)
+
 func createConnection(config ConnectionConfig) (*sql.DB, error) {
 	var dsn string
+	var driver string
 	switch config.Type {
 	case "mysql":
+		driver = "mysql"
 		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 			config.Username, config.Password, config.Host, config.Port, config.Database)
 		if config.SSLMode == "true" {
 			dsn += "?tls=true"
 		}
-		return sql.Open("mysql", dsn)
 	case "postgresql":
+		driver = "postgres"
 		dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 			config.Host, config.Port, config.Username, config.Password, config.Database, config.SSLMode)
-		return sql.Open("postgres", dsn)
 	case "sqlite":
-		return sql.Open("sqlite3", config.Database)
+		driver = "sqlite3"
+		dsn = config.Database
 	case "sqlserver":
+		driver = "sqlserver"
 		encrypt := config.SSLMode
 		if encrypt == "false" || encrypt == "true" {
 			if encrypt == "false" {
@@ -2079,14 +2231,21 @@ func createConnection(config ConnectionConfig) (*sql.DB, error) {
 		}
 		dsn = fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s&encrypt=%s&TrustServerCertificate=true",
 			config.Username, config.Password, config.Host, config.Port, url.QueryEscape(config.Database), encrypt)
-		return sql.Open("sqlserver", dsn)
 	case "oracle":
+		driver = "oracle"
 		dsn = fmt.Sprintf("oracle://%s:%s@%s:%d/%s",
 			config.Username, config.Password, config.Host, config.Port, config.Database)
-		return sql.Open("oracle", dsn)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", config.Type)
 	}
+	db, err := sql.Open(driver, dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(dbMaxOpenConns)
+	db.SetMaxIdleConns(dbMaxIdleConns)
+	db.SetConnMaxLifetime(dbConnMaxLifetime)
+	return db, nil
 }
 
 func isSelectQuery(query string) bool {
@@ -2152,6 +2311,11 @@ type tableRefRequest struct {
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
 	Table    string `json:"table"`
+}
+
+type sqlNameRequest struct {
+	tableRefRequest
+	Scope string `json:"scope"`
 }
 
 type queryRequest struct {
@@ -2381,6 +2545,13 @@ func (a *App) startHTTPServerOnListener(listener net.Listener) {
 	})
 	post(a, mux, "/api/query-source", 400, func(a *App, body queryRequest) (any, error) {
 		return a.QuerySource(body.ConnID, body.Query, body.Database), nil
+	})
+	post(a, mux, "/api/sql-name", 400, func(a *App, body sqlNameRequest) (any, error) {
+		name, err := a.SqlName(body.ConnID, body.Database, body.Schema, body.Table, body.Scope)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"name": name}, nil
 	})
 	post(a, mux, "/api/build-changes", 400, func(a *App, set ChangeSet) (any, error) {
 		statements, err := a.PreviewChanges(set)

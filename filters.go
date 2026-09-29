@@ -121,6 +121,16 @@ func (a *App) tableWhere(connID, database, schema, table string, filters []Table
 	if err != nil {
 		return "", err
 	}
+	return tableWhereFrom(conn, table, columns, filters)
+}
+
+// tableWhereFrom renders the conditions from columns that were read once
+// already: a data page needs the same catalog rows for its key ORDER BY and
+// its filter WHERE, and used to fetch them twice.
+func tableWhereFrom(conn *Connection, table string, columns []ColumnInfo, filters []TableFilter) (string, error) {
+	if len(filters) == 0 {
+		return "", nil
+	}
 	byName := make(map[string]ColumnInfo, len(columns))
 	for _, col := range columns {
 		byName[strings.ToLower(col.Name)] = col

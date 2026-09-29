@@ -30,6 +30,12 @@ func TestEveryEngineAnswersEveryOperation(t *testing.T) {
 		if _, err := RenameStatement(eng, "old", "new", "s", "old", "new"); err != nil {
 			t.Errorf("%s: RenameStatement: %v", eng, err)
 		}
+		if _, err := LocalName(eng, "s", "t"); err != nil {
+			t.Errorf("%s: LocalName rejected plain names: %v", eng, err)
+		}
+		if _, err := QualifiedTable(eng, "d", "s", "t"); err != nil {
+			t.Errorf("%s: QualifiedTable rejected plain names: %v", eng, err)
+		}
 		if _, err := FKValuesQuery(eng, "t", "k", "", 10); err != nil {
 			t.Errorf("%s: FKValuesQuery: %v", eng, err)
 		}
@@ -56,6 +62,36 @@ func TestQuoteIdentPerEngine(t *testing.T) {
 	}
 	if _, err := QuoteIdent("nope", "a"); err == nil {
 		t.Error("QuoteIdent accepted an unknown engine")
+	}
+}
+
+// The webview used to hand-build these shapes unquoted; the locked spellings
+// below are what the editor templates now come from.
+func TestLocalAndQualifiedTableShapes(t *testing.T) {
+	if n, _ := LocalName(Postgres, "public", "users"); n != `"public"."users"` {
+		t.Errorf("postgres local: %q", n)
+	}
+	if n, _ := LocalName(SQLServer, "dbo", "users"); n != "[dbo].[users]" {
+		t.Errorf("sqlserver local: %q", n)
+	}
+	if n, _ := LocalName(MySQL, "ignored", "users"); n != "`users`" {
+		t.Errorf("mysql local ignores schema: %q", n)
+	}
+	if n, _ := LocalName(SQLite, "", "my users"); n != `"my users"` {
+		t.Errorf("sqlite local quotes spaces: %q", n)
+	}
+	if n, _ := QualifiedTable(SQLServer, "shop", "dbo", "users"); n != "[shop].[dbo].[users]" {
+		t.Errorf("sqlserver qualified: %q", n)
+	}
+	if n, _ := QualifiedTable(MySQL, "shop", "", "users"); n != "`shop`.`users`" {
+		t.Errorf("mysql qualified: %q", n)
+	}
+	if n, _ := QualifiedTable(Postgres, "ignored", "public", "users"); n != `"public"."users"` {
+		t.Errorf("postgres qualified: %q", n)
+	}
+	// A name carrying a quote or statement text must come out neutralised.
+	if n, _ := QualifiedTable(Postgres, "d", `s"x`, "t;drop table u--"); n != `"s""x"."t;drop table u--"` {
+		t.Errorf("quoting must neutralise embedded quotes: %q", n)
 	}
 }
 

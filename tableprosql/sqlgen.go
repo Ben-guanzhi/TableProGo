@@ -62,6 +62,35 @@ func QualifiedName(dbType string, parts ...string) (string, error) {
 	return strings.Join(quoted, "."), nil
 }
 
+// LocalName spells a table the way the tab's own database resolves it:
+// schema-qualified where the engine needs the schema to find the table,
+// bare elsewhere. Same op-and-type table as QualifiedName, so no client
+// hand-builds identifier shapes any more.
+func LocalName(dbType, schema, table string) (string, error) {
+	switch dbType {
+	case Postgres, SQLServer:
+		return QualifiedName(dbType, schema, table)
+	default:
+		return QualifiedName(dbType, table)
+	}
+}
+
+// QualifiedTable maps a reference to the fully-qualified spelling each engine
+// wants: SQL Server wants database.schema.table, MySQL database.table,
+// PostgreSQL schema.table, the rest just the table.
+func QualifiedTable(dbType, database, schema, table string) (string, error) {
+	switch dbType {
+	case SQLServer:
+		return QualifiedName(dbType, database, schema, table)
+	case MySQL:
+		return QualifiedName(dbType, database, table)
+	case Postgres:
+		return QualifiedName(dbType, schema, table)
+	default:
+		return QualifiedName(dbType, table)
+	}
+}
+
 // QuotedLiteral renders a string as a single-quoted SQL literal. It serves
 // every place the program inlines text — grid values, LIKE patterns, and
 // string-argument positions such as sp_rename's parameters. Only SQL Server

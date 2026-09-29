@@ -98,24 +98,23 @@ func (a *App) TableAction(connID, database, schema, table, action, newName strin
 	}
 	schema = defaultSchema(conn.Type, schema)
 
-	tables, err := a.GetTables(connID, database, schema)
+	object, err := a.lookupObject(connID, database, schema, table, false)
 	if err != nil {
 		return "", err
 	}
-	objectType := ""
-	taken := map[string]bool{}
-	for _, info := range tables {
-		taken[strings.ToLower(info.Name)] = true
-		if info.Name == table {
-			objectType = info.Type
-		}
-	}
-	if objectType == "" {
+	if object == nil {
 		return "", fmt.Errorf("%s 不在这个库里，也许已经被改掉，刷新侧栏再看一次", table)
 	}
+	objectType := object.Type
 	newName = strings.TrimSpace(newName)
-	if action == actionRename && taken[strings.ToLower(newName)] {
-		return "", fmt.Errorf("%s 已经存在", newName)
+	if action == actionRename && newName != "" {
+		next, err := a.lookupObject(connID, database, schema, newName, true)
+		if err != nil {
+			return "", err
+		}
+		if next != nil {
+			return "", fmt.Errorf("%s 已经存在", newName)
+		}
 	}
 
 	statement, err := tableActionStatement(objectNames{

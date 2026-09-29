@@ -195,6 +195,23 @@ func TestTableActionNeedsTheObjectToBeThere(t *testing.T) {
 	}
 }
 
+// The collision check has always compared names lowercased, so a rename that
+// differs only in case still lands on an existing table - the probe asked of
+// the catalog must find it there.
+func TestTableActionRenameCollisionIgnoresCase(t *testing.T) {
+	conn := sqliteDB(t, "conn_act_case", "scratch")
+	seedParts(t, conn)
+	if _, err := conn.DB.Exec(`CREATE TABLE "OTHER" (id integer primary key)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	a := searchApp(conn)
+	if _, err := a.TableAction(conn.ID, conn.Database, "", "parts", actionRename, "other"); err == nil {
+		t.Fatalf("want an error for a name taken in another case")
+	} else if !strings.Contains(err.Error(), "已经存在") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
 // An action is recorded like any statement, so the history page can show what
 // the menu did on the user's behalf.
 func TestTableActionIsRecordedInHistory(t *testing.T) {

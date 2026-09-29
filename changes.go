@@ -100,16 +100,24 @@ type ChangeSet struct {
 // tableName renders the object the way the grid addressed it, so an update
 // hits exactly what is on screen.
 func tableName(dbType, database, schema, table string) (string, error) {
-	switch dbType {
-	case "mysql":
-		return qualifiedName(dbType, database, table)
-	case "postgresql":
-		return qualifiedName(dbType, schema, table)
-	case "sqlserver":
-		return qualifiedName(dbType, database, schema, table)
-	default:
-		return qualifiedName(dbType, table)
+	return tableprosql.QualifiedTable(dbType, database, schema, table)
+}
+
+// SqlName renders a table reference as quoted SQL text for the editor's
+// starter statements and insert-at-cursor text. Dialect knowledge stays on
+// this side of the boundary: the webview never hand-builds identifiers.
+func (a *App) SqlName(connID, database, schema, table, scope string) (string, error) {
+	conn, err := a.connection(connID)
+	if err != nil {
+		return "", err
 	}
+	if database == "" {
+		database = conn.Database
+	}
+	if scope == "qualified" {
+		return tableName(conn.Type, database, schema, table)
+	}
+	return tableprosql.LocalName(conn.Type, schema, table)
 }
 
 func defaultSchema(dbType, schema string) string {

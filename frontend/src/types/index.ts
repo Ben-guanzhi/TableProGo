@@ -46,6 +46,8 @@ export interface QueryResult {
   lastInsertId: number;
   executionTime: number;
   error?: string;
+  // Set when the row cap cut a SELECT short; more rows exist than shown.
+  truncated?: boolean;
 }
 
 export interface TableInfo {

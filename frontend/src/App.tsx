@@ -49,6 +49,7 @@ import {
   GetTables,
   GetSettings,
   SaveSettings,
+  SqlName,
   TableRef,
   ObjectMatch,
   AppSettings,
@@ -68,30 +69,9 @@ const commentMap = (columns: ColumnInfo[]) => {
   return map;
 };
 
-// How a table has to be spelled to resolve: inside the tab's own database the
-// prefix is noise, from outside it is required.
-const localTableName = (table: TableRef, dbType?: string) => {
-  switch (dbType) {
-    case 'sqlserver':
-    case 'postgresql':
-      return `${table.schema}.${table.table}`;
-    default:
-      return table.table;
-  }
-};
-
-const qualifiedTableName = (table: TableRef, dbType?: string) => {
-  switch (dbType) {
-    case 'sqlserver':
-      return `${table.database}.${table.schema}.${table.table}`;
-    case 'mysql':
-      return `${table.database}.${table.table}`;
-    case 'postgresql':
-      return `${table.schema}.${table.table}`;
-    default:
-      return table.table;
-  }
-};
+// How a table has to be spelled to resolve comes from the backend
+// (SqlName → tableprosql), the one dialect table both clients share;
+// the webview used to hand-build these shapes unquoted.
 
 const defaultSettings: AppSettings = {
   showColumnComments: false,
@@ -513,22 +493,30 @@ function App() {
   };
 
   // A query page starts from the table it belongs to, so the user can run it
-  // as soon as the page opens.
-  const defaultObjectQuery = (tab: Tab) => {
+  // as soon as the page opens. The quoted name comes from the backend.
+  const defaultObjectQuery = async (tab: Tab) => {
     const ref = tab.tableRef;
     if (!ref) return '';
-    const dbType = connections.find(c => c.id === ref.connId)?.type;
-    return `select * from ${localTableName(ref, dbType)}`;
+    try {
+      return `select * from ${await SqlName(ref, 'local')}`;
+    } catch {
+      return '';
+    }
   };
 
   const handleObjectSectionChange = (tab: Tab, section: ObjectSection) => {
-    setTabs(current =>
-      current.map(t =>
-        t.id === tab.id
-          ? { ...t, section, objectQuery: section === 'query' && !t.objectQuery ? defaultObjectQuery(t) : t.objectQuery }
-          : t
-      )
-    );
+    const needDefault = section === 'query' && !tab.objectQuery;
+    setTabs(current => current.map(t => (t.id === tab.id ? { ...t, section } : t)));
+    if (needDefault) {
+      void defaultObjectQuery(tab).then(text => {
+        if (!text) return;
+        // Only fill a still-empty template: a late answer must not clobber
+        // something the user typed in the meantime.
+        setTabs(current =>
+          current.map(t => (t.id === tab.id && !t.objectQuery ? { ...t, objectQuery: text } : t))
+        );
+      });
+    }
     if (section === 'query') return;
     const state =
       section === 'structure' ? tab.structure : section === 'history' ? tab.history : tab.data;
@@ -632,16 +620,27 @@ function App() {
     setEditorHeight(current => clampEditorHeight(current + delta));
 
 
-  const handleInsertText = (table: TableRef) => {
-    const dbType = connections.find(c => c.id === table.connId)?.type;
+  const handleInsertText = async (table: TableRef) => {
     const objectTab = tabs.find(
       t => t.id === activeTab && t.kind === 'table' && t.section === 'query',
     );
+    // An object tab has no editor to write into, so double-clicking starts a
+    // statement of its own instead.
+    const editorTab = objectTab
+      ? undefined
+      : tabs.find(t => t.id === activeTab && t.kind !== 'table');
+    const targetDatabase = objectTab
+      ? tabDatabase(objectTab)
+      : editorTab?.database || activeConnection?.database || '';
+    let text: string;
+    try {
+      text = await SqlName(table, table.database === targetDatabase ? 'local' : 'qualified');
+    } catch {
+      // The backend refused to quote this name; inserting it unquoted is
+      // exactly what this path no longer does.
+      return;
+    }
     if (objectTab) {
-      const text =
-        table.database === tabDatabase(objectTab)
-          ? localTableName(table, dbType)
-          : qualifiedTableName(table, dbType);
       if (!objectTab.objectQuery?.trim()) {
         setTabs(current =>
           current.map(t => (t.id === objectTab.id ? { ...t, objectQuery: `select * from ${text}` } : t))
@@ -651,14 +650,6 @@ function App() {
       }
       return;
     }
-    // An object tab has no editor to write into, so double-clicking starts a
-    // statement of its own instead.
-    const editorTab = tabs.find(t => t.id === activeTab && t.kind !== 'table');
-    const targetDatabase = editorTab?.database || activeConnection?.database || '';
-    const text =
-      table.database === targetDatabase
-        ? localTableName(table, dbType)
-        : qualifiedTableName(table, dbType);
 
     if (!editorTab) {
       const newTab: Tab = {

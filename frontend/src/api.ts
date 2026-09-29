@@ -104,6 +104,13 @@ export interface TableRef {
   table: string;
 }
 
+// The properly quoted SQL spelling of a table reference. The backend owns the
+// dialect table (tableprosql), so editor templates never hand-build identifiers.
+export async function SqlName(ref: TableRef, scope: 'local' | 'qualified'): Promise<string> {
+  const data = await post('/api/sql-name', { ...ref, scope });
+  return data.name ?? '';
+}
+
 // One choice for a foreign-key cell: the key it would store, plus a short
 // description of the row behind it.
 export interface ForeignKeyValue {
