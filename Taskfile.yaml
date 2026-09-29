@@ -1,0 +1,39 @@
+version: '3'
+
+vars:
+  APP_NAME: "TableProGo"
+  BUILD_DIR: "build"
+  FRONTEND_DIR: "frontend"
+
+tasks:
+  default:
+    desc: Build the application
+    cmds:
+      - task: build
+
+  build:
+    desc: Build the application
+    cmds:
+      - go build -o {{.BUILD_DIR}}/{{.APP_NAME}}.exe
+
+  dev:
+    desc: Run in development mode
+    cmds:
+      - go run .
+
+  clean:
+    desc: Clean build artifacts
+    cmds:
+      - rm -rf {{.BUILD_DIR}}
+
+  frontend:build:
+    desc: Build frontend
+    dir: {{.FRONTEND_DIR}}
+    cmds:
+      - npm run build
+
+  frontend:install:
+    desc: Install frontend dependencies
+    dir: {{.FRONTEND_DIR}}
+    cmds:
+      - npm install

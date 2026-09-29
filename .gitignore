@@ -1,0 +1,27 @@
+# Build artifacts
+*.exe
+build/
+dist/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/vite.log
+
+# Runtime state: saved connections (credentials), query history, settings.
+# These contain sensitive data and must never be committed.
+connections.json
+history.json
+settings.json
+ui.json
+
+# Logs
+*.log
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# fynequery is a standalone git repository (and a separate Go module: the
+# Fyne desktop sub-app). Its own history lives in fynequery/.git; do not nest it.
+fynequery/

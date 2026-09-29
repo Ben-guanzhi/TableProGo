@@ -1,0 +1,181 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Semantic colour tokens. Every component uses these names instead of raw
+   Tailwind greys, so switching the theme is a matter of repainting the
+   variables — including for CodeMirror, which reads them at runtime. */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --canvas: 27 29 35;
+  --panel: 37 39 47;
+  --raised: 52 55 65;
+  --emphasis: 68 72 83;
+
+  --line: 52 55 65;
+  --line-soft: 44 46 55;
+  --line-strong: 78 82 94;
+
+  --ink: 230 232 236;
+  --secondary: 166 171 181;
+  /* Small UI text has to clear WCAG AA (4.5:1) against --panel/--canvas, so
+     the low tier can't go darker than this. tests/contrast.test.ts checks it. */
+  --muted: 140 146 157;
+
+  /* The blue is light enough to read as small text and icons on --panel (4.6:1),
+     which is more than a white label on its solid fill can say (3.3:1). So the
+     fill keeps its colour and --on-accent goes near-black, as --success and
+     --danger already do in this theme. */
+  --accent: 76 141 246;
+  --accent-hover: 104 163 250;
+  --success: 52 199 123;
+  --success-hover: 74 214 143;
+  /* Status colours double as small text (grid badges, error lines), so the dark
+     theme's reds sit light enough to clear 4.5:1 on --panel; their solid button
+     fills then carry a near-black label instead of white. */
+  --danger: 244 133 133;
+  --danger-hover: 250 156 156;
+  --warning: 226 168 74;
+
+  --on-accent: 24 26 31;
+  --on-success: 24 26 31;
+  --on-danger: 24 26 31;
+  --scrim: 0 0 0;
+
+  --icon-db: 130 150 250;
+  --icon-view: 182 145 240;
+
+  --syn-string: 252 165 165;
+  --syn-number: 253 186 116;
+  --syn-type: 94 234 212;
+  --syn-control: 192 132 252;
+  --row-alt: 31 34 41;
+
+  --scrollbar-track: 44 46 55;
+  --scrollbar-thumb: 78 82 94;
+  --scrollbar-thumb-hover: 104 108 120;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --canvas: 255 255 255;
+  --panel: 242 243 246;
+  --raised: 227 229 234;
+  --emphasis: 210 213 219;
+
+  --line: 222 224 230;
+  --line-soft: 234 235 239;
+  --line-strong: 200 203 211;
+
+  --ink: 30 34 41;
+  --secondary: 80 86 97;
+  --muted: 100 106 117;
+
+  /* The same blue has two jobs here: a white label on its solid fill, and the
+     colour of small text and icons on --panel. Either one alone would let it sit
+     lighter; at this depth both clear 4.5:1. */
+  --accent: 37 98 224;
+  --accent-hover: 34 89 196;
+  /* Light-theme status colours do double duty: white labels on their solid
+     fills, and small text on their own 10-15% row tints. These values clear
+     4.5:1 for both (see tests/contrast.test.ts). */
+  --success: 10 106 58;
+  --success-hover: 8 88 48;
+  --danger: 168 44 44;
+  --danger-hover: 148 38 38;
+  --warning: 150 92 6;
+
+  --on-accent: 255 255 255;
+  --on-success: 255 255 255;
+  --on-danger: 255 255 255;
+  --scrim: 24 26 32;
+
+  --icon-db: 84 105 208;
+  --icon-view: 141 98 200;
+
+  --syn-string: 163 66 66;
+  --syn-number: 154 96 16;
+  --syn-type: 23 128 122;
+  --syn-control: 129 74 199;
+  --row-alt: 247 248 250;
+
+  --scrollbar-track: 242 243 246;
+  --scrollbar-thumb: 203 206 214;
+  --scrollbar-thumb-hover: 176 180 189;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  background-color: rgb(var(--canvas));
+  color: rgb(var(--ink));
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: rgb(var(--scrollbar-track));
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--scrollbar-thumb));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--scrollbar-thumb-hover));
+}
+
+/* Code editor styling */
+textarea,
+.cm-editor {
+  font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+  tab-size: 2;
+}
+
+.cm-editor {
+  height: 100%;
+}
+
+/* Selection */
+::selection {
+  background-color: rgb(var(--accent) / 0.55);
+  color: rgb(var(--ink));
+}
+
+/* Keyboard focus ring. Text fields keep their own `focus:border-accent`
+   signal and drop this one via the more specific `focus:outline-none`
+   utility; every other control (buttons, menu items, tabs, headers, tree
+   rows) is otherwise invisible to a keyboard. */
+:focus-visible {
+  outline: 2px solid rgb(var(--accent));
+  outline-offset: -1px;
+  border-radius: 2px;
+}
+
+/* Respect the OS "reduce motion" setting: the spinning loaders and the
+   grid's smooth scrolling are decoration, not information. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
