@@ -1,4 +1,4 @@
-import { ChangeSet, ForeignKeyInfo, HistoryEntry, SqlFilter } from './types';
+import { ChangeSet, ForeignKeyInfo, HistoryEntry, PreviewCursor, SqlFilter } from './types';
 
 // Injected by the Go asset handler; the ?apiPort= fallback keeps the vite dev
 // server usable from a plain browser.
@@ -70,13 +70,24 @@ export async function GetColumns(connId: string, database: string, schema: strin
   return post('/api/columns', { connId, database, schema, table });
 }
 
+// The key edges of the page currently on screen. `after` walks to the next page,
+// `before` to the previous one; the page is read by row count again when they
+// are missing, when the object has no key, or when a cursor no longer fits it.
 export async function PreviewTable(
   ref: TableRef,
   limit = 100,
   offset = 0,
   filters: SqlFilter[] = [],
+  cursor: PreviewCursor = {},
 ): Promise<any> {
-  return post('/api/preview', { ...ref, limit, offset, filters });
+  return post('/api/preview', {
+    ...ref,
+    limit,
+    offset,
+    filters,
+    after: cursor.after,
+    before: cursor.before,
+  });
 }
 
 export type TableDdlAction = 'drop' | 'truncate' | 'rename';

@@ -71,17 +71,9 @@ func fkTargetName(dbType, database, refSchema, refTable string) (string, error) 
 
 // isDescriptiveType reports whether a column holds something a person reads.
 // Numbers, dates and blobs describe a row only to whoever already knows it.
+// The type knowledge lives in tableprosql.ColumnType.
 func isDescriptiveType(colType string) bool {
-	base := strings.ToLower(strings.TrimSpace(strings.Split(colType, "(")[0]))
-	if strings.HasSuffix(base, "text") || strings.HasSuffix(base, "char") {
-		return true
-	}
-	switch base {
-	case "varchar", "nvarchar", "character", "character varying", "citext", "string",
-		"uuid", "uniqueidentifier", "name", "tinytext", "json", "jsonb":
-		return true
-	}
-	return false
+	return tableprosql.NewColumnType(colType).IsDescriptive()
 }
 
 // pickLabelColumn chooses the description column: the first readable text column

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // ObjectMatch is one catalog hit for the quick-open box: enough to address the
@@ -25,11 +26,125 @@ const (
 	// Enough of the reasons to explain an empty result without turning one
 	// keystroke into a wall of text when a whole server is unreachable.
 	searchFailureCap = 3
+
+	// A snapshot holds up to searchSnapshotPerDB rows per database and
+	// searchSnapshotCap rows per connection. A database at its per-database
+	// limit is treated as a catalog too large to keep in memory: that
+	// connection answers the old way, one live LIKE per keystroke, exactly as
+	// before the cache existed.
+	searchSnapshotPerDB   = 2000
+	searchSnapshotCap     = 50_000
+	searchLoadConcurrency = 8
 )
+
+// catalogSnapshot is one connection's whole object list, cached against the
+// catalog generation it was built at. App.catalogVersion bumps whenever a
+// statement that could change a catalog succeeds (main.go runQuery), so a
+// keystroke between two bumps is answered from memory instead of from the
+// server: O(connections) catalog queries for the keystroke that triggers the
+// rebuild, and zero for every keystroke after it.
+//
+// built distinguishes "never walked" from a walk that produced nothing. ok is
+// false when the walk hit a database it could not read or a catalog too large
+// to keep; the caller then answers from the server per keystroke (the old
+// behaviour), which also keeps reporting failures as they happen.
+//
+// A table created outside this app stays invisible to quick-open until the
+// catalog is next walked: the version has no way to hear about someone else's
+// DDL. Within the app every mutation lands on the bumping path.
+type catalogSnapshot struct {
+	built bool
+	gen   uint64
+	rows  []ObjectMatch
+	ok    bool
+}
+
+// connSnapshot returns the connection's catalog snapshot, walking the catalog
+// once per generation. The lock is held across the walk so a second keystroke
+// waits on the one builder instead of starting a duplicate walk.
+func (a *App) connSnapshot(conn *Connection) catalogSnapshot {
+	conn.catalogMu.Lock()
+	defer conn.catalogMu.Unlock()
+
+	gen := a.catalogVersion.Load()
+	if conn.catalog.built && conn.catalog.gen == gen {
+		return conn.catalog
+	}
+	conn.catalogBuilds++
+	conn.catalog = a.buildCatalog(conn)
+	return conn.catalog
+}
+
+// buildCatalog walks one connection's catalog: the database list, then every
+// database concurrently (the server round-trips are the whole cost, and one
+// slow database used to make every keystroke wait for it in turn). The result
+// is in the same order the live search would have produced it: databases
+// sorted by name, objects in the order the engine returns them.
+//
+// The empty fragment asks each engine for everything it has: likePattern("")
+// is "%%", which every dialect treats as a match-all, so the listing needs no
+// query of its own.
+func (a *App) buildCatalog(conn *Connection) catalogSnapshot {
+	snap := catalogSnapshot{built: true, gen: a.catalogVersion.Load()}
+
+	databases, err := a.GetDatabases(conn.ID)
+	if err != nil {
+		// Nothing can be cached about a connection that cannot be listed; the
+		// live path will report this failure on the keystroke that asks.
+		return snap
+	}
+	sort.Strings(databases)
+	if len(databases) > searchDatabaseCap {
+		databases = databases[:searchDatabaseCap]
+	}
+
+	type slot struct {
+		rows []ObjectMatch
+		err  error
+	}
+	slots := make([]slot, len(databases))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, searchLoadConcurrency)
+	for i, database := range databases {
+		wg.Add(1)
+		go func(i int, database string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			rows, err := searchInDatabase(a, conn, database, "", searchSnapshotPerDB)
+			slots[i].rows, slots[i].err = rows, err
+		}(i, database)
+	}
+	wg.Wait()
+
+	for i := range databases {
+		if slots[i].err != nil {
+			return catalogSnapshot{built: true, gen: snap.gen}
+		}
+		if len(slots[i].rows) >= searchSnapshotPerDB {
+			// Too many objects to keep: this connection keeps searching live.
+			return catalogSnapshot{built: true, gen: snap.gen}
+		}
+		snap.rows = append(snap.rows, slots[i].rows...)
+	}
+	if len(snap.rows) > searchSnapshotCap {
+		return catalogSnapshot{built: true, gen: snap.gen}
+	}
+	snap.ok = true
+	return snap
+}
 
 // SearchObjects matches a name fragment against tables and views across every
 // connected connection, which is what lets the quick-open box find a table that
 // is not open anywhere yet.
+//
+// Within one catalog generation the answer comes from the cached object list,
+// filtered in memory: matching is a case-insensitive substring test on the
+// table name, the same reading the engines' LIKE applied before the cache —
+// where it is case-insensitive, and where a fragment is literal text rather
+// than a pattern (search_test.go pins that). A connection whose catalog could
+// not be cached answers from the server instead, one bounded LIKE per
+// database, as before.
 //
 // A failure in one database is not reported as long as another one answered,
 // because a partial list is more useful than an error. When nothing came back
@@ -66,10 +181,24 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 			failures = append(failures, scope+": "+err.Error())
 		}
 	}
+	lower := strings.ToLower(pattern)
 	for _, conn := range conns {
 		if len(found) >= limit {
 			break
 		}
+		if snap := a.connSnapshot(conn); snap.ok {
+			for _, match := range snap.rows {
+				if strings.Contains(strings.ToLower(match.Table), lower) {
+					found = append(found, match)
+					if len(found) >= limit {
+						return found, nil
+					}
+				}
+			}
+			continue
+		}
+
+		// No usable snapshot: the pre-cache path, reporting failures live.
 		databases, err := a.GetDatabases(conn.ID)
 		if err != nil {
 			record(conn.Name, err)
@@ -157,7 +286,7 @@ func searchInDatabase(a *App, conn *Connection, database, fragment string, limit
 			SELECT OWNER, OBJECT_NAME, OBJECT_TYPE FROM ALL_OBJECTS
 			WHERE OBJECT_TYPE IN ('TABLE', 'VIEW') AND UPPER(OBJECT_NAME) LIKE '%s' ESCAPE '\'
 			ORDER BY OWNER, OBJECT_NAME)
-			WHERE ROWNUM <= %d`, strings.ReplaceAll(strings.ToUpper(pattern), "'", "''"), limit)
+			WHERE ROWNUM <= %d`, quotedLiteral("oracle", strings.ToUpper(pattern)), limit)
 	default:
 		return nil, fmt.Errorf("unsupported type: %s", conn.Type)
 	}

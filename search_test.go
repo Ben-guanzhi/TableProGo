@@ -145,3 +145,62 @@ func TestSearchHonoursTheLimitAndTheDefault(t *testing.T) {
 		t.Errorf("unset limit should fall back to the default: got %d, err %v", len(found), err)
 	}
 }
+
+// The point of the cache: a run of keystrokes walks each connection's catalog
+// once, and only a statement that ran rebuilds it. catalogBuilds is the
+// number of walks, not the number of keystrokes.
+func TestSearchAnswersFromTheCachedCatalogBetweenChanges(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	createPartsTable(t, conn)
+	a := searchApp(conn)
+
+	for _, fragment := range []string{"par", "part", "parts"} {
+		if _, err := a.SearchObjects(fragment, 50); err != nil {
+			t.Fatalf("search %q: %v", fragment, err)
+		}
+	}
+	if builds := catalogBuildsOf(conn); builds != 1 {
+		t.Fatalf("want one catalog walk for three keystrokes, got %d", builds)
+	}
+
+	// A statement that ran moves the catalog version: the next keystroke
+	// finds the new object and has paid for exactly one more walk.
+	if result := a.runQuery(conn.ID, "CREATE TABLE spare_parts (id integer primary key)", ""); result.Error != "" {
+		t.Fatalf("create: %s", result.Error)
+	}
+	found, err := a.SearchObjects("spare", 50)
+	if err != nil {
+		t.Fatalf("search after change: %v", err)
+	}
+	if len(found) != 1 || found[0].Table != "spare_parts" {
+		t.Fatalf("a table created after the first walk must be found, got %+v", found)
+	}
+	if builds := catalogBuildsOf(conn); builds != 2 {
+		t.Fatalf("want one rebuild after the change, got %d builds", builds)
+	}
+}
+
+// The same fragment written any way matches the same table: inside the cache
+// the match is a case-insensitive substring, and every engine's LIKE read
+// the fragment that way too.
+func TestSearchMatchesWithoutRegardToCase(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE MyTable (id integer primary key)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	for _, variant := range []string{"mytable", "MYTABLE", "MyTa"} {
+		found, err := searchApp(conn).SearchObjects(variant, 50)
+		if err != nil {
+			t.Fatalf("search %q: %v", variant, err)
+		}
+		if len(found) != 1 {
+			t.Errorf("variant %q: want 1 match, got %+v", variant, found)
+		}
+	}
+}
+
+func catalogBuildsOf(conn *Connection) int {
+	conn.catalogMu.Lock()
+	defer conn.catalogMu.Unlock()
+	return conn.catalogBuilds
+}

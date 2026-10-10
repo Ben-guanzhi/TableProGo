@@ -288,14 +288,92 @@ var numericTypeNames = map[string]bool{
 	"number": true, "binary_float": true, "binary_double": true, "year": true,
 }
 
+// ColumnType is a declared column type reduced to the single normalized form
+// every consumer keys off. The constructor does the fold once — drop any
+// parenthesized precision, trim, lowercase — so callers never re-derive it.
+// The predicate methods (IsNumeric, IsSeekable, IsInteger, IsDescriptive) are
+// the only places engine type-name knowledge lives; a new spelling is added to
+// the relevant set here, not per client.
+type ColumnType struct {
+	raw  string
+	base string
+}
+
+// NewColumnType folds a raw declared type ("BIGINT UNSIGNED", "varchar(255)",
+// "DOUBLE PRECISION") into its canonical base name ("bigint", "varchar",
+// "double precision").
+func NewColumnType(raw string) ColumnType {
+	base := raw
+	if i := strings.IndexByte(base, '('); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.ToLower(strings.TrimSpace(base))
+	return ColumnType{raw: raw, base: base}
+}
+
+// Base returns the normalized type name.
+func (t ColumnType) Base() string { return t.base }
+
+// IsNumeric reports whether the column holds numbers. A trailing " unsigned"
+// (MySQL's int family) is stripped before the lookup.
+func (t ColumnType) IsNumeric() bool {
+	return numericTypeNames[strings.TrimSuffix(t.base, " unsigned")]
+}
+
+// seekableIntegerNames is the whole-number half of the seek gate: a keyset
+// cursor binds integers as numbers and text as strings, so the caller needs
+// the split as much as the gate itself. Both halves ask this one set instead
+// of folding the declared type again per client.
+var seekableIntegerNames = map[string]bool{
+	"int": true, "integer": true, "bigint": true, "smallint": true,
+	"tinyint": true, "mediumint": true, "int2": true, "int4": true,
+	"int8": true, "serial": true, "bigserial": true, "rowid": true,
+	"unsigned big int": true,
+}
+
+// IsSeekable reports whether the type can serve as a keyset cursor: whole
+// numbers and text round-trip exactly; floats, decimals, dates and binaries
+// do not, so they are refused rather than guessed at.
+func (t ColumnType) IsSeekable() bool {
+	if seekableIntegerNames[t.base] {
+		return true
+	}
+	switch t.base {
+	case "char", "varchar", "nchar", "nvarchar", "varchar2", "nvarchar2",
+		"text", "tinytext", "mediumtext", "longtext", "clob",
+		"character", "character varying":
+		return true
+	}
+	return false
+}
+
+// IsInteger reports which of the two seekable halves the type belongs to: the
+// whole numbers bind as numbers, the text half as strings, and the cursor
+// encoding differs between them. Outside the gate there is no cursor at all,
+// so this is only asked after IsSeekable said yes.
+func (t ColumnType) IsInteger() bool {
+	return seekableIntegerNames[t.base]
+}
+
+// IsDescriptive reports whether the column holds something a person reads.
+// Numbers, dates and blobs describe a row only to whoever already knows it.
+func (t ColumnType) IsDescriptive() bool {
+	base := t.base
+	if strings.HasSuffix(base, "text") || strings.HasSuffix(base, "char") {
+		return true
+	}
+	switch base {
+	case "varchar", "nvarchar", "character", "character varying", "citext", "string",
+		"uuid", "uniqueidentifier", "name", "tinytext", "json", "jsonb":
+		return true
+	}
+	return false
+}
+
 // IsNumericColumnType reports whether a declared column type holds numbers.
-// The type is read the way every catalog spells it: any parenthesized
-// precision is dropped, surrounding case and padding ignored, and a trailing
-// " unsigned" (MySQL's int family) removed before the name is matched against
-// the set. An unrecognized name is not numeric — a value for it stays text.
+// It delegates to ColumnType.IsNumeric so the fold lives in one place.
 func IsNumericColumnType(colType string) bool {
-	base := strings.ToLower(strings.TrimSpace(strings.Split(colType, "(")[0]))
-	return numericTypeNames[strings.TrimSuffix(base, " unsigned")]
+	return NewColumnType(colType).IsNumeric()
 }
 
 // CreateTableTemplate renders the starter CREATE TABLE for "新建表": the

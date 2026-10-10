@@ -86,8 +86,26 @@ TableProGo/
 
 Saved connections, settings, and query history live in the user config
 directory (`%AppData%\TableProGo` on Windows) — never next to the executable.
-Passwords are encrypted with Windows DPAPI on Windows. Files left beside the
+Passwords are encrypted with Windows DPAPI on Windows, and stored in the
+system keyring (macOS Keychain, Linux Secret Service) elsewhere; only a machine
+with no usable keyring at all falls back to the legacy plain-text file, which
+the connection dialog then warns about. Files left beside the
 executable by older builds are migrated there automatically on first launch.
+
+## Data Grid Paging
+
+Stepping through pages reads the next page by **seeking from the visible
+page's primary key** instead of counting rows (`OFFSET`), provided the table
+lives in MySQL, PostgreSQL or SQLite and its key columns are integers or text —
+the only kinds whose values come back out of the grid exactly as the engine
+compares them. (The grid only offers 上一页/下一页 navigation, so the page on
+screen always carries the cursor to step from.) Keys of other types —
+decimal/numeric, float, date or time, binary, UUID — are **deliberately
+refused**: what the grid shows for them is not the value the engine would
+compare, and seeking by the shown text could skip or repeat a row without
+any error to show for it. Such tables, and every table in SQL Server or Oracle
+(whose paging is a server-side cursor statement of its own), keep the old
+`OFFSET` paging, which is always correct.
 
 ## Supported Databases
 

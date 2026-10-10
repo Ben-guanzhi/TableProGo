@@ -209,3 +209,41 @@ func TestIsNumericColumnType(t *testing.T) {
 		}
 	}
 }
+
+// The seek gate has two halves because the cursor encodes them differently:
+// integers bind as numbers, text as strings. Both halves and the refusal
+// itself answer from the constructor's fold, so one declared spelling lands in
+// the same bucket as its bare form.
+func TestColumnTypeSeekKinds(t *testing.T) {
+	for _, integer := range []string{
+		"INTEGER", "int", "BIGINT", "smallint", "INT8", "SERIAL", "BIGSERIAL",
+		"ROWID", "bigint(20) unsigned", "UNSIGNED BIG INT", " Int ",
+	} {
+		ct := NewColumnType(integer)
+		if !ct.IsSeekable() || !ct.IsInteger() {
+			t.Errorf("%q: want a seekable integer, got seekable=%v integer=%v",
+				integer, ct.IsSeekable(), ct.IsInteger())
+		}
+	}
+	for _, text := range []string{
+		"TEXT", "varchar(255)", "CHAR(8)", "NVARCHAR(16)", "VARCHAR2(30)",
+		"CLOB", "longtext",
+	} {
+		ct := NewColumnType(text)
+		if !ct.IsSeekable() || ct.IsInteger() {
+			t.Errorf("%q: want seekable text, got seekable=%v integer=%v",
+				text, ct.IsSeekable(), ct.IsInteger())
+		}
+	}
+	// POINT ends in "INT" and a decimal is a number, but neither is a cursor:
+	// the gate itself must refuse them before the split is ever asked.
+	for _, outside := range []string{
+		"POINT", "REAL", "FLOAT", "DECIMAL(10,2)", "DATE", "BLOB", "UUID", "",
+	} {
+		ct := NewColumnType(outside)
+		if ct.IsSeekable() || ct.IsInteger() {
+			t.Errorf("%q: want outside the gate, got seekable=%v integer=%v",
+				outside, ct.IsSeekable(), ct.IsInteger())
+		}
+	}
+}

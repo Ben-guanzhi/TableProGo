@@ -64,12 +64,10 @@ func protectSecret(plaintext string) (string, error) {
 	return secretPrefix + base64.StdEncoding.EncodeToString(ciphertext), nil
 }
 
-// unprotectSecret opens a sealed password. Values written before encryption
-// existed are plain text and pass through, so they get sealed on the next save.
-func unprotectSecret(stored string) (string, error) {
-	if !strings.HasPrefix(stored, secretPrefix) {
-		return stored, nil
-	}
+// unsealDPAPI opens a "dpapi:" value; unprotectSecret only calls it when the
+// prefix is present. A value sealed by another Windows account or machine
+// fails here — the caller clears the password and asks the user to retype it.
+func unsealDPAPI(stored string) (string, error) {
 	ciphertext, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(stored, secretPrefix))
 	if err != nil {
 		return "", fmt.Errorf("decode password: %w", err)

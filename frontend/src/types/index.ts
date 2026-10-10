@@ -48,6 +48,10 @@ export interface QueryResult {
   error?: string;
   // Set when the row cap cut a SELECT short; more rows exist than shown.
   truncated?: boolean;
+  // The key of this page's first and last row, as text. Handing one back asks
+  // the server for the page beside this one without counting rows past.
+  startCursor?: string[];
+  endCursor?: string[];
 }
 
 export interface TableInfo {
@@ -106,6 +110,11 @@ export interface SqlFilter {
   op: SqlFilterOp;
   value: string;
 }
+
+// The key edges a data page can be stepped off from. `after` asks for the page
+// after them, `before` for the page before. A page read by row count instead
+// needs neither.
+export type PreviewCursor = { after?: string[]; before?: string[] };
 
 export type SqlFilterOp =
   | 'eq'
@@ -193,9 +202,14 @@ export interface Tab {
   objectType?: 'table' | 'view';
   section?: ObjectSection;
   data?: SectionState<QueryResult>;
-  // One page of the data card: rows are read with LIMIT/OFFSET.
+  // One page of the data card: rows are read by key when the page has one to
+  // step from, and by OFFSET otherwise.
   dataPage?: number;
   dataPageSize?: number;
+  // Which way the page on screen was stepped to, and the key edges it holds:
+  // the request cursor the next step uses, and the edges of the page shown.
+  dataRequest?: PreviewCursor;
+  dataEdges?: { start?: string[]; end?: string[] };
   // Conditions the data card filters by on the server, re-reading the page.
   dataFilters?: SqlFilter[];
   structure?: SectionState<TableStructure>;

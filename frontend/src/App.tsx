@@ -26,6 +26,7 @@ import {
   TableStructure,
   HistoryEntry,
   ObjectSection,
+  PreviewCursor,
 } from './types';
 import {
   GetConnections,
@@ -426,7 +427,7 @@ function App() {
     const filters = tab.dataFilters ?? [];
     try {
       const [result, columns] = await Promise.all([
-        PreviewTable(ref, pageSize, (page - 1) * pageSize, filters) as Promise<unknown> as Promise<QueryResult>,
+        PreviewTable(ref, pageSize, (page - 1) * pageSize, filters, tab.dataRequest ?? {}) as Promise<unknown> as Promise<QueryResult>,
         settings.showColumnComments
           ? GetColumns(ref.connId, ref.database, ref.schema, ref.table).catch(() => [])
           : Promise.resolve([]),
@@ -434,6 +435,10 @@ function App() {
       if (stillCurrent()) {
         patch({
           data: { loading: false, data: result },
+          // The page that arrived is the one the next step is taken from, so its
+          // own key edges replace the cursor that was asked for.
+          dataRequest: undefined,
+          dataEdges: { start: result.startCursor, end: result.endCursor },
           comments: commentMap(columns as unknown as ColumnInfo[]),
         });
       }
@@ -449,21 +454,41 @@ function App() {
   // A page is a fresh read of the same section, so it reuses the section's
   // sequence guard: an older page that arrives late is dropped.
   const showDataPage = (tab: Tab, page: number, pageSize: number) => {
+    const target = Math.max(1, page);
+    const shown = tab.dataPage ?? 1;
+    // 上一页/下一页 is the only navigation the card has, so a single step always
+    // has the page on screen to step off from. Anything else - another page
+    // size, a jump, a refresh - is read by counting rows again.
+    const request: PreviewCursor = {};
+    if (pageSize === (tab.dataPageSize ?? DEFAULT_PAGE_SIZE)) {
+      if (target === shown + 1) request.after = tab.dataEdges?.end;
+      else if (target === shown - 1) request.before = tab.dataEdges?.start;
+    }
+    const next = { ...tab, dataPage: target, dataPageSize: pageSize, dataRequest: request };
     setTabs(current =>
       current.map(t =>
-        t.id === tab.id ? { ...t, dataPage: Math.max(1, page), dataPageSize: pageSize } : t
+        t.id === tab.id
+          ? { ...t, dataPage: target, dataPageSize: pageSize, dataRequest: request }
+          : t
       )
     );
-    loadObjectSection({ ...tab, dataPage: Math.max(1, page), dataPageSize: pageSize }, 'data');
+    loadObjectSection(next, 'data');
   };
 
   // A new condition changes which rows exist at all, so the page count it had
   // worked out no longer means anything: back to page one.
   const showDataFilters = (tab: Tab, filters: SqlFilter[]) => {
     setTabs(current =>
-      current.map(t => (t.id === tab.id ? { ...t, dataFilters: filters, dataPage: 1 } : t))
+      current.map(t =>
+        t.id === tab.id
+          ? { ...t, dataFilters: filters, dataPage: 1, dataRequest: undefined, dataEdges: undefined }
+          : t
+      )
     );
-    loadObjectSection({ ...tab, dataFilters: filters, dataPage: 1 }, 'data');
+    loadObjectSection(
+      { ...tab, dataFilters: filters, dataPage: 1, dataRequest: undefined, dataEdges: undefined },
+      'data'
+    );
   };
 
   const openTableTab = (table: TableRef, label: string, objectType: 'table' | 'view') => {

@@ -146,3 +146,22 @@ func TestTablesQueryRefusesUnknownDialect(t *testing.T) {
 		t.Errorf("want unsupported type, got %v", err)
 	}
 }
+
+// oraLiteral is the single point Oracle inlined literals go through now; it must
+// double single quotes so a name like `u'; drop` cannot break out of its quotes.
+func TestOraLiteralEscapesSingleQuotes(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"users", "'users'"},
+		{"u'; drop table t--", "'u''; drop table t--'"},
+		{"a'b'c", "'a''b''c'"},
+		{"", "''"},
+	}
+	for _, tc := range cases {
+		if got := oraLiteral(tc.in); got != tc.want {
+			t.Errorf("oraLiteral(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

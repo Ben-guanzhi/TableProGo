@@ -51,3 +51,39 @@ func TestRowCapProbesForMoreRows(t *testing.T) {
 		t.Errorf("table that fits: got %d rows, truncated %v", len(result.Rows), result.Truncated)
 	}
 }
+
+// A CTE reads rows too. It used to fail the statement classifier and run as a
+// command, which executed it and threw the result away: the grid stayed empty
+// with no error to explain it. WITH takes the capped-select path now.
+func TestCteRunsThroughTheSelectPath(t *testing.T) {
+	conn := sqliteDB(t, "conn_cte", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE five (id integer primary key)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO five (id) VALUES (1),(2),(3)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	a := searchApp(conn)
+
+	const cte = "WITH doubled AS (SELECT id * 2 AS d FROM five) SELECT d FROM doubled ORDER BY d"
+	result := a.ExecuteQuery(conn.ID, cte, "")
+	if result.Error != "" {
+		t.Fatalf("cte query: %s", result.Error)
+	}
+	if len(result.Rows) != 3 {
+		t.Fatalf("a CTE result must come back, got %d rows", len(result.Rows))
+	}
+
+	// Row limit and truncation apply to a CTE like to any other read.
+	a.settings.ResultLimit = 2
+	result = a.ExecuteQuery(conn.ID, cte, "")
+	if len(result.Rows) != 2 || !result.Truncated {
+		t.Errorf("capped CTE: got %d rows, truncated %v", len(result.Rows), result.Truncated)
+	}
+
+	// Read rows out of a CTE do not become writable cells: the source table a
+	// grid may write is only recognised for a plain SELECT ... FROM.
+	if ref := parseQuerySource(conn.ID, cte, conn.Database); ref.Table != "" {
+		t.Errorf("must not map rows read through a CTE back to a table: %+v", ref)
+	}
+}

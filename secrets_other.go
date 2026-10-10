@@ -2,12 +2,20 @@
 
 package main
 
-// Without DPAPI there is no local key to hide a password behind, so non-Windows
-// builds keep the legacy plain-text store instead of pretending to encrypt.
+import "fmt"
+
+// protectSecret stores the password in the OS keyring (macOS Keychain, Linux
+// Secret Service). A machine with no usable keyring falls back to the legacy
+// plain-text store; the fallback and its warning live in protectViaKeyringOrPlain.
 func protectSecret(plaintext string) (string, error) {
-	return plaintext, nil
+	if plaintext == "" {
+		return "", nil
+	}
+	return protectViaKeyringOrPlain(plaintext)
 }
 
-func unprotectSecret(stored string) (string, error) {
-	return stored, nil
+// unsealDPAPI refuses a Windows-sealed value: the key that opens it lives in
+// another machine's DPAPI, so the password has to be retyped here.
+func unsealDPAPI(stored string) (string, error) {
+	return "", fmt.Errorf("password was sealed with Windows DPAPI; retype it")
 }

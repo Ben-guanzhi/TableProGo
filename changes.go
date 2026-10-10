@@ -125,10 +125,10 @@ func defaultSchema(dbType, schema string) string {
 }
 
 // isNumericColumn keeps the historical name; the type knowledge lives in the
-// shared SQL text package, so every client answers "does this column hold
-// numbers" the same way.
+// shared SQL text package's ColumnType value object, so every client answers
+// "does this column hold numbers" the same way.
 func isNumericColumn(colType string) bool {
-	return tableprosql.IsNumericColumnType(colType)
+	return tableprosql.NewColumnType(colType).IsNumeric()
 }
 
 func numberLiteral(value float64) string {
