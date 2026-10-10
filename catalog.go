@@ -74,11 +74,20 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 // savedDatabaseFilter reads the filter from the persisted config so a change
 // applies to an already-open connection without reconnecting. IDs are
 // index-based, matching Connect.
+// 使用缓存 map 将线性查找 O(n) 降为 O(1)（CLRS ch11 哈希表）。
 func (a *App) savedDatabaseFilter(connID string) DatabaseFilter {
+	if filter, ok := a.connFilterCache[connID]; ok {
+		return filter
+	}
 	a.connectionsMu.RLock()
 	defer a.connectionsMu.RUnlock()
+	if a.connFilterCache == nil {
+		a.connFilterCache = make(map[string]DatabaseFilter, len(a.savedConnections))
+	}
 	for i, saved := range a.savedConnections {
-		if fmt.Sprintf("conn_%d", i) == connID {
+		id := fmt.Sprintf("conn_%d", i)
+		if id == connID {
+			a.connFilterCache[id] = saved.DatabaseFilter
 			return saved.DatabaseFilter
 		}
 	}

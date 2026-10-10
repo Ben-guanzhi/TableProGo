@@ -195,16 +195,16 @@ func pageCursors(rows [][]interface{}, keys []keyColumn, columns []Column) (star
 	if len(rows) == 0 {
 		return nil, nil
 	}
+	// 构建列名到位置的映射，避免 O(n*m) 嵌套循环（CLRS ch11 哈希表）
+	nameToPos := make(map[string]int, len(columns))
+	for j, col := range columns {
+		nameToPos[strings.ToLower(col.Name)] = j
+	}
 	positions := make([]int, len(keys))
 	for i, key := range keys {
-		positions[i] = -1
-		for j, col := range columns {
-			if strings.EqualFold(col.Name, key.name) {
-				positions[i] = j
-				break
-			}
-		}
-		if positions[i] < 0 {
+		if pos, ok := nameToPos[strings.ToLower(key.name)]; ok {
+			positions[i] = pos
+		} else {
 			return nil, nil
 		}
 	}

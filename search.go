@@ -14,6 +14,7 @@ type ObjectMatch struct {
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
 	Table    string `json:"table"`
+	Lower    string `json:"-"` // 预计算的小写表名，避免搜索时重复 ToLower（CLRS ch3 预处理）
 	Type     string `json:"type"`
 }
 
@@ -188,7 +189,7 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 		}
 		if snap := a.connSnapshot(conn); snap.ok {
 			for _, match := range snap.rows {
-				if strings.Contains(strings.ToLower(match.Table), lower) {
+				if strings.Contains(match.Lower, lower) {
 					found = append(found, match)
 					if len(found) >= limit {
 						return found, nil
@@ -228,10 +229,12 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 	return found, nil
 }
 
+var likeReplacer = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
 // likePattern wraps the fragment for a LIKE test, escaping the wildcards the
 // user typed so "a_b" cannot stand for any three characters.
 func likePattern(fragment string) string {
-	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(fragment)
+	escaped := likeReplacer.Replace(fragment)
 	return "%" + escaped + "%"
 }
 
@@ -307,6 +310,7 @@ func searchInDatabase(a *App, conn *Connection, database, fragment string, limit
 		match.ConnID = conn.ID
 		match.Database = database
 		match.Type = normalizeTableType(objectType)
+		match.Lower = strings.ToLower(match.Table)
 		found = append(found, match)
 	}
 	return found, nil

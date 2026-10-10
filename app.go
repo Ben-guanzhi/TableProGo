@@ -22,6 +22,7 @@ type App struct {
 	connectionsMu    sync.RWMutex
 	currentConnID    string
 	savedConnections []ConnectionConfig
+	connFilterCache  map[string]DatabaseFilter // connID -> DatabaseFilter 缓存（CLRS ch11 哈希表）
 	filePath         string
 	settings         AppSettings
 	settingsPath     string
@@ -33,7 +34,7 @@ type App struct {
 	// histObserved is the history file as this process last read or wrote it;
 	// mergeHistory folds in only what other clients added since then.
 	histObserved []HistoryEntry
-	// connObserved is the connections file as this process last read or wrote
+	// connObserved is the connections file as this process last read or wrote it
 	// it; saveToFile folds in only what other clients added since then.
 	connObserved []ConnectionConfig
 
