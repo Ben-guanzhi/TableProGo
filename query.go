@@ -244,15 +244,31 @@ func (a *App) runQuery(connID string, query string, database string) QueryResult
 		return result
 	}
 	result := executeCommand(db, query, start)
-	if result.Error == "" {
+	if result.Error == "" && !movesDataOnly(query) {
 		// A statement that ran can have moved a catalog (CREATE/DROP/RENAME,
-		// and the menu's actions arrive through here too). Nothing here works
-		// out which kinds touch which catalog: one number makes every quick-
-		// open snapshot rebuild once, on the keystroke after the change,
-		// instead of risking a stale list forever.
+		// and the menu's actions arrive through here too). Plain row DML
+		// (INSERT/UPDATE/DELETE/MERGE/REPLACE) cannot, so it must not
+		// invalidate: the next quick-open keystroke would otherwise rebuild
+		// every connection's snapshot after each edit. Anything else — known
+		// DDL or an exotic statement — still bumps, keeping the "stale list"
+		// risk on the conservative side.
 		a.catalogVersion.Add(1)
 	}
 	return result
+}
+
+// movesDataOnly reports whether a non-select statement only moves row data and
+// so cannot have changed which objects exist. The list stays small and matches
+// the DML keywords; everything else (DDL, vacuum, unrecognized) is treated as
+// potentially catalog-changing.
+func movesDataOnly(query string) bool {
+	q := strings.ToUpper(strings.TrimSpace(query))
+	for _, kw := range []string{"INSERT", "UPDATE", "DELETE", "MERGE", "REPLACE"} {
+		if strings.HasPrefix(q, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func runSelect(db *sql.DB, query string, start time.Time, args ...interface{}) QueryResult {

@@ -75,23 +75,38 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 // applies to an already-open connection without reconnecting. IDs are
 // index-based, matching Connect.
 // 使用缓存 map 将线性查找 O(n) 降为 O(1)（CLRS ch11 哈希表）。
+//
+// 缓存键是位置编号 conn_%d，因此任何会移动位置的操作（增删连接）或改过滤器的
+// 操作（更新连接）都必须失效缓存——见 App.invalidateConnFilterCacheLocked。
+// 缓存本身的写入走写锁：早先在 RLock 内写 map 会与并发的读路径竞态。
 func (a *App) savedDatabaseFilter(connID string) DatabaseFilter {
+	a.connectionsMu.RLock()
+	filter, ok := a.connFilterCache[connID]
+	a.connectionsMu.RUnlock()
+	if ok {
+		return filter
+	}
+	a.connectionsMu.Lock()
+	defer a.connectionsMu.Unlock()
 	if filter, ok := a.connFilterCache[connID]; ok {
 		return filter
 	}
-	a.connectionsMu.RLock()
-	defer a.connectionsMu.RUnlock()
 	if a.connFilterCache == nil {
 		a.connFilterCache = make(map[string]DatabaseFilter, len(a.savedConnections))
 	}
 	for i, saved := range a.savedConnections {
-		id := fmt.Sprintf("conn_%d", i)
-		if id == connID {
+		if id := fmt.Sprintf("conn_%d", i); id == connID {
 			a.connFilterCache[id] = saved.DatabaseFilter
 			return saved.DatabaseFilter
 		}
 	}
 	return DatabaseFilter{}
+}
+
+// invalidateConnFilterCacheLocked 丢弃整个过滤器缓存。调用方必须已持有
+// connectionsMu 写锁。位置编号会被增删连接整体移位，逐键删不安全，直接清空。
+func (a *App) invalidateConnFilterCacheLocked() {
+	a.connFilterCache = nil
 }
 
 func (a *App) GetSchemas(connID string, database string) ([]string, error) {

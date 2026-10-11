@@ -148,6 +148,7 @@ func (a *App) AddConnection(config ConnectionConfig) error {
 
 	config.ID = fmt.Sprintf("conn_%d", len(a.savedConnections))
 	a.savedConnections = append(a.savedConnections, config)
+	a.invalidateConnFilterCacheLocked()
 	a.saveToFile()
 	return nil
 }
@@ -162,6 +163,7 @@ func (a *App) UpdateConnection(config ConnectionConfig) error {
 				config.Password = c.Password
 			}
 			a.savedConnections[i] = config
+			a.invalidateConnFilterCacheLocked()
 			a.saveToFile()
 			return nil
 		}
@@ -181,6 +183,7 @@ func (a *App) DeleteConnection(id string) error {
 				delete(a.connections, connID)
 			}
 			a.savedConnections = append(a.savedConnections[:i], a.savedConnections[i+1:]...)
+			a.invalidateConnFilterCacheLocked()
 			a.saveToFile()
 			return nil
 		}
