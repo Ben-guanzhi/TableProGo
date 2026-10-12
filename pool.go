@@ -3,12 +3,21 @@ package main
 import (
 	"database/sql"
 	"fmt"
+	"log"
+	"time"
 
 	_ "github.com/denisenkom/go-mssqldb"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	_ "github.com/sijms/go-ora/v2"
+)
+
+const (
+	// poolCloseGrace bounds how long an evicted pool waits for its in-flight
+	// statements to finish before it is closed anyway.
+	poolCloseGrace = 30 * time.Second
+	poolCloseTick  = 200 * time.Millisecond
 )
 
 // poolFor returns the *sql.DB to introspect the given database with. PostgreSQL
@@ -63,8 +72,6 @@ func (a *App) perDatabasePool(conn *Connection, database string) (*sql.DB, error
 	}
 	// Browsing a server with hundreds of databases must not accumulate one
 	// live pool per database; the oldest-unused pool is closed instead.
-	// Desktop requests are short and serialized per pool, so the evicted
-	// pool is not in use in practice.
 	for len(conn.pools) >= maxPoolsPerConnection {
 		conn.evictOldestPool()
 	}
@@ -85,17 +92,46 @@ func (c *Connection) touchPool(database string) {
 	c.poolOrder = append(c.poolOrder, database)
 }
 
-// evictOldestPool closes the least-recently-used cached pool. Callers hold
-// poolsMu.
+// evictOldestPool fences off the least-recently-used cached pool and closes it
+// once no statement is running on it. Callers hold poolsMu.
+//
+// poolFor hands the *sql.DB to callers with no reference count, so an immediate
+// Close could land inside a statement still reading from the pool. Fencing
+// stops the pool growing in the meantime: no new idle connections are kept and
+// no connection survives a single use.
 func (c *Connection) evictOldestPool() {
 	if len(c.poolOrder) == 0 {
 		return
 	}
 	oldest := c.poolOrder[0]
 	c.poolOrder = c.poolOrder[1:]
-	if db, ok := c.pools[oldest]; ok {
-		db.Close()
-		delete(c.pools, oldest)
+	db, ok := c.pools[oldest]
+	if !ok {
+		return
+	}
+	delete(c.pools, oldest)
+	db.SetConnMaxLifetime(time.Nanosecond)
+	db.SetMaxIdleConns(0)
+	go closePoolWhenIdle(oldest, db)
+}
+
+// closePoolWhenIdle waits for the pool to drain and then closes it. Giving up
+// after poolCloseGrace bounds the memory a permanently stalled statement can
+// hold; past that the pool is closed anyway, which fails the stalled statement
+// rather than leaking the pool forever.
+func closePoolWhenIdle(name string, db *sql.DB) {
+	deadline := time.Now().Add(poolCloseGrace)
+	for time.Now().Before(deadline) {
+		if db.Stats().InUse == 0 {
+			if err := db.Close(); err != nil {
+				log.Printf("close evicted pool %q: %v", name, err)
+			}
+			return
+		}
+		time.Sleep(poolCloseTick)
+	}
+	if err := db.Close(); err != nil {
+		log.Printf("close evicted pool %q after %v: %v", name, poolCloseGrace, err)
 	}
 }
 
