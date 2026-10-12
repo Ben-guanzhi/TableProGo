@@ -104,6 +104,36 @@ func TestQuotedLiteralNationalPrefix(t *testing.T) {
 	}
 }
 
+func TestQuotedLiteralMySQLEscapesBackslash(t *testing.T) {
+	// go-sql-driver's lexer takes '\' inside a string literal as entering
+	// escape state, so an unescaped one would swallow the closing quote and run
+	// the literal into the statement behind it.
+	if got := QuotedLiteral(MySQL, "a\\"); got != `'a\\'` {
+		t.Errorf("mysql trailing backslash must not escape the quote: %q", got)
+	}
+	if got := QuotedLiteral(MySQL, `a'b\c`); got != `'a''b\\c'` {
+		t.Errorf("mysql quote and backslash together: %q", got)
+	}
+	if got := QuotedLiteral(SQLite, "a\\"); got != `'a\'` {
+		t.Errorf("sqlite takes the backslash literally: %q", got)
+	}
+	if got := QuotedLiteral(Postgres, "a\\"); got != `'a\'` {
+		t.Errorf("postgres takes the backslash literally: %q", got)
+	}
+	if got := QuotedLiteral(SQLServer, `a\b`); got != `N'a\b'` {
+		t.Errorf("sqlserver takes the backslash literally: %q", got)
+	}
+}
+
+func TestMySQLLikePatternSurvivesTheLiteralLayer(t *testing.T) {
+	// Two escaping layers are active on MySQL: LikePattern escapes for LIKE and
+	// QuotedLiteral escapes for the string literal. Only four backslashes in the
+	// text make the engine see the two that LIKE needs.
+	if got := QuotedLiteral(MySQL, LikePattern(`a\b`)); got != `'%a\\\\b%'` {
+		t.Errorf("mysql LIKE backslash: %q", got)
+	}
+}
+
 func TestRowLimitShapes(t *testing.T) {
 	if got := RowLimit(SQLServer, "SELECT * FROM t", 5); got != "SELECT TOP (5) * FROM t" {
 		t.Errorf("sqlserver TOP: %q", got)

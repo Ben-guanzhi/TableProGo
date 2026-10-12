@@ -98,6 +98,14 @@ func QualifiedTable(dbType, database, schema, table string) (string, error) {
 // it, so the rest get a plain single-quoted literal.
 func QuotedLiteral(dbType, value string) string {
 	escaped := strings.ReplaceAll(value, "'", "''")
+	if dbType == MySQL {
+		// MySQL takes '\' as the escape character inside a string literal, so a
+		// value ending in one would escape the closing quote and run the literal
+		// into the rest of the statement. Doubled here and nowhere else: every
+		// other engine takes '\' literally, and so does MySQL under
+		// NO_BACKSLASH_ESCAPES, where doubling would change the stored value.
+		return "'" + strings.ReplaceAll(escaped, `\`, `\\`) + "'"
+	}
 	if dbType == SQLServer {
 		return "N'" + escaped + "'"
 	}
