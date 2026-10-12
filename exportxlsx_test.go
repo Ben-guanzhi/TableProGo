@@ -297,3 +297,32 @@ func TestWorkbookBase64Guardrails(t *testing.T) {
 		t.Fatalf("want zip bytes, got %q", data[:min(4, len(data))])
 	}
 }
+
+// A 10k-row export is the realistic top of the range the grid can hand over: the
+// default page is a hundred rows and the user can lift the cap up to the limit
+// the browser is willing to send. The rows already live in the grid, so the
+// export's allocation is what decides whether the second copy of them is big.
+func BenchmarkBuildWorkbook(b *testing.B) {
+	columns := []WorkbookColumn{
+		{Name: "id", Type: "INTEGER"},
+		{Name: "name", Type: "VARCHAR(100)"},
+		{Name: "price", Type: "DECIMAL(10,2)"},
+		{Name: "born", Type: "DATE"},
+	}
+	rows := make([][]interface{}, 10_000)
+	for r := range rows {
+		rows[r] = []interface{}{
+			float64(r),
+			strings.Repeat("row-", 8) + strconv.Itoa(r),
+			"12.50",
+			"2026-09-22",
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := buildWorkbook(columns, rows); err != nil {
+			b.Fatalf("buildWorkbook: %v", err)
+		}
+	}
+}
