@@ -112,6 +112,8 @@ func workbookCellValue(kind cellKind, value interface{}, styles workbookStyles) 
 		return v
 	case float64:
 		return v
+	case int64:
+		return v
 	case string:
 		switch kind {
 		case kindNumber:
@@ -181,6 +183,8 @@ func cellDisplayUnits(value interface{}) int {
 		return 4
 	case float64:
 		return len(strconv.FormatFloat(v, 'f', -1, 64))
+	case int64:
+		return len(strconv.FormatInt(v, 10))
 	}
 	return displayUnits(fmt.Sprint(value))
 }

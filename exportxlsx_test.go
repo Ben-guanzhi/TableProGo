@@ -1,8 +1,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/base64"
+	"io"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -119,6 +122,49 @@ func TestWorkbookCellsKeepTheirTypes(t *testing.T) {
 	}
 }
 
+// sheetXML unzips the export and returns the worksheet part, so a test can
+// assert on the cell kind the way Excel reads it. GetCellType is no use here:
+// the stream writer emits number cells with no t= attribute, which it reports
+// as kind 0 - indistinguishable from a text cell holding an inline string.
+func sheetXML(t *testing.T, columns []WorkbookColumn, rows [][]interface{}) string {
+	t.Helper()
+	data, err := buildWorkbook(columns, rows)
+	if err != nil {
+		t.Fatalf("build workbook: %v", err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	for _, part := range zr.File {
+		if !strings.Contains(part.Name, "worksheets/") || !strings.HasSuffix(part.Name, ".xml") {
+			continue
+		}
+		rc, err := part.Open()
+		if err != nil {
+			t.Fatalf("open sheet: %v", err)
+		}
+		defer rc.Close()
+		body, err := io.ReadAll(rc)
+		if err != nil {
+			t.Fatalf("read sheet: %v", err)
+		}
+		return string(body)
+	}
+	t.Fatal("no worksheet in the export")
+	return ""
+}
+
+// cellXML is one cell's whole element.
+func cellXML(t *testing.T, xml, ref string) string {
+	t.Helper()
+	got := regexp.MustCompile(`<c r="` + ref + `"(?:[^/>]*/>|[^>]*>.*?</c>)`).FindString(xml)
+	if got == "" {
+		t.Fatalf("cell %s not found in the export", ref)
+	}
+	return got
+}
+
 // The declared type is now read once per column instead of once per cell, so the
 // mapping is worth pinning on its own - spelling, precision suffix and the MySQL
 // YEAR that counts as a number rather than a date.
@@ -142,6 +188,30 @@ func TestWorkbookCellKindFollowsTheDeclaredType(t *testing.T) {
 		if got := workbookCellKind(tc.colType); got != tc.want {
 			t.Errorf("workbookCellKind(%q) = %d, want %d", tc.colType, got, tc.want)
 		}
+	}
+}
+
+// Drivers scan an INTEGER column into int64, not float64: SQLite, PostgreSQL
+// int8 and MySQL all do, and RunSelect passes every value except []byte and
+// time.Time through untouched. Without an int64 arm the whole column goes out
+// as an inline string - Excel left-aligns it, SUM ignores it and sorting turns
+// lexical. The fynequery copy already had the arm; the root copy lost it when
+// it was ported.
+func TestWorkbookIntegerColumnsStayNumbers(t *testing.T) {
+	columns := []WorkbookColumn{{Name: "id", Type: "INTEGER"}}
+	rows := [][]interface{}{{int64(7)}, {int64(1000000)}, {nil}}
+
+	xml := sheetXML(t, columns, rows)
+	if got := cellXML(t, xml, "A2"); strings.Contains(got, `t="`) {
+		t.Errorf("int64(7) written as %s, want a number cell with no t= attribute", got)
+	}
+	if got := cellXML(t, xml, "A3"); !strings.Contains(got, "<v>1000000</v>") {
+		t.Errorf("int64(1000000) lost its value: %s", got)
+	}
+
+	f := openWorkbook(t, columns, rows)
+	if got := cellText(t, f, "A4"); got != "" {
+		t.Errorf("NULL cell = %q, want an empty cell", got)
 	}
 }
 
