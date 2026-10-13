@@ -61,11 +61,13 @@ TableProGo/
 ├── fkvalues.go          # Foreign-key dropdown values
 ├── search.go            # Cross-database object search
 ├── exportsql.go         # Export result set as INSERT script
-├── exportxlsx.go        # Export result set as Excel workbook
+├── exportxlsx.go        # XLSX API wrapper: base64 for the JSON API + refusals
 ├── tableactions.go      # DROP / TRUNCATE / RENAME
 ├── secrets_windows.go   # DPAPI password encryption
 ├── secrets_other.go     # Plain-text fallback on non-Windows
 ├── go.mod / go.sum
+├── tableprosql/         # shared module: per-dialect SQL text + ColumnType predicates
+├── tableproxlsx/        # shared module: xlsx rendering (BuildWorkbook)
 └── frontend/            # React 18 + TypeScript + Tailwind (runs in the WebView)
     ├── src/
     │   ├── App.tsx

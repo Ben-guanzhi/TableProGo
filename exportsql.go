@@ -5,9 +5,11 @@ import (
 	"strings"
 )
 
-// insertExportMaxRows bounds what one export may render. The grid only ever
-// holds a page of the table, so hitting this means the client sent something it
-// should not have - refusing is better than a script that quietly misses rows.
+// insertExportMaxRows bounds what one INSERT-script export may render. The grid
+// holds at most a page - paging tops out at 5000 rows - so this is two pages of
+// headroom. The xlsx export allows ten times as many because a workbook is a
+// compressed archive and a script is plain text that grows with the row count.
+// The caps differ on purpose; each refusal names its own format.
 const insertExportMaxRows = 10000
 
 // insertScript renders one INSERT per row, with every literal written the way a
@@ -81,7 +83,7 @@ func (a *App) InsertScript(connID, database, schema, table string, columns []str
 		return "", fmt.Errorf("当前结果为空，没有可导出的行")
 	}
 	if len(rows) > insertExportMaxRows {
-		return "", fmt.Errorf("一次最多导出 %d 行，请翻页或缩小范围", insertExportMaxRows)
+		return "", fmt.Errorf("一次最多导出 %d 行（INSERT 脚本），请翻页或缩小范围", insertExportMaxRows)
 	}
 	schema = defaultSchema(conn.Type, schema)
 

@@ -283,9 +283,9 @@ func LikePattern(fragment string) string {
 
 // numericTypeNames is the closed set of declared column-type names that mean
 // "this column holds a number". Every client that renders values against a
-// declared type (grid edits, filters, exports) matches through
-// IsNumericColumnType, so a new spelling (say, another engine's synonym for
-// BIGINT) is added here once instead of per client.
+// declared type (grid edits, filters, exports) asks ColumnType.IsNumeric, so a
+// new spelling (say, another engine's synonym for BIGINT) is added here once
+// instead of per client.
 var numericTypeNames = map[string]bool{
 	"int": true, "integer": true, "int2": true, "int4": true, "int8": true,
 	"tinyint": true, "smallint": true, "mediumint": true, "bigint": true,
@@ -326,6 +326,22 @@ func (t ColumnType) Base() string { return t.base }
 // (MySQL's int family) is stripped before the lookup.
 func (t ColumnType) IsNumeric() bool {
 	return numericTypeNames[strings.TrimSuffix(t.base, " unsigned")]
+}
+
+// dateTypeNames is the closed set of declared column-type names that hold a
+// date or a day-stamped time. The timestamp family is matched by prefix in
+// IsDate because PostgreSQL spells the time-zone variants out, so it is not
+// listed here. A bare "time" is deliberately absent: it has no day to sort on.
+var dateTypeNames = map[string]bool{
+	"date": true, "datetime": true, "datetime2": true, "smalldatetime": true,
+}
+
+// IsDate reports whether the column holds a date or a day-stamped time.
+func (t ColumnType) IsDate() bool {
+	if strings.HasPrefix(t.base, "timestamp") {
+		return true
+	}
+	return dateTypeNames[t.base]
 }
 
 // seekableIntegerNames is the whole-number half of the seek gate: a keyset
@@ -376,12 +392,6 @@ func (t ColumnType) IsDescriptive() bool {
 		return true
 	}
 	return false
-}
-
-// IsNumericColumnType reports whether a declared column type holds numbers.
-// It delegates to ColumnType.IsNumeric so the fold lives in one place.
-func IsNumericColumnType(colType string) bool {
-	return NewColumnType(colType).IsNumeric()
 }
 
 // CreateTableTemplate renders the starter CREATE TABLE for "新建表": the

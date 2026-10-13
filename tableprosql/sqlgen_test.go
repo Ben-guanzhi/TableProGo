@@ -220,13 +220,13 @@ func TestLikePatternEscapesWildcards(t *testing.T) {
 	}
 }
 
-func TestIsNumericColumnType(t *testing.T) {
+func TestColumnTypeNumeric(t *testing.T) {
 	for _, numeric := range []string{
 		"int", "INT", "bigint", "numeric(10,2)", "decimal(12, 4)", "float8",
 		"double precision", "money", "binary_double", "year",
 		"int unsigned", "INT(11) UNSIGNED", "decimal(5,2) unsigned",
 	} {
-		if !IsNumericColumnType(numeric) {
+		if !NewColumnType(numeric).IsNumeric() {
 			t.Errorf("%q must read as numeric", numeric)
 		}
 	}
@@ -234,8 +234,45 @@ func TestIsNumericColumnType(t *testing.T) {
 		"varchar(64)", "text", "date", "timestamp", "uuid", "bool", "json",
 		"numeric_unsigned", "char(16)", "",
 	} {
-		if IsNumericColumnType(notNumeric) {
+		if NewColumnType(notNumeric).IsNumeric() {
 			t.Errorf("%q must not read as numeric", notNumeric)
+		}
+	}
+}
+
+// IsDate and IsNumeric are the two predicates an exporter keys off, so the
+// sets must not overlap: a type in both would silently render as a number,
+// because the exporter asks IsNumeric first and never reaches IsDate.
+func TestColumnTypeDate(t *testing.T) {
+	for _, dateType := range []string{
+		"date", "DATE", "datetime", "DATETIME", "datetime2", "smalldatetime",
+		"timestamp", "TIMESTAMP", "timestamp(6)", "timestamptz",
+		"timestamp with time zone", "timestamp without time zone",
+	} {
+		if !NewColumnType(dateType).IsDate() {
+			t.Errorf("%q must read as a date", dateType)
+		}
+	}
+	// A bare "time" is deliberately not a date: it has no day to sort on, so a
+	// "time" cell is text rather than a date Excel would date-stamp.
+	for _, notDate := range []string{
+		"varchar(64)", "text", "int", "numeric(10,2)", "uuid", "json",
+		"time", "time(6)", "chars", "latest", "",
+	} {
+		if NewColumnType(notDate).IsDate() {
+			t.Errorf("%q must not read as a date", notDate)
+		}
+	}
+	// Exhaustive rather than a spot list: the two sets are closed, so the overlap
+	// check can cover every entry instead of a sample that could be forgotten.
+	for name := range numericTypeNames {
+		if dateTypeNames[name] || strings.HasPrefix(name, "timestamp") {
+			t.Errorf("%q reads as both numeric and date", name)
+		}
+	}
+	for name := range dateTypeNames {
+		if numericTypeNames[name] {
+			t.Errorf("%q reads as both date and numeric", name)
 		}
 	}
 }

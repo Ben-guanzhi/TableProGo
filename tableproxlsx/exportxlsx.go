@@ -21,8 +21,11 @@ import (
 	"tableprosql"
 )
 
-// MaxRows bounds one export. The grid only ever holds a page of a
+// MaxRows bounds one xlsx export. The grid only ever holds a page of a
 // table, so reaching this means the client sent something it should not have.
+// This is ten times the INSERT-script cap: a workbook is a compressed archive,
+// while a script is one INSERT per row of plain text that grows with the row
+// count. The two caps differ on purpose, and each refusal names its own format.
 const MaxRows = 100000
 
 // SheetName is the one worksheet the export writes.
@@ -39,20 +42,12 @@ type Column struct {
 	Type string `json:"type"`
 }
 
-// Date and time types whose text form should become a real date cell, so Excel
-// can sort, filter and reformat them instead of showing a string. Names starting
-// with "timestamp" are handled separately because PostgreSQL spells them out
-// with a time zone suffix.
-var dateTypes = map[string]bool{
-	"date": true, "datetime": true, "datetime2": true, "smalldatetime": true,
-}
-
+// isDateColumn keeps the historical name; the type knowledge lives in the
+// shared SQL text package's ColumnType value object, so every client answers
+// "does this column hold a date" the same way. What the date then becomes in a
+// cell is still this package's business.
 func isDateColumn(colType string) bool {
-	base := strings.ToLower(strings.TrimSpace(strings.Split(colType, "(")[0]))
-	if strings.HasPrefix(base, "timestamp") {
-		return true
-	}
-	return dateTypes[base]
+	return tableprosql.NewColumnType(colType).IsDate()
 }
 
 // The layouts a result can arrive in. runSelect renders a driver's time as RFC
@@ -283,7 +278,7 @@ func BuildWorkbook(columns []Column, rows [][]interface{}) ([]byte, error) {
 		return nil, fmt.Errorf("没有列可导出")
 	}
 	if len(rows) > MaxRows {
-		return nil, fmt.Errorf("一次最多导出 %d 行，请翻页或缩小范围", MaxRows)
+		return nil, fmt.Errorf("一次最多导出 %d 行（Excel），请翻页或缩小范围", MaxRows)
 	}
 	f := excelize.NewFile()
 	defer func() { _ = f.Close() }()
