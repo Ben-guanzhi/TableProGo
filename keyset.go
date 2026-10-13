@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"tableprosql"
+	"github.com/Ben-guanzhi/TableProGo/tableprosql"
 )
 
 // Keyset paging for the data grid.

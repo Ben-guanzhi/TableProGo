@@ -1,10 +1,10 @@
-module tableproxlsx
+module github.com/Ben-guanzhi/TableProGo/tableproxlsx
 
 go 1.25.0
 
 require (
+	github.com/Ben-guanzhi/TableProGo/tableprosql v0.1.0
 	github.com/xuri/excelize/v2 v2.11.0
-	tableprosql v0.0.0
 )
 
 require (
@@ -18,4 +18,4 @@ require (
 	golang.org/x/text v0.38.0 // indirect
 )
 
-replace tableprosql => ../tableprosql
+replace github.com/Ben-guanzhi/TableProGo/tableprosql => ../tableprosql

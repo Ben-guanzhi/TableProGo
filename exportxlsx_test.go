@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"tableproxlsx"
+	"github.com/Ben-guanzhi/TableProGo/tableproxlsx"
 )
 
 // The rendering itself is covered in tableproxlsx, which is where it lives. This

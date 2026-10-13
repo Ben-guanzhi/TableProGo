@@ -4,7 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 
-	"tableproxlsx"
+	"github.com/Ben-guanzhi/TableProGo/tableproxlsx"
 )
 
 // WorkbookBase64 turns the rows on screen into an xlsx file, returned base64

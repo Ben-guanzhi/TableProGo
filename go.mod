@@ -35,10 +35,15 @@ require (
 	golang.org/x/text v0.39.0 // indirect
 )
 
-require tableprosql v0.0.0
+// These two modules live inside this repo, so they are pinned to the working
+// tree rather than to a tag: editing tableprosql/ and rebuilding must show the
+// edit, with no step in between. fynequery has no such local copy and instead
+// resolves the same two from the tableprosql/v* / tableproxlsx/v* tags, which
+// is what makes it buildable from its own clone.
+require github.com/Ben-guanzhi/TableProGo/tableprosql v0.1.0
 
-require tableproxlsx v0.0.0
+require github.com/Ben-guanzhi/TableProGo/tableproxlsx v0.1.0
 
-replace tableproxlsx => ./tableproxlsx
+replace github.com/Ben-guanzhi/TableProGo/tableproxlsx => ./tableproxlsx
 
-replace tableprosql => ./tableprosql
+replace github.com/Ben-guanzhi/TableProGo/tableprosql => ./tableprosql

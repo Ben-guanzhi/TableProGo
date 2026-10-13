@@ -1,7 +1,7 @@
 package main
 
 import (
-	"tableprosql"
+	"github.com/Ben-guanzhi/TableProGo/tableprosql"
 
 	"regexp"
 	"strings"

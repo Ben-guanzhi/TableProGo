@@ -15,7 +15,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	_ "github.com/sijms/go-ora/v2"
 
-	"tableproxlsx"
+	"github.com/Ben-guanzhi/TableProGo/tableproxlsx"
 )
 
 // statusOK is the shared success payload of the mutating endpoints.
