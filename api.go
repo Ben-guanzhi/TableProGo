@@ -14,6 +14,8 @@ import (
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	_ "github.com/sijms/go-ora/v2"
+
+	"tableproxlsx"
 )
 
 // statusOK is the shared success payload of the mutating endpoints.
@@ -111,8 +113,8 @@ type exportInsertRequest struct {
 }
 
 type exportXlsxRequest struct {
-	Columns []WorkbookColumn `json:"columns"`
-	Rows    [][]interface{}  `json:"rows"`
+	Columns []tableproxlsx.Column `json:"columns"`
+	Rows    [][]interface{}       `json:"rows"`
 }
 
 type tableActionRequest struct {

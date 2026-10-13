@@ -9,7 +9,7 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.22
 	github.com/sijms/go-ora/v2 v2.9.0
 	github.com/wailsapp/wails/v3 v3.0.0-beta.24
-	github.com/xuri/excelize/v2 v2.11.0
+	github.com/xuri/excelize/v2 v2.11.0 // indirect
 	github.com/zalando/go-keyring v0.2.8
 )
 
@@ -36,5 +36,9 @@ require (
 )
 
 require tableprosql v0.0.0
+
+require tableproxlsx v0.0.0
+
+replace tableproxlsx => ./tableproxlsx
 
 replace tableprosql => ./tableprosql
