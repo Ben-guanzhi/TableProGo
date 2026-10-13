@@ -50,25 +50,42 @@ func isDateColumn(colType string) bool {
 	return tableprosql.NewColumnType(colType).IsDate()
 }
 
-// The layouts a result can arrive in. runSelect renders a driver's time as RFC
-// 3339, so it comes first and covers both the offset and the fraction; the
-// rest are dates and times the tables themselves hold as text, and a seconds
-// layout also accepts a fraction the layout does not spell out.
-var workbookTimeLayouts = []string{
-	time.RFC3339Nano,
-	"2006-01-02T15:04:05",
-	"2006-01-02 15:04:05",
-	"2006-01-02",
-	"2006/01/02 15:04:05",
-	"2006/01/02",
-}
+// The layouts a result can arrive in, grouped by the separator each one needs
+// between the date half and the clock half. runSelect renders a driver's time
+// as RFC 3339, so it comes first and covers both the offset and the fraction;
+// the rest are dates and times the tables themselves hold as text, and a
+// seconds layout also accepts a fraction the layout does not spell out.
+//
+// A layout can only match a value that carries its separator - the date half
+// is digits and dashes alone, so a 'T' in the text means an ISO shape, a ' '
+// means the spaced shape, and neither means a bare date. Dispatching on the
+// separator spares the doomed time.Parse calls the flat walk used to pay per
+// date cell, and drops the entries that were literal duplicates of earlier
+// layouts, doomed by identity. Relative order within a shape is the old
+// list's, so which layout answers a value is unchanged - including the short
+// forms a one-digit month, day or hour produces ("2026-1-2", "2026-1-2 3:4:5"),
+// which is why the gate reads the separator instead of a fixed length.
+var (
+	isoTimeLayouts    = []string{time.RFC3339Nano, "2006-01-02T15:04:05"}
+	spacedTimeLayouts = []string{"2006-01-02 15:04:05"}
+	plainDateLayouts  = []string{"2006-01-02"}
+)
 
 func parseWorkbookTime(text string) (time.Time, bool) {
 	value := strings.TrimSpace(text)
 	if len(value) < 8 {
 		return time.Time{}, false
 	}
-	for _, layout := range workbookTimeLayouts {
+	var candidates []string
+	switch {
+	case strings.IndexByte(value, 'T') >= 0:
+		candidates = isoTimeLayouts
+	case strings.IndexByte(value, ' ') >= 0:
+		candidates = spacedTimeLayouts
+	default:
+		candidates = plainDateLayouts
+	}
+	for _, layout := range candidates {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed, true
 		}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xuri/excelize/v2"
 )
@@ -393,6 +394,72 @@ func BenchmarkBuildWorkbook(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		if _, err := BuildWorkbook(columns, rows); err != nil {
 			b.Fatalf("BuildWorkbook: %v", err)
+		}
+	}
+}
+
+// oldParseWorkbookTime is the pre-dispatch walk kept verbatim as the oracle:
+// six layouts - two of them literal duplicates - tried in order against every
+// value. The shape dispatch may only skip layouts that could never answer;
+// for every text a grid can hold, the time it lands on and the yes/no itself
+// must be identical to this.
+func oldParseWorkbookTime(text string) (time.Time, bool) {
+	value := strings.TrimSpace(text)
+	if len(value) < 8 {
+		return time.Time{}, false
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// TestParseWorkbookTimeDispatchesWithoutChangingAnswers pins the equivalence
+// over the shapes a browsed date column really holds plus the near misses:
+// one-digit months and days (which is why the gate reads the separator, not
+// a fixed length), fractions, offsets, space-time duplicates of the old
+// list, and text that is not a date at all.
+func TestParseWorkbookTimeDispatchesWithoutChangingAnswers(t *testing.T) {
+	inputs := []string{
+		"2026-02-03",
+		"2026-2-3",
+		"  2026-02-03  ",
+		"2026-02-03T14:05:06",
+		"2026-2-3T4:5:6",
+		"2026-02-03T14:05:06.123",
+		"2026-02-03T14:05:06Z",
+		"2026-02-03T14:05:06.000000000Z",
+		"2026-02-03T14:05:06+08:00",
+		"2026-02-03T14:05:06-05:30",
+		"2026-02-03 14:05:06",
+		"2026-2-3 4:5:6",
+		"2026-02-03 14:05:06.7",
+		"20260203",
+		"2026-02-03T",
+		"2026-02-03 UTC",
+		"not a date",
+		"",
+		"0001-01-01",
+		"9999-12-31",
+		"2026-13-01",
+		"2026-02-30",
+	}
+	for _, in := range inputs {
+		got, gotOK := parseWorkbookTime(in)
+		want, wantOK := oldParseWorkbookTime(in)
+		if gotOK != wantOK || (gotOK && !got.Equal(want)) {
+			t.Errorf("parseWorkbookTime(%q) = %v/%v, old walk gave %v/%v",
+				in, got, gotOK, want, wantOK)
 		}
 	}
 }

@@ -46,23 +46,37 @@ func insertScript(
 		colTypes[i] = colType
 	}
 
-	statements := make([]string, 0, len(rows))
+	// The head is the same text in every row: it was re-joined per row before,
+	// which is one strings.Join and one throwaway statement string per row for
+	// a constant. Rendering into one grown builder instead of a slice of
+	// statements plus a final Join also drops the second full copy of the
+	// script. CLRS ch17's dynamic-table analysis: appending without a bound
+	// costs O(1) amortised but a real doubling copy per grow - paying for the
+	// size once up front is cheaper than being clever about it.
+	head := "INSERT INTO " + name + " (" + strings.Join(idents, ", ") + ") VALUES ("
+	var script strings.Builder
+	script.Grow(len(rows) * (len(head) + 32))
 	for i, row := range rows {
 		if len(row) != len(resultColumns) {
 			return "", fmt.Errorf("第 %d 行有 %d 个值，和 %d 列对不上", i+1, len(row), len(resultColumns))
 		}
-		values := make([]string, len(row))
+		if i > 0 {
+			script.WriteByte('\n')
+		}
+		script.WriteString(head)
 		for j, value := range row {
 			literal, err := valueLiteral(dbType, colTypes[j], value)
 			if err != nil {
 				return "", fmt.Errorf("第 %d 行的 %s：%w", i+1, resultColumns[j], err)
 			}
-			values[j] = literal
+			if j > 0 {
+				script.WriteString(", ")
+			}
+			script.WriteString(literal)
 		}
-		statements = append(statements, fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s);",
-			name, strings.Join(idents, ", "), strings.Join(values, ", ")))
+		script.WriteString(");")
 	}
-	return strings.Join(statements, "\n"), nil
+	return script.String(), nil
 }
 
 // InsertScript turns the rows on screen into a script that recreates them. It
