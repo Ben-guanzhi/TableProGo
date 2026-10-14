@@ -21,19 +21,38 @@ tasks:
     cmds:
       - go run .
 
+  test:
+    desc: Run all tests (add -race to catch data races)
+    cmds:
+      - go test ./...
+
+  vet:
+    desc: Run go vet on all packages
+    cmds:
+      - go vet ./...
+
+  check:
+    desc: Format check, vet, and test all packages
+    cmds:
+      - task: vet
+      - task: test
+
   clean:
     desc: Clean build artifacts
     cmds:
-      - rm -rf {{.BUILD_DIR}}
+      - cmd: rm -rf {{.BUILD_DIR}}
+        platforms: [linux, darwin]
+      - cmd: Remove-Item -Recurse -Force {{.BUILD_DIR}} -ErrorAction SilentlyContinue
+        platforms: [windows]
 
   frontend:build:
     desc: Build frontend
-    dir: {{.FRONTEND_DIR}}
+    dir: "{{.FRONTEND_DIR}}"
     cmds:
       - npm run build
 
   frontend:install:
     desc: Install frontend dependencies
-    dir: {{.FRONTEND_DIR}}
+    dir: "{{.FRONTEND_DIR}}"
     cmds:
       - npm install

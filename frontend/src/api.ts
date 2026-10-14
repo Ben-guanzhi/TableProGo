@@ -1,8 +1,13 @@
-import { ChangeSet, ForeignKeyInfo, HistoryEntry, PreviewCursor, SqlFilter } from './types';
+import { ChangeSet, ColumnInfo, Connection, ConnectionConfig, ForeignKeyInfo, HistoryEntry, PreviewCursor, QueryResult, SqlFilter, TableInfo } from './types';
 
 // Injected by the Go asset handler; the ?apiPort= fallback keeps the vite dev
 // server usable from a plain browser.
-const API_PORT = (window as any).__API_PORT__
+declare global {
+  interface Window {
+    __API_PORT__?: string;
+  }
+}
+const API_PORT = window.__API_PORT__
   ?? new URLSearchParams(window.location.search).get('apiPort');
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
@@ -26,15 +31,15 @@ async function get(path: string): Promise<any> {
   return data;
 }
 
-export async function GetConnections(): Promise<any[]> {
+export async function GetConnections(): Promise<Connection[]> {
   return get('/api/connections');
 }
 
-export async function AddConnection(config: any): Promise<void> {
+export async function AddConnection(config: ConnectionConfig): Promise<void> {
   await post('/api/connections', config);
 }
 
-export async function UpdateConnection(config: any): Promise<void> {
+export async function UpdateConnection(config: ConnectionConfig): Promise<void> {
   await post('/api/connections/update', config);
 }
 
@@ -42,7 +47,7 @@ export async function DeleteConnection(id: string): Promise<void> {
   await post('/api/connections/delete', { id });
 }
 
-export async function TestConnection(config: any): Promise<void> {
+export async function TestConnection(config: ConnectionConfig): Promise<void> {
   await post('/api/test-connection', config);
 }
 
@@ -58,7 +63,7 @@ export async function GetDatabases(connId: string): Promise<string[]> {
   return post('/api/databases', { connId });
 }
 
-export async function GetTables(connId: string, database: string, schema = ''): Promise<any[]> {
+export async function GetTables(connId: string, database: string, schema = ''): Promise<TableInfo[]> {
   return post('/api/tables', { connId, database, schema });
 }
 
@@ -66,7 +71,7 @@ export async function GetSchemas(connId: string, database: string): Promise<stri
   return post('/api/schemas', { connId, database });
 }
 
-export async function GetColumns(connId: string, database: string, schema: string, table: string): Promise<any[]> {
+export async function GetColumns(connId: string, database: string, schema: string, table: string): Promise<ColumnInfo[]> {
   return post('/api/columns', { connId, database, schema, table });
 }
 
@@ -212,13 +217,13 @@ export async function ClearHistory(filter: HistoryFilter): Promise<number> {
   return data.removed;
 }
 
-export async function ExecuteQuery(connId: string, query: string, database = ''): Promise<any> {
+export async function ExecuteQuery(connId: string, query: string, database = ''): Promise<QueryResult> {
   return post('/api/execute', { connId, query, database });
 }
 
 // Columns of whichever table the query reads from; used for result comments
 // and editor completion without parsing SQL on this side.
-export async function QueryColumns(connId: string, query: string, database = ''): Promise<any[]> {
+export async function QueryColumns(connId: string, query: string, database = ''): Promise<ColumnInfo[]> {
   return post('/api/query-columns', { connId, query, database });
 }
 
@@ -244,6 +249,13 @@ export async function BuildChanges(set: ChangeSet): Promise<string[]> {
 export async function ApplyChanges(set: ChangeSet): Promise<number> {
   const data = await post('/api/apply-changes', set);
   return data.appliedRows;
+}
+
+// Starter DDL for "新建表"; the dialect lives in the shared SQL text package
+// so the webview and the Fyne client open on one template.
+export async function GetCreateTableTemplate(dbType: string, schema: string): Promise<string> {
+  const data = await post('/api/create-table-template', { dbType, schema });
+  return data.template;
 }
 
 export type Theme = 'system' | 'light' | 'dark';export interface AppSettings {

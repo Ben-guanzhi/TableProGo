@@ -168,8 +168,8 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 		}
 	}
 	a.connectionsMu.RUnlock()
-	// Connection ids are index-based, so sorting them keeps results stable
-	// between keystrokes instead of reshuffling with the map.
+	// Sort by ID so results are stable between keystrokes instead of
+	// reshuffling with the map's random iteration order.
 	sort.Slice(conns, func(i, j int) bool { return conns[i].ID < conns[j].ID })
 
 	found := []ObjectMatch{}

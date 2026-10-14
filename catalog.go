@@ -72,12 +72,12 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 }
 
 // savedDatabaseFilter reads the filter from the persisted config so a change
-// applies to an already-open connection without reconnecting. IDs are
-// index-based, matching Connect.
+// applies to an already-open connection without reconnecting. IDs are stable
+// UUIDs, so the cache is keyed by the connection's own ID.
 // 使用缓存 map 将线性查找 O(n) 降为 O(1)（CLRS ch11 哈希表）。
 //
-// 缓存键是位置编号 conn_%d，因此任何会移动位置的操作（增删连接）或改过滤器的
-// 操作（更新连接）都必须失效缓存——见 App.invalidateConnFilterCacheLocked。
+// 缓存键是连接的稳定 UUID，因此新增连接不需要失效缓存；删除连接时只需删除
+// 对应键；更新连接时需删除该连接的缓存键。
 // 缓存本身的写入走写锁：早先在 RLock 内写 map 会与并发的读路径竞态。
 func (a *App) savedDatabaseFilter(connID string) DatabaseFilter {
 	a.connectionsMu.RLock()
@@ -94,17 +94,18 @@ func (a *App) savedDatabaseFilter(connID string) DatabaseFilter {
 	if a.connFilterCache == nil {
 		a.connFilterCache = make(map[string]DatabaseFilter, len(a.savedConnections))
 	}
-	for i, saved := range a.savedConnections {
-		if id := fmt.Sprintf("conn_%d", i); id == connID {
-			a.connFilterCache[id] = saved.DatabaseFilter
-			return saved.DatabaseFilter
+	for i := range a.savedConnections {
+		if a.savedConnections[i].ID == connID {
+			a.connFilterCache[connID] = a.savedConnections[i].DatabaseFilter
+			return a.savedConnections[i].DatabaseFilter
 		}
 	}
 	return DatabaseFilter{}
 }
 
 // invalidateConnFilterCacheLocked 丢弃整个过滤器缓存。调用方必须已持有
-// connectionsMu 写锁。位置编号会被增删连接整体移位，逐键删不安全，直接清空。
+// connectionsMu 写锁。保留为兜底手段：saveToFile 折叠其它客户端的连接时
+// 不确定影响了哪些键，直接清空最安全。
 func (a *App) invalidateConnFilterCacheLocked() {
 	a.connFilterCache = nil
 }

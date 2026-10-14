@@ -18,6 +18,7 @@ import ConnectionDialog from './components/ConnectionDialog';
 import ConfirmDialog, { ConfirmRequest } from './components/ConfirmDialog';
 import {
   Connection,
+  ConnectionConfig,
   DatabaseFilter,
   Tab,
   QueryResult,
@@ -54,11 +55,9 @@ import {
   TableRef,
   ObjectMatch,
   AppSettings,
+  GetCreateTableTemplate,
 } from './api';
 import { applyTheme } from './theme';
-// The starter DDL comes from the shared SQL text package through the
-// generated binding, so the webview and the Fyne client open on one template.
-import { GetCreateTableTemplate } from '@bindings/tablepro-go/app';
 
 // Result columns are matched to table metadata by name, which is all a
 // projection tells us once aliases and expressions get involved.
@@ -766,7 +765,7 @@ function App() {
     );
   };
 
-  const handleAddConnection = async (config: any) => {
+  const handleAddConnection = async (config: ConnectionConfig) => {
     try {
       await AddConnection(config);
       await loadConnections();
@@ -776,7 +775,7 @@ function App() {
     }
   };
 
-  const handleUpdateConnection = async (config: any) => {
+  const handleUpdateConnection = async (config: ConnectionConfig) => {
     try {
       await UpdateConnection(config);
       await loadConnections();
@@ -790,7 +789,7 @@ function App() {
   // The backend re-reads the filter from the saved config, so an open
   // connection picks it up on its next refresh without reconnecting.
   const handleSaveDatabaseFilter = async (connection: Connection, filter: DatabaseFilter) => {
-    await UpdateConnection({ ...connection, databaseFilter: filter });
+    await UpdateConnection({ ...connection, password: connection.password ?? '', databaseFilter: filter });
     await loadConnections();
     // The tab's database picker keeps its own copy of the server list, which
     // would otherwise still offer the databases the navigator just hid.
@@ -816,7 +815,7 @@ function App() {
     }
   };
 
-  const handleTestConnection = async (config: any): Promise<boolean> => {
+  const handleTestConnection = async (config: ConnectionConfig): Promise<boolean> => {
     try {
       await TestConnection(config);
       return true;

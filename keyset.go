@@ -46,9 +46,8 @@ type keyColumn struct {
 // cursor statement, so the risk of getting the placeholder wrong outweighs a
 // saving those engines have not been measured to give.
 func keysetKeys(dbType string, columns []ColumnInfo, columnsErr error) []keyColumn {
-	switch dbType {
-	case "mysql", "postgresql", "sqlite":
-	default:
+	d, ok := tableprosql.DialectFor(dbType)
+	if !ok || !d.KeysetEnabled {
 		return nil
 	}
 	if columnsErr != nil {

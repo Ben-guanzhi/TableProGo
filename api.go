@@ -73,6 +73,11 @@ type sqlNameRequest struct {
 	Scope string `json:"scope"`
 }
 
+type createTableTemplateRequest struct {
+	DBType string `json:"dbType"`
+	Schema string `json:"schema"`
+}
+
 type queryRequest struct {
 	ConnID   string `json:"connId"`
 	Query    string `json:"query"`
@@ -313,6 +318,9 @@ func (a *App) startHTTPServerOnListener(listener net.Listener) {
 			return nil, err
 		}
 		return map[string]string{"name": name}, nil
+	})
+	post(a, mux, "/api/create-table-template", 400, func(a *App, body createTableTemplateRequest) (any, error) {
+		return map[string]string{"template": a.GetCreateTableTemplate(body.DBType, body.Schema)}, nil
 	})
 	post(a, mux, "/api/build-changes", 400, func(a *App, set ChangeSet) (any, error) {
 		statements, err := a.PreviewChanges(set)

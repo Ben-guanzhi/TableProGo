@@ -1,14 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import {
   FiArrowDown,
   FiArrowUp,
-  FiCheck,
   FiChevronDown,
   FiCopy,
   FiDownload,
   FiFilter,
-  FiLoader,
   FiPlus,
   FiSearch,
   FiTrash2,
@@ -20,41 +18,46 @@ import {
   BuildChanges,
   ExportInsertStatements,
   ExportWorkbook,
-  ForeignKeyCandidates,
   GetColumns,
   GetForeignKeyValues,
   GetTableForeignKeys,
 } from '../api';
 import { copyText } from '../clipboard';
 import { scrollBehavior } from '../motion';
-import { ChangeSet, ForeignKeyInfo, QueryResult, TableRef } from '../types';
+import { ChangeSet, QueryResult, TableRef } from '../types';
 import {
-  addRow,
   buildView,
   cellText,
-  ChangeQueue,
   ColumnFilter,
   copyValues,
   cycleActive,
-  describeCandidate,
   displayCell,
-  dropRow,
-  emptyQueue,
-  filterCandidates,
+  filterLabels,
   FilterOp,
+  opNeedsValue,
   foreignKeyFor,
   NewRow,
   queueCounts,
-  setRowValue,
-  SortState,
   toCSV,
   toJSON,
   toMarkdown,
   toRowChanges,
-  toggleDelete,
-  withEdit,
 } from '../gridView';
+import { download, downloadBlob } from '../datagrid/download';
+import { columnReducer, emptyColumnState } from '../datagrid/columnState';
+import { editReducer, emptyEditState } from '../datagrid/editorState';
+import { fkReducer, emptyFKState, highlightedIndex, pickerList } from '../datagrid/fkState';
+import {
+  MANUAL_MAX_WIDTH,
+  MANUAL_MIN_WIDTH,
+  ROW_NUMBER_WIDTH,
+  useColumnWidths,
+} from '../datagrid/geometry';
+import { optionId, PICKER_HEIGHT } from '../datagrid/picker';
 import ErrorBanner from './ErrorBanner';
+import FKPickerPanel from './FKPickerPanel';
+import FilterMenu, { MenuItem } from './FilterMenu';
+import ReviewDialog from './ReviewDialog';
 
 interface DataGridProps {
   result: QueryResult;
@@ -74,14 +77,6 @@ interface DataGridProps {
   onPendingChange?: (total: number) => void;
 }
 
-// Narrow enough for dense tables, wide enough that a short column name and its
-// type label both stay readable in the header.
-const MIN_WIDTH = 88;
-const MAX_WIDTH = 360;
-const MANUAL_MIN_WIDTH = 40;
-const MANUAL_MAX_WIDTH = 1600;
-const ROW_NUMBER_WIDTH = 64;
-
 // The open candidate list: which cell it belongs to and where to draw it. The
 // values themselves come from the per-column cache, so this stays about position.
 interface FKPicker {
@@ -93,55 +88,8 @@ interface FKPicker {
   error: string;
 }
 
-// Tall enough to scan a few dozen keys, short enough that the cell it belongs to
-// stays on screen.
-const PICKER_HEIGHT = 264;
-
-// Only one list is ever open, so its rows can be numbered from the position; the
-// editor points at the highlighted one with aria-activedescendant.
-const optionId = (index: number) => `fk-option-${index}`;
-
 // Sorting and filtering work on the rows already on screen; the grid never
 // re-queries, so what is ordered here is exactly what was read (see gridView.ts).
-const filterLabels: Record<FilterOp, string> = {
-  eq: '等于',
-  ne: '不等于',
-  contains: '包含',
-  null: '为空',
-  notNull: '不为空',
-};
-
-const opNeedsValue = (op: FilterOp) => op === 'eq' || op === 'ne' || op === 'contains';
-
-// Widths are sampled rather than auto-laid-out so the grid keeps a stable,
-// column-first look instead of stretching to the viewport.
-const useColumnWidths = (result: QueryResult) =>
-  useMemo(() => {
-    const columns = result.columns ?? [];
-    const rows = result.rows ?? [];
-    return columns.map((col, i) => {
-      let longest = col.name.length * 7 + 28;
-      for (let r = 0; r < Math.min(rows.length, 50); r++) {
-        const text = cellText(rows[r][i]);
-        if (text) longest = Math.max(longest, Math.min(text.length, 46) * 7 + 24);
-      }
-      return Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, longest));
-    });
-  }, [result]);
-
-const downloadBlob = (name: string, blob: Blob) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = name;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-};
-
-const download = (name: string, mime: string, text: string) =>
-  downloadBlob(name, new Blob([text], { type: mime }));
 
 // One row of the grid body: a fetched row addressed by its position in `rows`,
 // or a queued new row that has no position yet.
@@ -156,27 +104,6 @@ interface BodyRow {
 // what each column holds.
 type ExportFormat = 'csv' | 'json' | 'markdown' | 'xlsx' | 'sql';
 
-const MenuItem: React.FC<{
-  label: string;
-  icon?: React.ReactNode;
-  active?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}> = ({ label, icon, active, disabled, onClick }) => (
-  <button
-    className={`w-full flex items-center gap-2 px-2.5 py-1 text-left hover:bg-raised disabled:opacity-40 ${
-      active ? 'text-accent' : 'text-ink'
-    }`}
-    onClick={onClick}
-    disabled={disabled}
-  >
-    <span className="w-3.5 shrink-0 flex items-center justify-center">
-      {active ? <FiCheck size={11} /> : icon}
-    </span>
-    <span className="truncate">{label}</span>
-  </button>
-);
-
 const DataGrid: React.FC<DataGridProps> = ({
   result,
   comments,
@@ -187,51 +114,26 @@ const DataGrid: React.FC<DataGridProps> = ({
   onApplied,
   onPendingChange,
 }) => {
-  const [selected, setSelected] = useState<number | null>(null);
-  const [overrides, setOverrides] = useState<Record<string, number>>({});
-  const [locate, setLocate] = useState('');
-  const [activeMatch, setActiveMatch] = useState(0);
-  const scrollerRef = useRef<HTMLDivElement>(null);
+  // Three clusters, one reducer each, so the transition table of every cluster is
+  // readable on its own. The clusters barely touch: only the FK picker reaches
+  // into the editor, by committing the cell it opened.
+  const [editor, dispatchEditor] = useReducer(editReducer, undefined, emptyEditState);
+  const [gridCols, dispatchColumns] = useReducer(columnReducer, undefined, emptyColumnState);
+  const [fk, dispatchFk] = useReducer(fkReducer, undefined, emptyFKState);
 
-  // Everything waiting for the database: edited cells, rows to insert, rows to
-  // delete. Nothing reaches the server until the user applies the queue.
-  const [queue, setQueue] = useState<ChangeQueue>(emptyQueue);
-  // Ids for queued new rows, so typing in one cannot renumber another.
-  const rowSeq = useRef(1);
-  // Which cell holds the open editor: `u<row>` for a fetched row, `n<id>` for a
-  // queued one, since the two are numbered independently.
-  const [editing, setEditing] = useState<{ key: string; column: string } | null>(null);
+  const { queue, selected, editing, draft, review, applying, applyError, statements, planError } = editor;
+  const { overrides, locate, activeMatch, sort, filters, menu, filterDraft, exportMenu } = gridCols;
+  const { picker, query: fkQuery, activeOption, lists: fkLists, foreignKeys } = fk;
+
   // The table's own key columns, read from the catalog: a duplicate leaves them
-  // out, so the copy gets an identity instead of colliding with its source.
+  // out, so the copy gets an identity instead of colliding with its source. Left
+  // as its own state because it is fetched per source and read only by a copy.
   const [keyNames, setKeyNames] = useState<string[]>([]);
-  // Constraints of the edited table, so a cell knows it holds a reference and can
-  // offer a list instead of a bare text box.
-  const [foreignKeys, setForeignKeys] = useState<ForeignKeyInfo[]>([]);
-  // Candidate values per column, kept after the first read so reopening a cell
-  // costs nothing.
-  const [fkLists, setFkLists] = useState<Record<string, ForeignKeyCandidates>>({});
-  const [picker, setPicker] = useState<FKPicker | null>(null);
-  // What has been typed since the list opened. The cell's own value stays in the
-  // editor, so the list starts full and narrows only once typing starts.
-  const [fkQuery, setFkQuery] = useState('');
-  // -1 until the arrow keys or the list itself place the highlight somewhere.
-  const [activeOption, setActiveOption] = useState(-1);
-  const [draft, setDraft] = useState('');
-  const [statements, setStatements] = useState<string[]>([]);
-  const [planError, setPlanError] = useState('');
-  const [review, setReview] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState('');
 
-  const [sort, setSort] = useState<SortState | null>(null);
-  const [filters, setFilters] = useState<Record<string, ColumnFilter>>({});
-  const [menu, setMenu] = useState<{ x: number; y: number; column: string; op: FilterOp | null } | null>(
-    null,
-  );
-  const [filterDraft, setFilterDraft] = useState('');
-  // Where the export menu hangs from the toolbar button. It is rendered next to
-  // the button, so Tab walks straight into the items.
-  const [exportMenu, setExportMenu] = useState<{ left: number; top: number } | null>(null);
+  // Ids for queued new rows, so typing in one cannot renumber another. A ref, not
+  // state: it never re-renders and never needs to.
+  const rowSeq = useRef(1);
+  const scrollerRef = useRef<HTMLDivElement>(null);
 
   const autoWidths = useColumnWidths(result);
   const columns = result.columns ?? [];
@@ -273,8 +175,7 @@ const DataGrid: React.FC<DataGridProps> = ({
     : '';
   useEffect(() => {
     if (!editSource) {
-      setKeyNames([]);
-      setForeignKeys([]);
+      dispatchFk({ type: 'constraintsSet', foreignKeys: [] });
       return;
     }
     let current = true;
@@ -288,14 +189,13 @@ const DataGrid: React.FC<DataGridProps> = ({
     );
     // A source of its own is a catalog of its own: values cached for the previous
     // table would be another table's keys.
-    setFkLists({});
-    setForeignKeys([]);
+    dispatchFk({ type: 'fkReset' });
     GetTableForeignKeys(editSource).then(
       list => {
-        if (current) setForeignKeys(list);
+        if (current) dispatchFk({ type: 'constraintsSet', foreignKeys: list });
       },
       () => {
-        if (current) setForeignKeys([]);
+        if (current) dispatchFk({ type: 'constraintsSet', foreignKeys: [] });
       },
     );
     return () => {
@@ -319,14 +219,9 @@ const DataGrid: React.FC<DataGridProps> = ({
   // selection is a position too, so it goes: without dropping it, 复制行/删除行
   // would act on whichever row moved into that slot.
   useEffect(() => {
-    setQueue(emptyQueue());
-    setSelected(null);
-    setEditing(null);
-    setReview(false);
-    setApplyError('');
-    setMenu(null);
-    setPicker(null);
-    setExportMenu(null);
+    dispatchEditor({ type: 'editReset' });
+    dispatchColumns({ type: 'columnReset' });
+    dispatchFk({ type: 'fkReset' });
     // Sorting and filtering are views over the columns, not the rows, so a
     // reload keeps them; a name that no longer exists simply matches nothing.
   }, [result]);
@@ -335,7 +230,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   // the click or scroll that would detach it happens.
   useEffect(() => {
     if (!menu) return;
-    const close = () => setMenu(null);
+    const close = () => dispatchColumns({ type: 'menuClose' });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
@@ -355,7 +250,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   // Tab walks straight into the items because they sit next to the button.
   useEffect(() => {
     if (!exportMenu) return;
-    const close = () => setExportMenu(null);
+    const close = () => dispatchColumns({ type: 'exportMenuClose' });
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
@@ -387,8 +282,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   // screen is the text that will run - the server never takes SQL from here.
   useEffect(() => {
     if (!editSource || counts.total === 0) {
-      setStatements([]);
-      setPlanError('');
+      dispatchEditor({ type: 'preview', statements: [], error: '' });
       return;
     }
     const set = changeSet();
@@ -397,13 +291,11 @@ const DataGrid: React.FC<DataGridProps> = ({
     BuildChanges(set).then(
       list => {
         if (!current) return;
-        setStatements(list);
-        setPlanError('');
+        dispatchEditor({ type: 'preview', statements: list, error: '' });
       },
       error => {
         if (!current) return;
-        setStatements([]);
-        setPlanError((error as Error).message);
+        dispatchEditor({ type: 'preview', statements: [], error: (error as Error).message });
       },
     );
     return () => {
@@ -413,35 +305,27 @@ const DataGrid: React.FC<DataGridProps> = ({
   }, [queue, editSource, counts.total, result]);
 
   const commitEdit = (target: BodyRow, column: string, value: string) => {
-    setEditing(null);
-    setPicker(null);
+    dispatchFk({ type: 'pickerClose' });
     if (target.fresh) {
-      const fresh = target.fresh;
-      setQueue(current => setRowValue(current, fresh.id, column, value));
+      dispatchEditor({ type: 'editCommitFresh', id: target.fresh.id, column, value });
       return;
     }
+    // The edit is taken against the original cell text, not the display text: a
+    // value that reads the same but means something else must not be dropped.
     const index = columns.findIndex(c => c.name === column);
-    const original = index >= 0 ? cellText(rows[target.index]?.[index]) : '';
-    setQueue(current => ({
-      ...current,
-      updates: withEdit(current.updates, target.index, column, original, value),
-    }));
+    dispatchEditor({
+      type: 'editCommitFetched',
+      index: target.index,
+      column,
+      value,
+      original: index >= 0 ? cellText(rows[target.index]?.[index]) : '',
+    });
   };
 
   const startEdit = (target: BodyRow, column: string, current: string) => {
     if (!editSource) return;
-    setEditing({ key: target.key, column });
-    setDraft(current);
+    dispatchEditor({ type: 'editBegin', key: target.key, column, value: current });
   };
-
-  // The rows the list shows for the text typed into the cell.
-  const shownCandidates = (candidate: ForeignKeyCandidates | undefined) =>
-    candidate ? filterCandidates(candidate.values, fkQuery) : [];
-
-  // Which row that leaves highlighted, clamped so narrowing the list cannot keep
-  // a highlight on a row that has disappeared - Enter would take an unseen value.
-  const highlightedRow = (length: number) =>
-    length ? Math.max(0, Math.min(activeOption, length - 1)) : -1;
 
   // Read the referenced table once per column and keep the answer, so reopening a
   // cell costs nothing. A failure lands on the cell, not the grid: the editor is
@@ -450,16 +334,8 @@ const DataGrid: React.FC<DataGridProps> = ({
     if (!editSource || fkLists[column.toLowerCase()]) return;
     const cacheKey = column.toLowerCase();
     GetForeignKeyValues(editSource, column).then(
-      list =>
-        setFkLists(current =>
-          current[cacheKey] ? current : { ...current, [cacheKey]: list },
-        ),
-      error =>
-        setPicker(current =>
-          current && current.rowKey === rowKey && current.column === column
-            ? { ...current, error: (error as Error).message }
-            : current,
-        ),
+      list => dispatchFk({ type: 'listSet', key: cacheKey, value: list }),
+      error => dispatchFk({ type: 'pickerError', rowKey, column, error: (error as Error).message }),
     );
   };
 
@@ -473,7 +349,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   ) => {
     if (!editSource) return;
     if (picker && picker.rowKey === target.key && picker.column === column) {
-      setPicker(null);
+      dispatchFk({ type: 'pickerClose' });
       return;
     }
     // The arrow takes the click without moving focus, so an editor left open in
@@ -488,19 +364,20 @@ const DataGrid: React.FC<DataGridProps> = ({
     const cell = (anchor.closest('td') ?? anchor) as HTMLElement;
     const rect = cell.getBoundingClientRect();
     const width = Math.max(rect.width, 180);
-    setPicker({
-      rowKey: target.key,
-      column,
-      left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
-      top:
-        window.innerHeight - rect.bottom - 8 < PICKER_HEIGHT
-          ? Math.max(4, rect.top - PICKER_HEIGHT - 2)
-          : rect.bottom + 2,
-      width,
-      error: '',
+    dispatchFk({
+      type: 'pickerOpen',
+      picker: {
+        rowKey: target.key,
+        column,
+        left: Math.max(4, Math.min(rect.left, window.innerWidth - width - 4)),
+        top:
+          window.innerHeight - rect.bottom - 8 < PICKER_HEIGHT
+            ? Math.max(4, rect.top - PICKER_HEIGHT - 2)
+            : rect.bottom + 2,
+        width,
+        error: '',
+      },
     });
-    setActiveOption(-1);
-    setFkQuery('');
     readCandidates(target.key, column);
   };
 
@@ -509,14 +386,14 @@ const DataGrid: React.FC<DataGridProps> = ({
   // on screen.
   const pickerState = () => {
     const read = picker ? fkLists[picker.column.toLowerCase()] : undefined;
-    const list = shownCandidates(read);
+    const list = pickerList(fk);
     // A list opened on a cell that already holds a key starts on that row, so the
     // arrow keys go to a neighbour instead of jumping back onto the same value.
     const own = list.findIndex(candidate => candidate.value === draft);
     return {
       read,
       list,
-      active: list.length ? (activeOption < 0 ? Math.max(own, 0) : highlightedRow(list.length)) : -1,
+      active: list.length ? (activeOption < 0 ? Math.max(own, 0) : highlightedIndex(activeOption, list.length)) : -1,
       loading: !!picker && !read && !picker.error,
     };
   };
@@ -527,7 +404,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   useEffect(() => {
     if (!picker) return;
     const scroller = scrollerRef.current;
-    const close = () => setPicker(null);
+    const close = () => dispatchFk({ type: 'pickerClose' });
     scroller?.addEventListener('scroll', close, { passive: true });
     return () => scroller?.removeEventListener('scroll', close);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -556,10 +433,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   // database fills in itself.
   const appendRow = () => {
     const id = rowSeq.current++;
-    setQueue(current => addRow(current, id));
-    const first = columns[0]?.name ?? '';
-    setEditing({ key: `n${id}`, column: first });
-    setDraft('');
+    dispatchEditor({ type: 'rowAppend', id, column: columns[0]?.name ?? '' });
     revealTail();
   };
 
@@ -570,32 +444,26 @@ const DataGrid: React.FC<DataGridProps> = ({
     if (selected === null) return;
     const id = rowSeq.current++;
     const shown = columns.map((col, i) => queue.updates[selected]?.[col.name] ?? rows[selected]?.[i] ?? null);
-    setQueue(current => addRow(current, id, copyValues(shown, columns, keyNames)));
+    dispatchEditor({ type: 'rowDuplicate', id, values: copyValues(shown, columns, keyNames) });
     revealTail();
   };
 
   // The delete mark is a toggle, so the same button undoes itself.
   const toggleSelectedDelete = () => {
     if (selected === null) return;
-    setQueue(current => toggleDelete(current, selected));
-    setEditing(null);
+    dispatchEditor({ type: 'deleteToggle', index: selected });
   };
 
   const applyNow = async () => {
     const set = changeSet();
     if (!set) return;
-    setApplying(true);
-    setApplyError('');
+    dispatchEditor({ type: 'applyStart' });
     try {
       await ApplyChanges(set);
-      setApplying(false);
-      setReview(false);
-      setQueue(emptyQueue());
-      setStatements([]);
+      dispatchEditor({ type: 'applyResult', ok: true, error: '' });
       onApplied?.();
     } catch (error) {
-      setApplying(false);
-      setApplyError((error as Error).message);
+      dispatchEditor({ type: 'applyResult', ok: false, error: (error as Error).message });
     }
   };
 
@@ -633,17 +501,13 @@ const DataGrid: React.FC<DataGridProps> = ({
   }
 
   const setWidth = (index: number, name: string, next: number) =>
-    setOverrides(current => ({
-      ...current,
-      [name]: Math.min(MANUAL_MAX_WIDTH, Math.max(MANUAL_MIN_WIDTH, next)),
-    }));
-
-  const resetWidth = (name: string) =>
-    setOverrides(current => {
-      const next = { ...current };
-      delete next[name];
-      return next;
+    dispatchColumns({
+      type: 'widthSet',
+      name,
+      width: Math.min(MANUAL_MAX_WIDTH, Math.max(MANUAL_MIN_WIDTH, next)),
     });
+
+  const resetWidth = (name: string) => dispatchColumns({ type: 'widthReset', name });
 
   const startColumnResize = (e: React.PointerEvent, index: number, name: string) => {
     e.preventDefault();
@@ -655,7 +519,7 @@ const DataGrid: React.FC<DataGridProps> = ({
         MANUAL_MAX_WIDTH,
         Math.max(MANUAL_MIN_WIDTH, startWidth + event.clientX - startX),
       );
-      setOverrides(current => ({ ...current, [name]: next }));
+      dispatchColumns({ type: 'widthSet', name, width: next });
     };
     const up = () => {
       window.removeEventListener('pointermove', move);
@@ -666,7 +530,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   };
 
   const exportAs = async (format: ExportFormat) => {
-    setExportMenu(null);
+    dispatchColumns({ type: 'exportMenuClose' });
     const stem = (exportName || 'result').replace(/[\\/:*?"<>|]+/g, '_');
     // What is on screen is what gets exported, sorting and filter included.
     const visible = view.map(i => rows[i]);
@@ -709,7 +573,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   // The same script, straight to the clipboard - which is how an INSERT usually
   // gets into another window without a file in between.
   const copyInserts = async () => {
-    setExportMenu(null);
+    dispatchColumns({ type: 'exportMenuClose' });
     if (!editSource) return;
     try {
       const script = await ExportInsertStatements(
@@ -726,42 +590,28 @@ const DataGrid: React.FC<DataGridProps> = ({
 
   const openMenu = (e: React.MouseEvent, column: string) => {
     e.preventDefault();
-    setFilterDraft(filters[column]?.value ?? '');
-    setMenu({ x: e.clientX, y: e.clientY, column, op: null });
+    dispatchColumns({ type: 'menuOpen', x: e.clientX, y: e.clientY, column });
   };
 
   const setColumnFilter = (column: string, filter: ColumnFilter | null) => {
-    setFilters(current => {
-      const next = { ...current };
-      if (filter) next[column] = filter;
-      else delete next[column];
-      return next;
-    });
+    dispatchColumns({ type: 'filterSet', column, filter });
   };
 
   const pickFilter = (column: string, op: FilterOp) => {
-    if (opNeedsValue(op)) {
-      setMenu(current => (current ? { ...current, op } : current));
-      return;
-    }
-    setColumnFilter(column, { op, value: '' });
-    setMenu(null);
+    dispatchColumns({ type: 'menuPickOp', op });
   };
 
   const applyFilterDraft = (column: string, op: FilterOp) => {
     setColumnFilter(column, { op, value: filterDraft });
-    setMenu(null);
+    dispatchColumns({ type: 'menuClose' });
   };
 
   const toggleSort = (column: string, dir: 'asc' | 'desc') => {
-    setSort(current => (current?.column === column && current.dir === dir ? null : { column, dir }));
-    setMenu(null);
+    dispatchColumns({ type: 'sortToggle', column, dir });
+    dispatchColumns({ type: 'menuClose' });
   };
 
-  const clearViews = () => {
-    setSort(null);
-    setFilters({});
-  };
+  const clearViews = () => dispatchColumns({ type: 'viewsClear' });
 
   const filterCount = Object.keys(filters).length;
   const isFiltered = filterCount > 0 || !!sort;
@@ -786,14 +636,11 @@ const DataGrid: React.FC<DataGridProps> = ({
           />
           <input
             value={locate}
-            onChange={e => {
-              setLocate(e.target.value);
-              setActiveMatch(0);
-            }}
+            onChange={e => dispatchColumns({ type: 'locateType', value: e.target.value })}
             onKeyDown={e => {
-              if (e.key === 'Escape') setLocate('');
+              if (e.key === 'Escape') dispatchColumns({ type: 'locateClear' });
               if (e.key === 'Enter' && matches.length) {
-                setActiveMatch(m => (m + 1) % matches.length);
+                dispatchColumns({ type: 'locateNext', total: matches.length });
               }
             }}
             placeholder="定位列"
@@ -803,7 +650,7 @@ const DataGrid: React.FC<DataGridProps> = ({
           {locate && (
             <button
               className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 text-muted hover:text-ink"
-              onClick={() => setLocate('')}
+              onClick={() => dispatchColumns({ type: 'locateClear' })}
               title="清空"
               aria-label="清空定位列的搜索词"
             >
@@ -878,9 +725,8 @@ const DataGrid: React.FC<DataGridProps> = ({
             onPointerDown={e => e.stopPropagation()}
             onClick={e => {
               const rect = e.currentTarget.getBoundingClientRect();
-              setExportMenu(current =>
-                current ? null : { left: rect.left, top: rect.bottom + 2 },
-              );
+              if (exportMenu) dispatchColumns({ type: 'exportMenuClose' });
+              else dispatchColumns({ type: 'exportMenuOpen', left: rect.left, top: rect.bottom + 2 });
             }}
           >
             <FiDownload size={11} />
@@ -1018,8 +864,8 @@ const DataGrid: React.FC<DataGridProps> = ({
                   className={`${rowBg} hover:bg-raised/40 cursor-default ${
                     deleting ? 'line-through opacity-70' : ''
                   }`}
-                  onClick={() => {
-                    if (!fresh) setSelected(index);
+                  onClick={e => {
+                    if (!fresh) dispatchEditor({ type: 'editSelect', index });
                   }}
                 >
                   <td
@@ -1037,8 +883,7 @@ const DataGrid: React.FC<DataGridProps> = ({
                           aria-label="撤销这条新增"
                           onClick={e => {
                             e.stopPropagation();
-                            setQueue(current => dropRow(current, fresh.id));
-                            setEditing(ed => (ed?.key === target.key ? null : ed));
+                            dispatchEditor({ type: 'rowDrop', id: fresh.id });
                           }}
                         >
                           <FiX size={11} />
@@ -1120,11 +965,10 @@ const DataGrid: React.FC<DataGridProps> = ({
                             }
                             value={draft}
                             onChange={e => {
-                              setDraft(e.target.value);
+                              dispatchEditor({ type: 'editDraft', value: e.target.value });
                               // Typing narrows the list and puts the highlight back
                               // on its top row.
-                              setFkQuery(e.target.value);
-                              setActiveOption(0);
+                              dispatchFk({ type: 'queryType', value: e.target.value });
                             }}
                             onBlur={() => commitEdit(target, col.name, draft)}
                             onKeyDown={e => {
@@ -1134,13 +978,14 @@ const DataGrid: React.FC<DataGridProps> = ({
                                   e.preventDefault();
                                   e.stopPropagation();
                                   if (open.list.length) {
-                                    setActiveOption(
-                                      cycleActive(
+                                    dispatchFk({
+                                      type: 'activeMove',
+                                      active: cycleActive(
                                         open.active,
                                         e.key === 'ArrowDown' ? 1 : -1,
                                         open.list.length,
                                       ),
-                                    );
+                                    });
                                   }
                                   return;
                                 }
@@ -1156,7 +1001,7 @@ const DataGrid: React.FC<DataGridProps> = ({
                                   // the edit itself.
                                   e.preventDefault();
                                   e.stopPropagation();
-                                  setPicker(null);
+                                  dispatchFk({ type: 'pickerClose' });
                                   return;
                                 }
                               }
@@ -1168,8 +1013,8 @@ const DataGrid: React.FC<DataGridProps> = ({
                                 // Cancel this edit only: a value already pending
                                 // stays pending rather than being wiped to the original.
                                 e.preventDefault();
-                                setEditing(null);
-                                setPicker(null);
+                                dispatchEditor({ type: 'editClose' });
+                                dispatchFk({ type: 'pickerClose' });
                               }
                             }}
                             className={`w-full bg-canvas border border-accent rounded py-0 px-1 text-[0.8125rem] text-ink focus:outline-none ${
@@ -1232,168 +1077,45 @@ const DataGrid: React.FC<DataGridProps> = ({
         )}
       </div>
 
-      {picker &&
-        pickerNow &&
-        (() => {
-          // The list belongs to a cell, and picking a value is that cell's edit.
-          const row = body.find(target => target.key === picker.rowKey);
-          const { read, list, active, loading } = pickerNow;
-          return (
-            <div
-              className="fixed z-50 flex flex-col bg-panel border border-line-strong rounded-md shadow-xl text-[0.75rem] text-ink overflow-hidden"
-              style={{
-                left: picker.left,
-                top: picker.top,
-                width: picker.width,
-                height: PICKER_HEIGHT,
-              }}
-              onMouseDown={e => {
-                // Focus has to stay in the cell editor: losing it would commit the
-                // edit before the click on a row lands. Cancelling mousedown does
-                // that, and - unlike pointerdown - leaves the click itself alone.
-                e.preventDefault();
-                e.stopPropagation();
-              }}
-            >
-              <div className="shrink-0 px-2 py-1 text-2xs text-muted border-b border-line-soft truncate">
-                {read ? `引用 ${read.refTable}.${read.refColumn}` : picker.column}
-                {read?.labelColumn ? ` · ${read.labelColumn}` : ''}
-              </div>
-              <div
-                role="listbox"
-                aria-label={`${picker.column} 的候选值`}
-                className="flex-1 overflow-y-auto py-0.5"
-              >
-                {loading && (
-                  <div className="flex items-center gap-1.5 px-2 py-1 text-muted">
-                    <FiLoader size={11} aria-hidden className="animate-spin" />
-                    读取候选值…
-                  </div>
-                )}
-                {picker.error && <div className="px-2 py-1 text-danger break-all">{picker.error}</div>}
-                {!loading && !picker.error && list.length === 0 && (
-                  <div className="px-2 py-1 text-muted">没有匹配的值，可直接输入</div>
-                )}
-                {list.map((candidate, i) => (
-                  <div
-                    key={candidate.value}
-                    id={optionId(i)}
-                    role="option"
-                    aria-selected={i === active}
-                    className={`px-2 py-0.5 cursor-pointer truncate ${
-                      i === active ? 'bg-accent/25' : 'hover:bg-raised'
-                    }`}
-                    title={describeCandidate(candidate)}
-                    onClick={() => row && commitEdit(row, picker.column, candidate.value)}
-                  >
-                    {describeCandidate(candidate)}
-                  </div>
-                ))}
-              </div>
-              {read?.truncated && (
-                <div className="shrink-0 px-2 py-1 text-2xs text-muted border-t border-line-soft">
-                  引用表只读了前 {read.values.length} 条，其它值可直接输入
-                </div>
-              )}
-            </div>
-          );
-        })()}
+      {picker && pickerNow && (
+        <FKPickerPanel
+          left={picker.left}
+          top={picker.top}
+          width={picker.width}
+          column={picker.column}
+          error={picker.error}
+          pickerState={pickerNow}
+          onPick={(value) => {
+            const row = body.find(target => target.key === picker.rowKey);
+            row && commitEdit(row, picker.column, value);
+          }}
+        />
+      )}
 
-      {menu &&
-        (() => {
-          const { column, op } = menu;
-          const sorted = sort?.column === column ? sort.dir : null;
-          const current = filters[column];
-          const valueEntry = op && opNeedsValue(op) ? op : null;
-          return (
-            <div
-              className="fixed z-50 w-[210px] bg-panel border border-line-strong rounded-md shadow-xl py-1 text-[0.75rem]"
-              style={{
-                left: Math.max(4, Math.min(menu.x, window.innerWidth - 220)),
-                top: Math.max(4, Math.min(menu.y, window.innerHeight - 260)),
-              }}
-              onPointerDown={e => e.stopPropagation()}
-            >
-              <div className="px-2.5 pb-1 text-2xs text-muted truncate border-b border-line-soft">
-                {column}
-              </div>
-
-              {valueEntry ? (
-                <div className="px-2.5 py-2">
-                  <div className="text-2xs text-secondary mb-1">
-                    {column} {filterLabels[valueEntry]} …
-                  </div>
-                  <input
-                    autoFocus
-                    aria-label={`筛选 ${column} 的值`}
-                    value={filterDraft}
-                    onChange={e => setFilterDraft(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') applyFilterDraft(column, valueEntry);
-                    }}
-                    placeholder="用于筛选的值"
-                    className="w-full bg-canvas border border-accent rounded px-1.5 py-0.5 text-[0.75rem] text-ink focus:outline-none"
-                  />
-                  <div className="flex items-center justify-end gap-1 mt-1.5">
-                    <button
-                      className="px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
-                      onClick={() => setMenu(null)}
-                    >
-                      取消
-                    </button>
-                    <button
-                      className="px-2 py-0.5 rounded text-2xs bg-accent text-on-accent hover:bg-accent-hover"
-                      onClick={() => applyFilterDraft(column, valueEntry)}
-                    >
-                      筛选
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <MenuItem
-                    label="升序排序"
-                    icon={<FiArrowUp size={11} />}
-                    active={sorted === 'asc'}
-                    onClick={() => toggleSort(column, 'asc')}
-                  />
-                  <MenuItem
-                    label="降序排序"
-                    icon={<FiArrowDown size={11} />}
-                    active={sorted === 'desc'}
-                    onClick={() => toggleSort(column, 'desc')}
-                  />
-                  <MenuItem
-                    label="清除排序"
-                    disabled={!sorted}
-                    onClick={() => {
-                      setSort(null);
-                      setMenu(null);
-                    }}
-                  />
-                  <div className="my-1 border-t border-line-soft" />
-                  {(['eq', 'ne', 'contains', 'null', 'notNull'] as FilterOp[]).map(op => (
-                    <MenuItem
-                      key={op}
-                      label={`筛选：${filterLabels[op]}`}
-                      icon={<FiFilter size={10} />}
-                      active={current?.op === op}
-                      onClick={() => pickFilter(column, op)}
-                    />
-                  ))}
-                  <MenuItem
-                    label="清除该列筛选"
-                    disabled={!current}
-                    onClick={() => {
-                      setColumnFilter(column, null);
-                      setMenu(null);
-                    }}
-                  />
-                </>
-              )}
-            </div>
-          );
-        })()}
+      {menu && (
+        <FilterMenu
+          x={menu.x}
+          y={menu.y}
+          column={menu.column}
+          op={menu.op}
+          filter={filters[menu.column]}
+          sorted={sort?.column === menu.column ? sort.dir : null}
+          filterDraft={filterDraft}
+          onFilterDraftChange={(value) => dispatchColumns({ type: 'draftType', value })}
+          onApplyFilter={(op) => applyFilterDraft(menu.column, op)}
+          onSort={(dir) => toggleSort(menu.column, dir)}
+          onClearSort={() => {
+            dispatchColumns({ type: 'sortClear' });
+            dispatchColumns({ type: 'menuClose' });
+          }}
+          onPickFilter={(op) => pickFilter(menu.column, op)}
+          onClearFilter={() => {
+            setColumnFilter(menu.column, null);
+            dispatchColumns({ type: 'menuClose' });
+          }}
+          onClose={() => dispatchColumns({ type: 'menuClose' })}
+        />
+      )}
 
       {counts.total > 0 && (
         <div className="flex items-center gap-2 px-3 py-1 bg-warning/12 border-t border-warning/45 text-2xs shrink-0">
@@ -1408,17 +1130,14 @@ const DataGrid: React.FC<DataGridProps> = ({
           <div className="ml-auto flex items-center gap-1">
             <button
               className="px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
-              onClick={() => setQueue(emptyQueue())}
+              onClick={() => dispatchEditor({ type: 'queueClear' })}
               title="丢弃全部改动，不写回数据库"
             >
               放弃
             </button>
             <button
               className="px-2 py-0.5 rounded text-2xs bg-accent hover:bg-accent-hover text-on-accent disabled:opacity-50 disabled:cursor-not-allowed"
-              onClick={() => {
-                setApplyError('');
-                setReview(true);
-              }}
+              onClick={() => dispatchEditor({ type: 'reviewOpen' })}
               disabled={!!planError || statements.length === 0}
               title="先看清要执行的语句，再确认应用"
             >
@@ -1429,84 +1148,16 @@ const DataGrid: React.FC<DataGridProps> = ({
       )}
 
       {review && (
-        <div
-          className="fixed inset-0 z-50 bg-scrim/50 flex items-center justify-center p-6"
-          onClick={() => {
-            if (!applying) setReview(false);
-          }}
-        >
-          <div
-            className="bg-panel border border-line-strong rounded-lg w-full max-w-2xl shadow-xl"
-            onClick={e => e.stopPropagation()}
-          >
-            <header className="flex items-center px-4 py-2.5 border-b border-line">
-              <h2 className="text-sm font-semibold">应用 {pendingLabel}</h2>
-              <button
-                className="ml-auto flex items-center justify-center w-6 h-6 text-secondary hover:text-ink"
-                onClick={() => setReview(false)}
-                aria-label="关闭改动确认对话框"
-                disabled={applying}
-              >
-                <FiX size={16} />
-              </button>
-            </header>
-
-            <div className="px-4 py-3 space-y-2">
-              <p className="text-xs text-secondary leading-relaxed">
-                将在 <span className="font-mono text-ink">{targetName}</span> 上按顺序执行{' '}
-                {statements.length} 条语句，整体放在一个事务里：任何一条失败就全部回滚，不会留下改到一半的数据。
-              </p>
-              {counts.deletes > 0 && (
-                <p className="text-xs text-danger leading-relaxed">
-                  其中 {counts.deletes} 行会被删除。删除按主键定位，主键在读取后被改过就整批回滚。
-                </p>
-              )}
-              {counts.inserts > 0 && (
-                <p className="text-xs text-secondary leading-relaxed">
-                  新增行只写入你填过的列，其余列交给数据库的默认值或自增。
-                </p>
-              )}
-              <ol className="max-h-[45vh] overflow-auto bg-canvas border border-line-strong rounded p-2 space-y-1">
-                {statements.map((statement, i) => (
-                  <li
-                    key={i}
-                    className="font-mono text-[0.75rem] leading-relaxed text-ink whitespace-pre-wrap break-all"
-                  >
-                    {i + 1}. {statement}
-                  </li>
-                ))}
-              </ol>
-              {applyError && (
-                <p className="text-xs text-danger">
-                  未提交任何改动：{applyError}
-                </p>
-              )}
-            </div>
-
-            <footer className="flex items-center justify-end gap-2 px-4 py-3 border-t border-line">
-              <button
-                className="px-3 py-1 rounded text-xs bg-raised hover:bg-emphasis disabled:opacity-50"
-                onClick={() => setReview(false)}
-                disabled={applying}
-              >
-                取消
-              </button>
-              <button
-                className="flex items-center px-3 py-1 rounded text-xs bg-accent hover:bg-accent-hover text-on-accent disabled:opacity-50"
-                onClick={applyNow}
-                disabled={applying || statements.length === 0}
-                title="写入数据库，不可撤销"
-              >
-                {applying ? (
-                  <FiLoader size={12} className="mr-1 animate-spin" />
-                ) : (
-                  <FiCheck size={12} className="mr-1" />
-                )}
-                {applying ? '应用中…' : '确认应用'}
-              </button>
-            </footer>
-          </div>
-        </div>
+        <ReviewDialog
+          targetName={targetName}
+          pendingLabel={pendingLabel}
+          statements={statements}
+          counts={counts}
+          applying={applying}
+          applyError={applyError}
+          onApply={applyNow}
+          onClose={() => dispatchEditor({ type: 'reviewClose' })}
+        />
       )}
 
       <div className="flex items-center gap-3 px-3 py-1 bg-panel border-t border-line text-2xs text-muted shrink-0">

@@ -10,7 +10,7 @@ import (
 // race (main.go Connect / savedDatabaseFilter). Run with -race.
 func TestConnectionListReadersRaceWriters(t *testing.T) {
 	a := &App{}
-	a.savedConnections = []ConnectionConfig{{ID: "conn_0", Type: "sqlite", Database: ":memory:"}}
+	a.savedConnections = []ConnectionConfig{{ID: "aabbccdd00112233", Type: "sqlite", Database: ":memory:"}}
 
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
@@ -18,9 +18,9 @@ func TestConnectionListReadersRaceWriters(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 200; j++ {
-				a.savedDatabaseFilter("conn_0")
+				a.savedDatabaseFilter("aabbccdd00112233")
 				a.GetConnections()
-				_ = a.Connect("conn_999") // out of range: bounds check only, no dial
+				_ = a.Connect("nonexistent-id") // invalid id: bounds check only, no dial
 			}
 		}()
 	}

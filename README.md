@@ -14,7 +14,7 @@ A fast, lightweight database client built with Wails3 + Go, inspired by TablePro
 
 ## Tech Stack
 
-- **Backend**: Go 1.22+ with Wails3
+- **Backend**: Go 1.25 with Wails3
 - **Frontend**: React 18 + TypeScript + Vite
 - **Database Drivers**:
   - MySQL/MariaDB: `github.com/go-sql-driver/mysql`
@@ -23,7 +23,7 @@ A fast, lightweight database client built with Wails3 + Go, inspired by TablePro
 
 ## Prerequisites
 
-- Go 1.22+
+- Go 1.25
 - Node.js 18+
 - Wails3 CLI: `go install github.com/wailsapp/wails/v3/cmd/wails@latest`
 

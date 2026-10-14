@@ -1,5 +1,6 @@
 # Build artifacts
 *.exe
+*.node
 build/
 dist/
 

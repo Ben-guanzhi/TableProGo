@@ -135,7 +135,6 @@ func (a *App) GetConnections() []ConnectionConfig {
 	result := make([]ConnectionConfig, len(a.savedConnections))
 	for i, c := range a.savedConnections {
 		clean := c
-		clean.ID = fmt.Sprintf("conn_%d", i)
 		clean.Password = ""
 		result[i] = clean
 	}
@@ -146,9 +145,12 @@ func (a *App) AddConnection(config ConnectionConfig) error {
 	a.connectionsMu.Lock()
 	defer a.connectionsMu.Unlock()
 
-	config.ID = fmt.Sprintf("conn_%d", len(a.savedConnections))
+	id, err := newSecretID()
+	if err != nil {
+		return fmt.Errorf("generate connection id: %w", err)
+	}
+	config.ID = id
 	a.savedConnections = append(a.savedConnections, config)
-	a.invalidateConnFilterCacheLocked()
 	a.saveToFile()
 	return nil
 }
@@ -177,13 +179,11 @@ func (a *App) DeleteConnection(id string) error {
 
 	for i, c := range a.savedConnections {
 		if c.ID == id {
-			connID := fmt.Sprintf("conn_%d", i)
-			if conn, ok := a.connections[connID]; ok && conn.DB != nil {
+			if conn, ok := a.connections[id]; ok && conn.DB != nil {
 				conn.DB.Close()
-				delete(a.connections, connID)
+				delete(a.connections, id)
 			}
 			a.savedConnections = append(a.savedConnections[:i], a.savedConnections[i+1:]...)
-			a.invalidateConnFilterCacheLocked()
 			a.saveToFile()
 			return nil
 		}
@@ -195,13 +195,16 @@ func (a *App) Connect(id string) error {
 	a.connectionsMu.Lock()
 	defer a.connectionsMu.Unlock()
 
-	var index int
-	n, err := fmt.Sscanf(id, "conn_%d", &index)
-	if err != nil || n != 1 || index < 0 || index >= len(a.savedConnections) {
+	var config *ConnectionConfig
+	for i := range a.savedConnections {
+		if a.savedConnections[i].ID == id {
+			config = &a.savedConnections[i]
+			break
+		}
+	}
+	if config == nil {
 		return fmt.Errorf("invalid connection id: %s", id)
 	}
-
-	config := a.savedConnections[index]
 
 	if existing, ok := a.connections[id]; ok {
 		if existing.DB != nil {
@@ -210,7 +213,7 @@ func (a *App) Connect(id string) error {
 		existing.closePools()
 	}
 
-	db, err := createConnection(config)
+	db, err := createConnection(*config)
 	if err != nil {
 		return fmt.Errorf("connection failed: %w", err)
 	}
@@ -227,7 +230,7 @@ func (a *App) Connect(id string) error {
 		SSLMode:  config.SSLMode,
 		Options:  config.Options,
 		DB:       db,
-		Config:   config,
+		Config:   *config,
 	}
 	a.currentConnID = id
 

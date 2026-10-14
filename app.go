@@ -288,8 +288,9 @@ func (a *App) saveToFile() {
 		secretsGC(passwordsOf(disk), passwordsOf(sealed))
 	}
 	a.connObserved = append([]ConnectionConfig(nil), sealed...)
-	// The fold-in above may have appended connections, which shifts the
-	// positional conn_%d ids the filter cache is keyed by.
+	// The fold-in above may have appended connections from another client,
+	// which could have different filters than what we cached. Clear the
+	// filter cache to be safe.
 	a.invalidateConnFilterCacheLocked()
 }
 

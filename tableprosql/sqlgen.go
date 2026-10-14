@@ -35,18 +35,11 @@ var Engines = []string{MySQL, Postgres, SQLite, SQLServer, Oracle}
 // quotes. Overlong or control-carrying names are rejected outright — they
 // cannot be quoted safely and would only fail at the engine anyway.
 func QuoteIdent(dbType, name string) (string, error) {
-	if name == "" || len(name) > 256 || strings.ContainsAny(name, "\x00\r\n") {
-		return "", fmt.Errorf("invalid identifier: %q", name)
+	d, ok := dialect(dbType)
+	if !ok {
+		return "", fmt.Errorf("unsupported type: %s", dbType)
 	}
-	switch dbType {
-	case MySQL:
-		return "`" + strings.ReplaceAll(name, "`", "``") + "`", nil
-	case SQLServer:
-		return "[" + strings.ReplaceAll(name, "]", "]]") + "]", nil
-	case Postgres, SQLite, Oracle:
-		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`, nil
-	}
-	return "", fmt.Errorf("unsupported type: %s", dbType)
+	return d.QuoteIdent(name)
 }
 
 // QualifiedName quotes each part and joins them with the engine's qualifier.
@@ -67,28 +60,22 @@ func QualifiedName(dbType string, parts ...string) (string, error) {
 // bare elsewhere. Same op-and-type table as QualifiedName, so no client
 // hand-builds identifier shapes any more.
 func LocalName(dbType, schema, table string) (string, error) {
-	switch dbType {
-	case Postgres, SQLServer:
-		return QualifiedName(dbType, schema, table)
-	default:
-		return QualifiedName(dbType, table)
+	d, ok := dialect(dbType)
+	if !ok {
+		return "", fmt.Errorf("unsupported type: %s", dbType)
 	}
+	return d.LocalName(dbType, schema, table)
 }
 
 // QualifiedTable maps a reference to the fully-qualified spelling each engine
 // wants: SQL Server wants database.schema.table, MySQL database.table,
 // PostgreSQL schema.table, the rest just the table.
 func QualifiedTable(dbType, database, schema, table string) (string, error) {
-	switch dbType {
-	case SQLServer:
-		return QualifiedName(dbType, database, schema, table)
-	case MySQL:
-		return QualifiedName(dbType, database, table)
-	case Postgres:
-		return QualifiedName(dbType, schema, table)
-	default:
-		return QualifiedName(dbType, table)
+	d, ok := dialect(dbType)
+	if !ok {
+		return "", fmt.Errorf("unsupported type: %s", dbType)
 	}
+	return d.QualifiedTable(dbType, database, schema, table)
 }
 
 // QuotedLiteral renders a string as a single-quoted SQL literal. It serves
@@ -97,19 +84,11 @@ func QualifiedTable(dbType, database, schema, table string) (string, error) {
 // needs the national prefix to keep wide characters, and PostgreSQL rejects
 // it, so the rest get a plain single-quoted literal.
 func QuotedLiteral(dbType, value string) string {
-	escaped := strings.ReplaceAll(value, "'", "''")
-	if dbType == MySQL {
-		// MySQL takes '\' as the escape character inside a string literal, so a
-		// value ending in one would escape the closing quote and run the literal
-		// into the rest of the statement. Doubled here and nowhere else: every
-		// other engine takes '\' literally, and so does MySQL under
-		// NO_BACKSLASH_ESCAPES, where doubling would change the stored value.
-		return "'" + strings.ReplaceAll(escaped, `\`, `\\`) + "'"
+	d, ok := dialect(dbType)
+	if !ok {
+		return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 	}
-	if dbType == SQLServer {
-		return "N'" + escaped + "'"
-	}
-	return "'" + escaped + "'"
+	return d.QuoteLiteral(value)
 }
 
 // ownLimitRe spots SQL that already caps its own rows. A false positive only
@@ -121,30 +100,11 @@ var ownLimitRe = regexp.MustCompile(`(?i)\b(top|limit|offset|fetch|rownum)\b`)
 // wrapper for Oracle. Statements with their own cap, and anything that is not
 // a SELECT, run untouched.
 func RowLimit(dbType, query string, limit int) string {
-	if limit <= 0 {
+	d, ok := dialect(dbType)
+	if !ok {
 		return query
 	}
-	trimmed := strings.TrimRight(strings.TrimSpace(query), ";")
-	upper := strings.ToUpper(trimmed)
-	if !strings.HasPrefix(upper, "SELECT") && !strings.HasPrefix(upper, "WITH") {
-		return query
-	}
-	if ownLimitRe.MatchString(trimmed) {
-		return query
-	}
-	switch dbType {
-	case SQLServer:
-		// TOP can only be injected into a bare SELECT; a CTE keeps whatever
-		// limit it declared itself.
-		if !strings.HasPrefix(upper, "SELECT") {
-			return query
-		}
-		return fmt.Sprintf("SELECT TOP (%d)%s", limit, trimmed[len("SELECT"):])
-	case Oracle: // ROWNUM wrap is valid around a CTE too
-		return fmt.Sprintf("SELECT * FROM (%s) WHERE ROWNUM <= %d", trimmed, limit)
-	default: // mysql, postgresql, sqlite — trailing LIMIT binds the whole statement
-		return fmt.Sprintf("%s LIMIT %d", trimmed, limit)
-	}
+	return d.RowLimit(query, limit)
 }
 
 // Paging is deliberately NOT shared here: the Fyne client pairs the window
@@ -157,13 +117,11 @@ func RowLimit(dbType, query string, limit int) string {
 // alone. `quotedTable` must already carry the engine's quoting — the caller
 // built it through QualifiedName/QuoteIdent with its own namespace rules.
 func TruncateStatement(dbType, quotedTable string) (string, error) {
-	switch dbType {
-	case MySQL, Postgres, SQLServer, Oracle:
-		return "TRUNCATE TABLE " + quotedTable, nil
-	case SQLite:
-		return "DELETE FROM " + quotedTable, nil
+	d, ok := dialect(dbType)
+	if !ok {
+		return "", fmt.Errorf("unsupported type: %s", dbType)
 	}
-	return "", fmt.Errorf("unsupported type: %s", dbType)
+	return d.Truncate(quotedTable)
 }
 
 // RenameStatement renders a table rename. `current` and `next` are the fully
@@ -247,31 +205,21 @@ func ReferenceAction(raw string) string {
 // database. Engines without a schema layer answer with the database itself;
 // callers only ask while the schema is still empty.
 func CatalogSchema(dbType, database, schema string) string {
-	switch dbType {
-	case MySQL:
-		return database
-	case Postgres:
-		return "public"
-	case SQLServer:
-		return "dbo"
-	default: // sqlite, oracle — the schema stands for itself / the connected user
+	d, ok := dialect(dbType)
+	if !ok {
 		return schema
 	}
+	return d.CatalogSchema(database, schema)
 }
 
 // DefaultTableSchema fills the engine's default table namespace for qualified
 // names, independent of which database the session is in.
 func DefaultTableSchema(dbType, schema string) string {
-	if schema != "" {
+	d, ok := dialect(dbType)
+	if !ok {
 		return schema
 	}
-	switch dbType {
-	case Postgres:
-		return "public"
-	case SQLServer:
-		return "dbo"
-	}
-	return schema
+	return d.DefaultSchema(schema)
 }
 
 // LikePattern wraps the fragment for a LIKE test, escaping the wildcards the

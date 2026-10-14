@@ -71,8 +71,8 @@ func TestCatalogVersionOnlyBumpsForCatalogChangingStatements(t *testing.T) {
 	}
 }
 
-// 过滤器缓存以位置编号 conn_%d 为键，删连接会整体移位——缓存必须失效，
-// 否则被移位的连接会顶着一份属于别人的旧过滤器。
+// 过滤器缓存以连接 UUID 为键，删连接不会移位——缓存只需删除对应键，
+// 其它连接的缓存条目不受影响。
 func TestSavedDatabaseFilterInvalidatedOnDelete(t *testing.T) {
 	a := &App{
 		connections: map[string]*Connection{},
@@ -82,7 +82,7 @@ func TestSavedDatabaseFilterInvalidatedOnDelete(t *testing.T) {
 		},
 	}
 
-	// Prime the cache for position 1.
+	// Prime the cache for conn_1.
 	if f := a.savedDatabaseFilter("conn_1"); len(f.Exclude) != 1 || f.Exclude[0] != "one" {
 		t.Fatalf("primed wrong filter: %+v", f)
 	}
@@ -90,8 +90,8 @@ func TestSavedDatabaseFilterInvalidatedOnDelete(t *testing.T) {
 	if err := a.DeleteConnection("conn_0"); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
-	// conn_1 shifted into position 0; a stale cache would answer "zero".
-	f := a.savedDatabaseFilter("conn_0")
+	// conn_1 keeps its ID; its cache entry must still be valid.
+	f := a.savedDatabaseFilter("conn_1")
 	if len(f.Exclude) != 1 || f.Exclude[0] != "one" {
 		t.Fatalf("stale filter after delete: %+v (want exclude=one)", f)
 	}
@@ -103,10 +103,15 @@ func TestSavedDatabaseFilterInvalidatedOnUpdate(t *testing.T) {
 		connections: map[string]*Connection{},
 		savedConnections: []ConnectionConfig{
 			{ID: "conn_0", DatabaseFilter: DatabaseFilter{Exclude: []string{"old"}}},
+			{ID: "conn_1", DatabaseFilter: DatabaseFilter{Exclude: []string{"one"}}},
 		},
 	}
 	if f := a.savedDatabaseFilter("conn_0"); len(f.Exclude) != 1 || f.Exclude[0] != "old" {
 		t.Fatalf("primed wrong filter: %+v", f)
+	}
+	// Prime conn_1's cache too; updating conn_0 must not affect it.
+	if f := a.savedDatabaseFilter("conn_1"); len(f.Exclude) != 1 || f.Exclude[0] != "one" {
+		t.Fatalf("primed wrong filter for conn_1: %+v", f)
 	}
 	if err := a.UpdateConnection(ConnectionConfig{
 		ID:             "conn_0",
@@ -117,5 +122,10 @@ func TestSavedDatabaseFilterInvalidatedOnUpdate(t *testing.T) {
 	f := a.savedDatabaseFilter("conn_0")
 	if len(f.Exclude) != 1 || f.Exclude[0] != "new" {
 		t.Fatalf("stale filter after update: %+v (want exclude=new)", f)
+	}
+	// conn_1's cache must still be valid.
+	f1 := a.savedDatabaseFilter("conn_1")
+	if len(f1.Exclude) != 1 || f1.Exclude[0] != "one" {
+		t.Fatalf("conn_1 filter should be unchanged: %+v (want exclude=one)", f1)
 	}
 }

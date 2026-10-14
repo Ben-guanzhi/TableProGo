@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Connection, DatabaseFilter } from '../types';
+import { Connection, DatabaseFilter, TableInfo, ColumnInfo } from '../types';
 import { GetColumns, GetDatabases, GetSchemas, GetTableStructure, GetTables, TableRef } from '../api';
 import DatabaseFilterDialog from './DatabaseFilterDialog';
 import type { ConfirmRequest } from './ConfirmDialog';
@@ -193,7 +193,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const query = filter.trim().toLowerCase();
 
   const tableNodes = async (node: TreeNode, schema: string): Promise<TreeNode[]> => {
-    const tables: any[] = (await GetTables(node.connId, node.database as string, schema)) ?? [];
+    const tables: TableInfo[] = (await GetTables(node.connId, node.database as string, schema)) ?? [];
     return tables.map(t => ({
       key: `${t.type === 'view' ? 'v' : 't'}|${node.connId}|${node.database}|${schema}|${t.name}`,
       kind: t.type === 'view' ? 'view' : 'table',
@@ -244,7 +244,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       } else if (node.kind === 'schema') {
         kids = await tableNodes(node, node.schema as string);
       } else {
-        const columns: any[] = (await GetColumns(
+        const columns: ColumnInfo[] = (await GetColumns(
           node.connId,
           node.database as string,
           node.schema as string,

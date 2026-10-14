@@ -6,10 +6,22 @@ import type { RowChange } from './types';
 
 export type FilterOp = 'eq' | 'ne' | 'contains' | 'null' | 'notNull';
 
+export const filterLabels: Record<FilterOp, string> = {
+  eq: '等于',
+  ne: '不等于',
+  contains: '包含',
+  null: '为空',
+  notNull: '不为空',
+};
+
 export interface ColumnFilter {
   op: FilterOp;
   value: string;
 }
+
+// These operators are meaningless without a value to compare against, so the
+// filter menu keeps a draft box for them only.
+export const opNeedsValue = (op: FilterOp) => op === 'eq' || op === 'ne' || op === 'contains';
 
 export interface SortState {
   column: string;

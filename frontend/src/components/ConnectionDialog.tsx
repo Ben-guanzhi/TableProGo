@@ -93,9 +93,9 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
         setTestResult('error');
         toast.error('Connection failed: unknown error');
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       setTestResult('error');
-      const msg = error?.message || String(error) || 'Unknown error';
+      const msg = error instanceof Error ? error.message : String(error);
       toast.error(`Connection failed: ${msg}`, { duration: 8000 });
     } finally {
       setTesting(false);

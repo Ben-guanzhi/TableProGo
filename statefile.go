@@ -63,11 +63,11 @@ func readJSONFile[T any](path string) (entries []T, ok bool, err error) {
 	return entries, true, nil
 }
 
-// connKey identifies a connection by target. Neither the stored id (it is
-// positional here) nor the sealed password (DPAPI seals a fresh random blob
-// on every save) can serve as identity across two clients, so the stable
-// core of the definition is the key. A disk entry hitting the same target
-// dedupes with the in-memory one winning.
+// connKey identifies a connection by target. Neither the stored id (a random
+// UUID generated per connection) nor the sealed password (DPAPI seals a fresh
+// random blob on every save) can serve as identity across two clients, so the
+// stable core of the definition is the key. A disk entry hitting the same
+// target dedupes with the in-memory one winning.
 func connKey(c ConnectionConfig) string {
 	return strings.Join([]string{
 		c.Type, c.Host, strconv.Itoa(c.Port), c.Username, c.Database, c.SSLMode,

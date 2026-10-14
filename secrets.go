@@ -25,9 +25,9 @@ const (
 const keyringService = "TableProGo"
 
 // newSecretID returns a fresh random id for a keyring entry. Sealed values are
-// keyed by this id, not by the connection id: connection ids are positional
-// ("conn_2") here and can collide after a delete, while an id minted once per
-// seal is stable for as long as the file references it.
+// keyed by this id, not by the connection id: the connection id is a stable
+// UUID that survives deletes of other connections, while a secret id is minted
+// once per seal and stays valid as long as the file references it.
 func newSecretID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
