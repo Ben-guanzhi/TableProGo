@@ -30,18 +30,15 @@ jobs:
       # directory argument makes it recurse into those other modules too.
       - name: gofmt
         working-directory: ${{ matrix.dir }}
-        run: |
-          for d in $(go list -f '{{.Dir}}' ./...); do
-            test -z "$(gofmt -l "$d"/*.go)"
-          done
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" sh -c 'for d in $(go list -f "{{.Dir}}" ./...); do test -z "$(gofmt -l "$d"/*.go)"; done'
 
       - name: go vet
         working-directory: ${{ matrix.dir }}
-        run: go vet ./...
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go vet ./...
 
       - name: go test
         working-directory: ${{ matrix.dir }}
-        run: go test -count=1 ./...
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -count=1 ./...
 
   app:
     name: frontend + wails app
@@ -60,19 +57,31 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # Wails v3 links the system WebKitGTK through cgo on Linux
+      # (`#cgo linux pkg-config: gtk4 webkitgtk-6.0 libsoup-3.0 gio-unix-2.0
+      # gobject-2.0 glib-2.0`, plus `x11` for global shortcuts), so `go build`
+      # fails on a bare runner. No build tag is set, so this is the gtk4 path
+      # rather than gtk+-3.0 / webkit2gtk-4.1.
+      - name: Install WebKitGTK build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config \
+            libgtk-4-dev libwebkitgtk-6.0-dev libsoup-3.0-dev \
+            libglib2.0-dev libx11-dev
+
       - name: npm ci
         working-directory: frontend
         run: npm ci
 
       - name: npm test
         working-directory: frontend
-        run: npm test
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" npm test
 
       # main.go has //go:embed all:frontend/dist, so the app cannot build until
       # this step has produced frontend/dist. This order is not optional.
       - name: npm run build
         working-directory: frontend
-        run: npm run build
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" npm run build
 
       - name: go build
-        run: go build -o build/TableProGo.exe .
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go build -o build/TableProGo.exe .
