@@ -11,7 +11,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        dir: [tableprosql, tableproxlsx, .]
+        # The root module is checked by the `app` job instead: main.go has
+        # //go:embed all:frontend/dist, so it cannot even compile `go vet` on a
+        # runner that has not built the frontend yet, and that happens on this
+        # job's separate runners.
+        dir: [tableprosql, tableproxlsx]
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +86,18 @@ jobs:
       - name: npm run build
         working-directory: frontend
         run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" npm run build
+
+      # main.go has //go:embed all:frontend/dist, so the root module cannot even
+      # be typechecked until the build above has produced frontend/dist. That is
+      # why the root is gated here and not in the parallel `go` matrix.
+      - name: gofmt (root)
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" sh -c 'for d in $(go list -f "{{.Dir}}" ./...); do test -z "$(gofmt -l "$d"/*.go)"; done'
+
+      - name: go vet (root)
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go vet ./...
+
+      - name: go test (root)
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -count=1 ./...
 
       - name: go build
         run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go build -o build/TableProGo.exe .
