@@ -424,13 +424,13 @@ func (a *App) tableIndexes(conn *Connection, database, schema, table string) ([]
 	for rows.Next() {
 		var row indexRow
 		var unique, primary int
+		// Five destinations, in the order tableprosql.IndexesQuery promises:
+		// name, kind, is-unique, is-primary, column. The statement derives both
+		// flags, so nothing here re-reads the engine's own naming to guess one.
 		if err := rows.Scan(&row.name, &row.kind, &unique, &primary, &row.column); err != nil {
 			return nil, err
 		}
 		row.unique, row.primary = unique == 1, primary == 1
-		if conn.Type == "mysql" && row.name == "PRIMARY" {
-			row.primary = true
-		}
 		flat = append(flat, row)
 	}
 	if err := rows.Err(); err != nil {

@@ -44,6 +44,46 @@ jobs:
         working-directory: ${{ matrix.dir }}
         run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -race -count=1 ./...
 
+  # The two shared modules are consumed by tag: the Fyne client requires
+  # tableprosql/v* and tableproxlsx/v* and builds against whatever that tag
+  # holds, while this repo resolves the same import through a replace to the
+  # working tree. So a commit here that changes shared code is invisible to the
+  # other client until somebody retags - which is how the pinned copy kept a
+  # four-column MySQL index statement long after its shape was understood. The
+  # matrix above cannot notice, because the replace always resolves to the tree,
+  # so say it out loud: fail when a shared module holds non-test changes past its
+  # newest tag, and name the tag to cut.
+  shared-retag:
+    name: shared modules retagged
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The ranges below compare HEAD against a tag, so the history and the
+          # tag objects have to be present.
+          fetch-depth: 0
+
+      - name: no shared change sits behind its tag
+        run: |
+          failed=0
+          for mod in tableprosql tableproxlsx; do
+            tag=$(git tag --list "$mod/v*" --sort=-v:refname | head -n1)
+            if [ -z "$tag" ]; then
+              echo "::error::$mod has no tag, so the Fyne client cannot require it"
+              failed=1
+              continue
+            fi
+            paths=$(git diff --name-only "$tag" HEAD -- "$mod/" ":(exclude)$mod/*_test.go")
+            if [ -n "$paths" ]; then
+              echo "::error::$mod holds changes past $tag: the client pinned to $tag still builds the old code. Cut $mod/v<next> and bump its go.mod."
+              echo "$paths"
+              failed=1
+            else
+              echo "$mod: nothing outside its tests moved since $tag"
+            fi
+          done
+          exit "$failed"
+
   app:
     name: frontend + wails app
     runs-on: ubuntu-24.04

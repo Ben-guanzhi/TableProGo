@@ -207,10 +207,21 @@ func ColumnsQuery(dbType, database, schema, table string) (string, []interface{}
 }
 
 // IndexesQuery returns the catalog statement that lists a table's indexes.
+// Every statement answers the same five columns in the same order - name, kind,
+// is-unique, is-primary, column - because that is what the readers scan: the
+// root client's tableIndexes and the Fyne client's scanIndexRow both declare
+// five destinations, so a statement with fewer fails every table on that
+// engine before a row is read. The flags are named for what they mean, not for
+// the catalog column they come from: information_schema.STATISTICS carries
+// NON_UNIQUE, and handing that through would report a plain index as a unique
+// one.
 func IndexesQuery(dbType, database, schema, table string) (string, []interface{}, error) {
 	switch dbType {
 	case MySQL:
-		query := `SELECT INDEX_NAME, INDEX_TYPE, NON_UNIQUE, COLUMN_NAME
+		// STATISTICS has no is-primary column either: MySQL marks the key by
+		// naming it PRIMARY, which is what the fourth column answers with.
+		query := `SELECT INDEX_NAME, INDEX_TYPE, CASE WHEN NON_UNIQUE = 0 THEN 1 ELSE 0 END,
+			CASE WHEN INDEX_NAME = 'PRIMARY' THEN 1 ELSE 0 END, COLUMN_NAME
 			FROM information_schema.STATISTICS
 			WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
 			ORDER BY INDEX_NAME, SEQ_IN_INDEX`

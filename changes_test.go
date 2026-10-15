@@ -96,9 +96,17 @@ func TestValueLiteralsFollowTheColumn(t *testing.T) {
 		// value and a bigint refuses it, and either answer beats a rounded one.
 		{"mysql", "decimal(30,0)", "18446744073709551616", "18446744073709551616"},
 		{"postgresql", "numeric", "-99999999999999999999", "-99999999999999999999"},
-		// Everything that is not a plain run of digits stays on the float path.
+		// A number with a point keeps its digits too: a double holds 15-17 of them
+		// and cannot name a DECIMAL's twentieth at all, so routing the text
+		// through one would send the server a neighbouring value.
+		{"mysql", "decimal(18,2)", "1.50", "1.50"},
+		{"mysql", "decimal(20,2)", "123456789012345678.90", "123456789012345678.90"},
+		{"postgresql", "numeric", "0.1111111111111111111111", "0.1111111111111111111111"},
+		{"mysql", "decimal(10,2)", "-1.25", "-1.25"},
+		// Everything that is not a plain number stays on the float path.
 		{"postgresql", "double precision", "1e3", "1000"},
-		{"mysql", "decimal(18,2)", "1.50", "1.5"},
+		{"postgresql", "double precision", ".5", "0.5"},
+		{"postgresql", "double precision", "1.", "1"},
 		{"mysql", "bigint", "+7", "7"},
 		{"mysql", "bigint", "007", "7"},
 		// A text column keeps its digits as text - "007" is a value, not a number.
@@ -125,7 +133,7 @@ func TestValueLiteralsFollowTheColumn(t *testing.T) {
 	// Digits beyond 64 bits are passed through as the text they were typed as, so
 	// the shape test in front of that is the only thing standing between the
 	// server and whatever else is in the cell.
-	for _, junk := range []string{"7x", "0x10", "7 7", "-"} {
+	for _, junk := range []string{"7x", "0x10", "7 7", "-", "1.2.3"} {
 		if _, err := valueLiteral("mysql", "bigint", junk); err == nil {
 			t.Errorf("%q was written as a literal, want it refused", junk)
 		}
