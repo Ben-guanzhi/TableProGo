@@ -1,20 +1,24 @@
 import { ChangeSet, ColumnInfo, Connection, ConnectionConfig, ForeignKeyInfo, HistoryEntry, PreviewCursor, QueryResult, SqlFilter, TableInfo } from './types';
 
-// Injected by the Go asset handler; the ?apiPort= fallback keeps the vite dev
-// server usable from a plain browser.
+// Injected by the Go asset handler; the ?apiPort=/?apiToken= fallbacks keep the
+// vite dev server usable from a plain browser. The token is minted per process
+// and printed to the log line above "HTTP API server on port".
 declare global {
   interface Window {
     __API_PORT__?: string;
+    __API_TOKEN__?: string;
   }
 }
 const API_PORT = window.__API_PORT__
   ?? new URLSearchParams(window.location.search).get('apiPort');
+const API_TOKEN = window.__API_TOKEN__
+  ?? new URLSearchParams(window.location.search).get('apiToken') ?? '';
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
 async function post(path: string, body: any = {}): Promise<any> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
     body: JSON.stringify(body),
   });
   const data = await res.json();
@@ -25,7 +29,7 @@ async function post(path: string, body: any = {}): Promise<any> {
 }
 
 async function get(path: string): Promise<any> {
-  const res = await fetch(`${BASE}${path}`);
+  const res = await fetch(`${BASE}${path}`, { headers: { 'X-API-Token': API_TOKEN } });
   const data = await res.json();
   if (data?.error) throw new Error(data.error);
   return data;

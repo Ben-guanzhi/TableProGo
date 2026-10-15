@@ -1,7 +1,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net"
@@ -18,15 +20,33 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+// randomToken returns 32 random bytes, hex encoded. Hex keeps the value safe to
+// splice straight into the injected <script> tag.
+func randomToken() (string, error) {
+	var buf [32]byte
+	if _, err := rand.Read(buf[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf[:]), nil
+}
+
 func main() {
 	svc := NewApp()
+
+	// Minted per process, so a page cached from an earlier run — or served by
+	// another instance — keeps a stale value and is refused.
+	token, err := randomToken()
+	if err != nil {
+		log.Fatal("Failed to mint API token:", err)
+	}
+	svc.apiToken = token
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatal("Failed to start API server:", err)
 	}
 	apiPort := listener.Addr().(*net.TCPAddr).Port
-	log.Printf("HTTP API server on port %d", apiPort)
+	log.Printf("HTTP API server on port %d (token %s)", apiPort, token)
 
 	svc.startHTTPServerOnListener(listener)
 
@@ -39,7 +59,7 @@ func main() {
 		Assets: application.AssetOptions{
 			Handler: &injectHandler{
 				inner:  application.AssetFileServerFS(assets),
-				inject: fmt.Sprintf("<script>window.__API_PORT__=%d;</script>", apiPort),
+				inject: fmt.Sprintf("<script>window.__API_PORT__=%d;window.__API_TOKEN__=%q;</script>", apiPort, token),
 			},
 		},
 		Mac: application.MacOptions{

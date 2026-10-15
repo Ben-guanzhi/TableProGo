@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net"
@@ -338,11 +339,34 @@ func (a *App) startHTTPServerOnListener(listener net.Listener) {
 	})
 
 	go func() {
-		srv := &http.Server{Handler: corsMiddleware(mux)}
+		srv := &http.Server{Handler: corsMiddleware(authMiddleware(a.apiToken, mux))}
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
+}
+
+// apiTokenHeader carries the per-process token from the webview to the API.
+const apiTokenHeader = "X-API-Token"
+
+// authMiddleware refuses any API call that does not present this process's
+// token. The server binds 127.0.0.1:0, so the port is unpredictable — but any
+// page the user happens to run on another localhost port could still POST to
+// /api/execute, and CORS alone only keeps the *response* away from it. corsMiddleware
+// stays outside, so the browser's OPTIONS preflight (which cannot carry the
+// header) is still answered.
+func authMiddleware(token string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get(apiTokenHeader)), []byte(token)) != 1 {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 type injectHandler struct {
@@ -384,8 +408,10 @@ func (r *responseRecorder) Write(b []byte) (int, error) {
 // localOriginRe matches the origins the frontend legitimately loads from:
 // the packaged webview (same server, same origin — which needs no CORS header
 // at all) and the vite dev server. Every other web origin is refused the CORS
-// grant, so a page the user browses cannot read responses from this API —
-// with the old `*` it could have run SQL against saved connections.
+// grant, so a page the user browses cannot read responses from this API — with
+// the old `*` it could have run SQL against saved connections. Note that any
+// localhost port still matches here, which is deliberate: authMiddleware's
+// per-process token is what actually gates those origins.
 var localOriginRe = regexp.MustCompile(`(?i)^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$`)
 
 func corsMiddleware(next http.Handler) http.Handler {
@@ -396,7 +422,9 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Vary", "Origin")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			// X-API-Token is not CORS-safelisted, so the browser preflights it;
+			// without it here the first authenticated call would fail.
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Token")
 		}
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(204)

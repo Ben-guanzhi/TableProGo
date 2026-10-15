@@ -42,6 +42,11 @@ type App struct {
 	// catalog. The quick-open snapshot (search.go) is rebuilt only when this
 	// moves; between bumps, a keystroke is answered from memory.
 	catalogVersion atomic.Uint64
+
+	// apiToken guards the loopback JSON API. It is minted once per process and
+	// handed to the webview in the injected <script>, so a page that merely
+	// happens to run on another localhost port cannot reach it.
+	apiToken string
 }
 
 // AppSettings holds UI preferences, persisted next to the connection store.
