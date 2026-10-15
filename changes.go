@@ -139,6 +139,46 @@ func numberLiteral(value float64) string {
 	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
+// wholeNumberLiteral renders text that denotes a plain whole number exactly and
+// reports whether it recognised that shape. The float path can't: a double keeps
+// 53 bits of mantissa, so "9007199254740993" comes back one lower and a key
+// predicate built on it names a neighbouring row or none.
+//
+// Digits past what 64 bits hold go out as the digits themselves rather than as a
+// rounded float or a refusal - a server reads a numeric literal at its own
+// precision, so a DECIMAL(30,0) column still gets the value the user named, while
+// a bigint column answers an impossible one with its own out-of-range error. That
+// error is the outcome the client must not pre-empt by quietly rounding: it is
+// loud, and it names the column.
+//
+// Only the shape is recognised, never the size: an optional sign and nothing but
+// digits, so "1e3" and "1.50" and "0x10" stay on the path that has always
+// rendered them (or refused them). That scan is also what keeps the verbatim
+// branch above from doing damage: without it, "twelve" in a numeric cell would go
+// out as the literal twelve rather than being refused, and any text a cell holds
+// would reach the server unquoted.
+func wholeNumberLiteral(text string) (string, bool) {
+	body := strings.TrimPrefix(text, "+")
+	digits := strings.TrimPrefix(body, "-")
+	if digits == "" {
+		return "", false
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return "", false
+		}
+	}
+	if number, err := strconv.ParseInt(text, 10, 64); err == nil {
+		return strconv.FormatInt(number, 10), true
+	}
+	if !strings.HasPrefix(body, "-") {
+		if number, err := strconv.ParseUint(digits, 10, 64); err == nil {
+			return strconv.FormatUint(number, 10), true
+		}
+	}
+	return body, true
+}
+
 // quotedLiteral renders a string as a single-quoted SQL literal for every
 // place the program inlines text; the shapes live in the shared SQL text
 // package both TablePro clients generate from.
@@ -149,6 +189,14 @@ func quotedLiteral(dbType, value string) string {
 // valueLiteral turns what the grid holds into a literal for the column it
 // belongs to. The declared type decides whether text is a number, which is what
 // lets a cleared numeric cell mean NULL instead of zero.
+//
+// Text is the shape this client actually receives: every value reaches the
+// server through a JSON body, and a JSON number decodes as float64, so the cells
+// an edit or a filter names arrive as text or as a float - never as the int64 a
+// read yielded, which is the shape the Fyne client has to answer. A whole number
+// written as text keeps its digits from here (wholeNumberLiteral), because a
+// double cannot hold it past 2^53 and the float path would hand the server a
+// different number than the one the user named.
 func valueLiteral(dbType, colType string, value interface{}) (string, error) {
 	switch v := value.(type) {
 	case nil:
@@ -165,6 +213,9 @@ func valueLiteral(dbType, colType string, value interface{}) (string, error) {
 			trimmed := strings.TrimSpace(v)
 			if trimmed == "" {
 				return "NULL", nil
+			}
+			if literal, whole := wholeNumberLiteral(trimmed); whole {
+				return literal, nil
 			}
 			number, err := strconv.ParseFloat(trimmed, 64)
 			if err != nil {

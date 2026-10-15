@@ -149,3 +149,47 @@ func TestPreviewChangesRefusesBeforeTouchingTheTable(t *testing.T) {
 		t.Errorf("table changed under a refused preview: %v", got)
 	}
 }
+
+// TestApplyChangesLocatesARowByKeyTypedAsText is the 2^53 cliff on the side a
+// browser client actually reaches: the key is what someone typed, so it arrives as
+// text, and text used to go through ParseFloat - which turns 9007199254740993 into
+// ...992. This table holds both, so the old path was not an error and not the
+// "matched no row" refusal either: it edited the neighbouring row and reported the
+// batch as applied.
+func TestApplyChangesLocatesARowByKeyTypedAsText(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE big (id integer primary key, v text)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO big (id, v) VALUES (9007199254740993,'one'),(9007199254740992,'two')`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	a := searchApp(conn)
+
+	set := ChangeSet{
+		ConnID: conn.ID, Database: conn.Database, Table: "big",
+		Columns: []string{"id", "v"},
+		Changes: []RowChange{{Original: []interface{}{"9007199254740993", "one"},
+			Edits: []CellEdit{{Column: "v", Value: "changed"}}}},
+	}
+	statements, err := buildStatements("sqlite", `"big"`, []string{"id", "v"}, []string{"id"},
+		map[string]string{"id": "integer", "v": "text"}, set.Changes)
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if !strings.Contains(statements[0], "WHERE \"id\" = 9007199254740993") {
+		t.Errorf("statement = %s, want the typed key written exactly", statements[0])
+	}
+
+	applied, err := a.ApplyChanges(set)
+	if err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+	if applied != 1 {
+		t.Errorf("applied = %d, want the one row the key names", applied)
+	}
+	want := "9007199254740992|two, 9007199254740993|changed"
+	if got := tableState(t, conn, "SELECT id, v FROM big ORDER BY id"); strings.Join(got, ", ") != want {
+		t.Errorf("table holds %v, want the named row changed and its neighbour left alone", got)
+	}
+}
