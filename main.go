@@ -46,7 +46,7 @@ func main() {
 		log.Fatal("Failed to start API server:", err)
 	}
 	apiPort := listener.Addr().(*net.TCPAddr).Port
-	log.Printf("HTTP API server on port %d (token %s)", apiPort, token)
+	log.Printf("HTTP API server on port %d", apiPort)
 
 	svc.startHTTPServerOnListener(listener)
 

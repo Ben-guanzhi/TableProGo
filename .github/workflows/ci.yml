@@ -40,9 +40,9 @@ jobs:
         working-directory: ${{ matrix.dir }}
         run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go vet ./...
 
-      - name: go test
+      - name: go test -race
         working-directory: ${{ matrix.dir }}
-        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -count=1 ./...
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -race -count=1 ./...
 
   app:
     name: frontend + wails app
@@ -96,8 +96,8 @@ jobs:
       - name: go vet (root)
         run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go vet ./...
 
-      - name: go test (root)
-        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -count=1 ./...
+      - name: go test -race
+        run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go test -race -count=1 ./...
 
       - name: go build
         run: sh "$GITHUB_WORKSPACE/.github/scripts/gate.sh" go build -o build/TableProGo.exe .
