@@ -298,14 +298,17 @@ func runSelect(db *sql.DB, query string, start time.Time, args ...interface{}) Q
 		}
 	}
 
+	// The scan destinations are reused across rows (as fynequery's runSelect
+	// already does): one allocation for values and one for valuePtrs instead of
+	// two per row. Only the interpreted row - the slice the caller keeps - is
+	// allocated per iteration.
+	values := make([]interface{}, len(columns))
+	valuePtrs := make([]interface{}, len(columns))
+	for i := range values {
+		valuePtrs[i] = &values[i]
+	}
 	var resultRows [][]interface{}
 	for rows.Next() {
-		values := make([]interface{}, len(columns))
-		valuePtrs := make([]interface{}, len(columns))
-		for i := range values {
-			valuePtrs[i] = &values[i]
-		}
-
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return QueryResult{Error: err.Error()}
 		}
