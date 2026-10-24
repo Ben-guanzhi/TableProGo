@@ -259,6 +259,9 @@ export interface Tab {
   kv?: SectionState<KVValue>;
   objectType?: 'table' | 'view';
   section?: ObjectSection;
+  // An open interactive transaction, as the backend describes it ("事务中 · 2 条语句 ·
+  // app"). Empty means the tab runs in autocommit.
+  txStatus?: string;
   data?: SectionState<QueryResult>;
   // One page of the data card: rows are read by key when the page has one to
   // step from, and by OFFSET otherwise.

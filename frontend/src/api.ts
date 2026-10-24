@@ -1,4 +1,20 @@
-import { ChangeSet, Column, ColumnInfo, Connection, ConnectionConfig, ForeignKeyInfo, HistoryEntry, KVKeyInfo, KVKeyPage, KVRowInput, KVValue, PreviewCursor, QueryResult, SqlFilter, TableInfo } from './types';
+import type {
+  ChangeSet,
+  Column,
+  ColumnInfo,
+  Connection,
+  ConnectionConfig,
+  ForeignKeyInfo,
+  HistoryEntry,
+  KVKeyInfo,
+  KVKeyPage,
+  KVRowInput,
+  KVValue,
+  PreviewCursor,
+  QueryResult,
+  SqlFilter,
+  TableInfo,
+} from './types/index.ts';
 
 // Injected by the Go asset handler; the ?apiPort=/?apiToken= fallbacks keep the
 // vite dev server usable from a plain browser. The token is minted per process
@@ -15,7 +31,7 @@ const API_TOKEN = window.__API_TOKEN__
   ?? new URLSearchParams(window.location.search).get('apiToken') ?? '';
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
-async function post(path: string, body: any = {}): Promise<any> {
+export async function post(path: string, body: any = {}): Promise<any> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },

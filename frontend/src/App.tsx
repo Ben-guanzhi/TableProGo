@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FiEye, FiHelpCircle, FiKey, FiLoader, FiSearch, FiTable } from 'react-icons/fi';
+import { FiEye, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
@@ -12,6 +12,7 @@ import RowSplitter, {
   EDITOR_MIN_HEIGHT,
 } from './components/RowSplitter';
 import QuickOpen from './components/QuickOpen';
+import AiPanel from './components/AiPanel';
 import ShortcutHelp from './components/ShortcutHelp';
 import ThemePicker from './components/ThemePicker';
 import ConnectionDialog from './components/ConnectionDialog';
@@ -66,7 +67,14 @@ import {
   SetKVKeyTTL,
 } from './api';
 import { applyTheme } from './theme';
+import toast from 'react-hot-toast';
 import { runGuarded, runStreamed } from './lib/queryRun';
+import {
+  BeginTransaction,
+  CommitTransaction,
+  ExecuteQueryInTab,
+  RollbackTransaction,
+} from './api';
 import { defaultSettings, saveSettings, useLoadSettings, useSettingsEffect } from './lib/useSettings';
 
 // Result columns are matched to table metadata by name, which is all a
@@ -106,6 +114,7 @@ function App() {
   const [databases, setDatabases] = useState<string[]>([]);
   const [quickOpen, setQuickOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
   // Edits waiting in each tab's grid, reported by the grid itself. Kept out of
   // tab state because it changes with every keystroke in a cell.
@@ -289,6 +298,40 @@ function App() {
   // land nowhere; the server keeps running the statement either way.
   const runSeq = useRef(new Map<string, number>());
 
+  // Interactive transactions (backend txn.go): one per tab. The status the backend
+  // returns is the tab's badge; an empty status means autocommit.
+  const txHandlers = (tab: Tab) => ({
+    txActive: !!tab.txStatus,
+    txStatus: tab.txStatus ?? '',
+    onBeginTx: async () => {
+      if (!activeConnection) return;
+      try {
+        const status = await BeginTransaction(activeConnection.id, tab.id, tabDatabase(tab));
+        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: status } : t)));
+      } catch (error) {
+        toast.error((error as Error).message, { duration: 8000 });
+      }
+    },
+    onCommitTx: async () => {
+      if (!activeConnection) return;
+      try {
+        await CommitTransaction(activeConnection.id, tab.id);
+        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '' } : t)));
+      } catch (error) {
+        toast.error((error as Error).message, { duration: 8000 });
+      }
+    },
+    onRollbackTx: async () => {
+      if (!activeConnection) return;
+      try {
+        await RollbackTransaction(activeConnection.id, tab.id);
+        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '' } : t)));
+      } catch (error) {
+        toast.error((error as Error).message, { duration: 8000 });
+      }
+    },
+  });
+
   const cancelQuery = (tabId: string) => {
     runSeq.current.set(tabId, (runSeq.current.get(tabId) ?? 0) + 1);
     setTabs(current => current.map(t => (t.id === tabId ? { ...t, loading: false } : t)));
@@ -305,12 +348,16 @@ function App() {
 
     try {
       const connId = activeConnection.id;
+      // A tab with an open transaction must run through the tab-scoped route, or the
+      // statement would go out in autocommit and the transaction would govern
+      // nothing. Streaming is still used: the transaction and streaming are
+      // independent (beginRun holds the cancel context either way).
       const result = await runStreamed(connId, tab.query, database, partial => {
         if (!stillCurrent()) return;
         setTabs(current => current.map(t =>
           t.id === tabId ? { ...t, database, result: partial, loading: true } : t
         ));
-      });
+      }, tabId, !!tab.txStatus);
       const comments = settings.showColumnComments && !result.error
         ? await queryComments(activeConnection.id, tab.query, database)
         : undefined;
@@ -617,7 +664,7 @@ function App() {
 
     patch({ objectResult: { loading: true }, objectComments: undefined });
     try {
-      const result = await runGuarded(ref.connId, sql, database);
+      const result = await runGuarded(ref.connId, sql, database, undefined, tab.id);
       const comments =
         settings.showColumnComments && !result.error
           ? await queryComments(ref.connId, sql, database)
@@ -1050,6 +1097,14 @@ function App() {
           <div className="ml-auto flex items-center gap-1 pr-2">
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowAiPanel(current => !current)}
+              title="AI 助手：问数据库"
+              aria-label="AI 助手"
+            >
+              <FiMessageCircle size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setQuickOpen(true)}
               title="快速打开表 / 视图 (Ctrl+P)"
               aria-label="快速打开表或视图"
@@ -1188,6 +1243,7 @@ function App() {
                   onSettingsChange={changeSettings}
                   getTables={completionTables}
                   getColumns={completionColumns}
+                  {...txHandlers(activeTabData)}
                 />
               </div>
 

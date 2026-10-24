@@ -27,6 +27,11 @@ import (
 // sqlDriver wraps the pool metadata lookups use in the matching dbcore driver.
 // NewFromDB keeps pool ownership here, so driver.Close is a no-op.
 func (a *App) sqlDriver(conn *Connection, database string) (dbcore.SQLDriver, error) {
+	// A plugin-backed connection has no pool to introspect: the child process holds
+	// the handle, and its driver answers the same metadata calls.
+	if pluginConnection(conn) {
+		return a.pluginDriver(conn)
+	}
 	db, err := a.poolFor(conn, database)
 	if err != nil {
 		return nil, err
@@ -82,6 +87,24 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 
 	if conn.Type == "sqlite" {
 		return []string{conn.Database}, nil
+	}
+
+	// A plugin answers its own catalog: the client has no dialect knowledge for an
+	// engine it does not compile, and DatabasesQuery would refuse the type.
+	if pluginConnection(conn) {
+		drv, err := a.pluginDriver(conn)
+		if err != nil {
+			return nil, err
+		}
+		schemas, err := drv.ListSchemas(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(schemas))
+		for _, s := range schemas {
+			names = append(names, s.Name)
+		}
+		return names, nil
 	}
 
 	query, err := tableprosql.DatabasesQuery(conn.Type)
@@ -164,6 +187,24 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 		// under the logical database.
 		return nil, nil
 	}
+	// A plugin connection has no pool: the child process answers the catalog with
+	// its own driver, and the client has no dialect knowledge for an engine it
+	// does not compile.
+	if pluginConnection(conn) {
+		drv, err := a.pluginDriver(conn)
+		if err != nil {
+			return nil, err
+		}
+		found, err := drv.ListSchemas(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		names := make([]string, 0, len(found))
+		for _, s := range found {
+			names = append(names, s.Name)
+		}
+		return names, nil
+	}
 	if conn.DB == nil {
 		return nil, fmt.Errorf("not connected")
 	}
@@ -234,7 +275,7 @@ func (a *App) getTablesFiltered(connID string, database string, schema string, e
 		}
 		return []TableInfo{}, nil
 	}
-	if conn.DB == nil {
+	if conn.DB == nil && !pluginConnection(conn) {
 		return nil, fmt.Errorf("not connected")
 	}
 
@@ -242,7 +283,7 @@ func (a *App) getTablesFiltered(connID string, database string, schema string, e
 
 	// The exact-name lookup stays on the shared one-row statement: pulling a
 	// whole catalog to answer "is this object here" would undo its purpose.
-	if exact != "" {
+	if exact != "" && !pluginConnection(conn) {
 		db := conn.DB
 		if conn.Type == "postgresql" {
 			if db, err = a.poolFor(conn, database); err != nil {
@@ -340,7 +381,7 @@ func (a *App) GetColumns(connID string, database string, schema string, table st
 		// A key has no columns; its value layout is what the value tab shows.
 		return nil, nil
 	}
-	if conn.DB == nil {
+	if conn.DB == nil && !pluginConnection(conn) {
 		return nil, fmt.Errorf("not connected")
 	}
 

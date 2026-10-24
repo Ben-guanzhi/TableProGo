@@ -1,6 +1,8 @@
 package main
 
 import (
+	"tablepro-go/internal/llm"
+
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
@@ -118,6 +120,22 @@ type queryRequest struct {
 	ConnID   string `json:"connId"`
 	Query    string `json:"query"`
 	Database string `json:"database"`
+}
+
+// llmAskRequest is one question for the assistant.
+type llmAskRequest struct {
+	Question string `json:"question"`
+}
+
+// llmProposalRequest addresses one proposed statement.
+type llmProposalRequest struct {
+	ID string `json:"id"`
+}
+
+// llmConfigRequest carries the provider settings; Save says whether to persist them.
+type llmConfigRequest struct {
+	Config llm.Config `json:"config"`
+	Save   bool       `json:"save"`
 }
 
 // txRequest addresses one tab's transaction.
@@ -403,6 +421,47 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/execute-confirmed", 400, func(a *App, body queryRequest) (any, error) {
 		return a.ExecuteQueryConfirmed(body.ConnID, body.Query, body.Database), nil
 	})
+	// The AI assistant: a chat whose model reaches the database through the MCP
+	// tools (llm.go). The provider settings live in their own file.
+	// The assistant's write path: the model proposes, the user disposes. These
+	// three routes are the whole of it — nothing else runs a proposed statement.
+	post(a, mux, "/api/llm/proposals", 400, func(a *App, body connIDRequest) (any, error) {
+		return map[string]any{"proposals": a.PendingProposals()}, nil
+	})
+	post(a, mux, "/api/llm/proposal/accept", 400, func(a *App, body llmProposalRequest) (any, error) {
+		result, err := a.AcceptProposal(body.ID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"result": result}, nil
+	})
+	post(a, mux, "/api/llm/proposal/reject", 400, func(a *App, body llmProposalRequest) (any, error) {
+		return map[string]bool{"rejected": a.RejectProposal(body.ID) == nil}, nil
+	})
+	post(a, mux, "/api/llm/ask", 400, func(a *App, body llmAskRequest) (any, error) {
+		text, err := a.AskLLM(body.Question)
+		return map[string]string{"answer": text}, err
+	})
+	post(a, mux, "/api/llm/history", 400, func(a *App, body connIDRequest) (any, error) {
+		return map[string]any{"history": LLMHistory()}, nil
+	})
+	post(a, mux, "/api/llm/clear", 400, func(a *App, body connIDRequest) (any, error) {
+		ClearLLMHistory()
+		return map[string]bool{"cleared": true}, nil
+	})
+	post(a, mux, "/api/llm/config", 400, func(a *App, body llmConfigRequest) (any, error) {
+		if body.Save {
+			if err := SaveLLMConfig(body.Config); err != nil {
+				return nil, err
+			}
+		}
+		return map[string]any{"config": LoadLLMConfig(), "providers": LLMPresets()}, nil
+	})
+
+	// MCP over the loopback API: the same JSON-RPC handling the stdio child process
+	// uses, so a running app can be inspected without a restart.
+	mux.HandleFunc("/api/mcp", a.serveMCP)
+
 	// Interactive transactions (txn.go): per-tab, so two editor tabs on one
 	// connection keep separate transactions.
 	post(a, mux, "/api/begin-tx", 400, func(a *App, body txRequest) (any, error) {

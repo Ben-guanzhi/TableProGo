@@ -1,6 +1,8 @@
 import {
   ExecuteQuery,
   ExecuteQueryConfirmed,
+  ExecuteQueryInTab,
+  ExecuteQueryInTabConfirmed,
   ExecuteQueryStream,
 } from '../api';
 import { Column, QueryResult } from '../types';
@@ -24,11 +26,20 @@ export async function runGuarded(
   sql: string,
   database: string,
   confirm: (message: string) => boolean = message => window.confirm(message),
+  // tabId routes the statement through the tab-scoped endpoint so it joins that
+  // tab's open transaction. Empty means "no transaction", which is what a
+  // background statement wants.
+  tabId = '',
 ): Promise<QueryResult> {
-  const first = (await ExecuteQuery(connId, sql, database)) as unknown as QueryResult;
+  const first = (tabId
+    ? await ExecuteQueryInTab(connId, tabId, sql, database)
+    : await ExecuteQuery(connId, sql, database)) as unknown as QueryResult;
   return confirmThenRun(
     first,
-    async () => (await ExecuteQueryConfirmed(connId, sql, database)) as unknown as QueryResult,
+    async () =>
+      (tabId
+        ? await ExecuteQueryInTabConfirmed(connId, tabId, sql, database)
+        : await ExecuteQueryConfirmed(connId, sql, database)) as unknown as QueryResult,
     confirm,
   );
 }
@@ -43,6 +54,11 @@ export async function runStreamed(
   sql: string,
   database: string,
   onPartial: (result: QueryResult) => void,
+  // When the tab holds an open transaction the statement must run inside it, and
+  // only the buffered tab-scoped endpoint does that (the streaming endpoint talks
+  // to the pool directly).
+  tabId = '',
+  txActive = false,
   confirm: (message: string) => boolean = message => window.confirm(message),
 ): Promise<QueryResult> {
   let columns: Column[] = [];
@@ -53,6 +69,11 @@ export async function runStreamed(
     rows,
     rowCount: rows.length,
   });
+  if (txActive && tabId) {
+    const result = (await ExecuteQueryInTab(connId, tabId, sql, database)) as unknown as QueryResult;
+    onPartial(result);
+    return result;
+  }
   const done = await ExecuteQueryStream(connId, sql, database, {
     onColumns: next => {
       columns = next;

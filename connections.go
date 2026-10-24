@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dbcore/dbcore"
+	"github.com/dbcore/dbcore/plugindriver"
 
 	dbcoremssql "github.com/dbcore/dbcore/mssql"
 	dbcoremysql "github.com/dbcore/dbcore/mysql"
@@ -54,6 +55,17 @@ type Connection struct {
 	kvDefault int
 	kvDB      int
 	kvDBSet   bool
+
+	// plugin is the child process serving this connection when the engine is not
+	// compiled in (plugins.go). Its driver carries metadata and statements, so DB
+	// stays nil for such a connection.
+	//
+	// pluginConn is the same process in connection-oriented mode: one plugin
+	// serving several connections, the way a browser-style host does (see
+	// plugins_resolve.go). Only one of the two is used per connection.
+	pluginMu   sync.Mutex
+	plugin     dbcore.SQLDriver
+	pluginConn *plugindriver.ConnDriver
 
 	// pools caches one *sql.DB per database (internal/pool); poolsOnce builds it
 	// on first use so a connection that never browses another database pays
@@ -248,6 +260,7 @@ func (a *App) DeleteConnection(id string) error {
 				}
 				conn.closeKV()
 				conn.closePools()
+				conn.closePlugin()
 				closeTxns(id)
 				conn.tunnel.Close()
 				delete(a.connections, id)
@@ -356,6 +369,7 @@ func (a *App) Disconnect(connID string) error {
 		}
 		conn.closeKV()
 		conn.closePools()
+		conn.closePlugin()
 		// A manager wraps a driver built from the DB just closed; leaving it
 		// registered would make the next statement fail with "database is closed".
 		closeTxns(connID)
@@ -367,13 +381,36 @@ func (a *App) Disconnect(connID string) error {
 	return nil
 }
 
+// isConnected reports whether this connection can answer a call. Three shapes count:
+// a database pool, a key/value driver, or an engine served by a registered plugin
+// (plugins.go). The plugin case deliberately checks the registration rather than the
+// running process: the child is started lazily on first use, so requiring a running
+// process here would deadlock the call that would have started it.
+func (c *Connection) isConnected() bool {
+	if c == nil {
+		return false
+	}
+	if c.DB != nil || c.KV != nil {
+		return true
+	}
+	return pluginConnection(c)
+}
+
 func (a *App) connection(connID string) (*Connection, error) {
 	a.connectionsMu.RLock()
 	defer a.connectionsMu.RUnlock()
 
 	conn, ok := a.connections[connID]
-	if !ok || conn.DB == nil {
-		return nil, fmt.Errorf("not connected")
+	if !ok {
+		return nil, fmt.Errorf("not connected: no connection with id %q", connID)
+	}
+	if !conn.isConnected() {
+		// The engine is named: the user needs to know *which* connection is not
+		// usable, and whether it is a plugin that is missing.
+		if _, ok := plugins.lookup(conn.Type); ok {
+			return nil, fmt.Errorf("not connected: the %q plugin is registered but the connection was never opened", conn.Type)
+		}
+		return nil, fmt.Errorf("not connected: %s (%s)", conn.Name, conn.Type)
 	}
 	return conn, nil
 }
@@ -385,8 +422,14 @@ func (a *App) liveConnection(connID string) (*Connection, error) {
 	defer a.connectionsMu.RUnlock()
 
 	conn, ok := a.connections[connID]
-	if !ok || (conn.DB == nil && conn.KV == nil) {
-		return nil, fmt.Errorf("not connected")
+	if !ok {
+		return nil, fmt.Errorf("not connected: no connection with id %q", connID)
+	}
+	if !conn.isConnected() {
+		if _, ok := plugins.lookup(conn.Type); ok {
+			return nil, fmt.Errorf("not connected: the %q plugin is registered but the connection was never opened", conn.Type)
+		}
+		return nil, fmt.Errorf("not connected: %s (%s)", conn.Name, conn.Type)
 	}
 	return conn, nil
 }

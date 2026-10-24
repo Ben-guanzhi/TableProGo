@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 
-	"tablepro-go/internal/txn"
 	"sync/atomic"
+	"tablepro-go/internal/txn"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
@@ -47,6 +47,11 @@ type App struct {
 	runs   map[string]map[int64]context.CancelFunc
 	runSeq atomic.Int64
 
+	// mcpConfirmer asks the UI to approve one MCP write (mcp.go). Nil means the MCP
+	// server is read-only: an unattended write path is exactly what it refuses.
+	mcpConfirmerMu sync.Mutex
+	mcpConfirmer   func(connName, sql string) bool
+
 	// txSessions is the interactive transaction each tab holds (txn.go). Keyed by
 	// tab id so two tabs on one connection keep separate transactions.
 	txSessionsMu sync.Mutex
@@ -74,6 +79,12 @@ type AppSettings struct {
 	// SafeMode gates writing statements in the query editor (see safemode.go):
 	// "off", "confirmWrites", "confirmNoWhere" or "blockNoWhere".
 	SafeMode string `json:"safeMode"`
+	// MCPAllowWrites lets an MCP client run DML/DDL. It is off by default and, even
+	// when on, every statement is confirmed through the UI (mcp.go). Without a UI
+	// attached the write is refused regardless.
+	MCPAllowWrites bool `json:"mcpAllowWrites"`
+	// MCPMaxRows caps how many rows one MCP query returns; 0 uses the default.
+	MCPMaxRows int `json:"mcpMaxRows"`
 }
 
 // defaultResultLimit matches what GUI clients hand out before the user says

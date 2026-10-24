@@ -41,7 +41,19 @@ import {
   sql,
 } from '@codemirror/lang-sql';
 import { tags } from '@lezer/highlight';
-import { FiChevronDown, FiDatabase, FiLoader, FiMinus, FiPlay, FiPlus, FiSettings, FiSquare } from 'react-icons/fi';
+import {
+  FiCheck,
+  FiChevronDown,
+  FiDatabase,
+  FiGitCommit,
+  FiLoader,
+  FiMinus,
+  FiPlay,
+  FiPlus,
+  FiRotateCcw,
+  FiSettings,
+  FiSquare,
+} from 'react-icons/fi';
 import { AppSettings } from '../api';
 import { ColumnInfo } from '../types';
 
@@ -214,9 +226,14 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     query,
     onQueryChange,
     onExecute,
-  onCancel,
+    onCancel,
     isConnected,
     loading,
+    txStatus = '',
+    txActive = false,
+    onBeginTx,
+    onCommitTx,
+    onRollbackTx,
     dialect,
     databases,
     database,
@@ -429,6 +446,48 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
             <FiSquare size={11} className="mr-1.5 shrink-0" />
             取消
           </button>
+        )}
+
+        {isConnected && (
+          <div className="flex items-center gap-1 pl-2 border-l border-line">
+            {txActive ? (
+              <>
+                <button
+                  className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-success hover:bg-success-hover text-on-success disabled:opacity-40"
+                  onClick={onCommitTx}
+                  disabled={loading}
+                  title="提交这个标签页的事务"
+                >
+                  <FiCheck size={11} className="mr-1 shrink-0" />
+                  提交
+                </button>
+                <button
+                  className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-danger hover:bg-danger-hover text-on-danger disabled:opacity-40"
+                  onClick={onRollbackTx}
+                  disabled={loading}
+                  title="回滚这个标签页的事务，撤掉其中所有语句"
+                >
+                  <FiRotateCcw size={11} className="mr-1 shrink-0" />
+                  回滚
+                </button>
+              </>
+            ) : (
+              <button
+                className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
+                onClick={onBeginTx}
+                disabled={loading}
+                title="开始事务：之后的语句都在事务里，直到提交或回滚"
+              >
+                <FiGitCommit size={11} className="mr-1 shrink-0" />
+                开始事务
+              </button>
+            )}
+            {txStatus && (
+              <span className="text-2xs text-warning whitespace-nowrap" title={txStatus}>
+                {txStatus}
+              </span>
+            )}
+          </div>
         )}
 
         <span className="text-2xs text-muted whitespace-nowrap">

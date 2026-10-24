@@ -8,8 +8,8 @@ import (
 
 	"github.com/dbcore/dbcore"
 
-	"tablepro-go/internal/txn"
 	tableprosql "github.com/dbcore/dbcore/sqltext"
+	"tablepro-go/internal/txn"
 
 	"tablepro-go/internal/catalogmodel"
 
@@ -87,6 +87,12 @@ func (a *App) previewPage(connID string, database string, schema string, table s
 	conn, err := a.connection(connID)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
+	}
+	// A plugin-backed connection renders the page itself: the client has no
+	// dialect knowledge for an engine it does not compile, so the page cannot be
+	// built from a WHERE and an ORDER BY here.
+	if pluginConnection(conn) {
+		return a.previewViaPlugin(conn, database, schema, table, limit, offset, filters)
 	}
 	if limit <= 0 || limit > 1000 {
 		limit = 100
@@ -355,6 +361,11 @@ func (a *App) runStatement(
 // own for MySQL and SQL Server, while metadata reads qualify the database name
 // on the main pool.
 func (a *App) execDriver(conn *Connection, database string) (dbcore.SQLDriver, error) {
+	// A plugin-backed connection has no *sql.DB to pick a pool from: the child
+	// process holds the one handle.
+	if pluginConnection(conn) {
+		return a.pluginDriver(conn)
+	}
 	db, err := a.queryPool(conn, database)
 	if err != nil {
 		return nil, err
