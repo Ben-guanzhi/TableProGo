@@ -50,9 +50,10 @@ func TestPluginBeatsTheBuiltinEngine(t *testing.T) {
 		t.Fatalf("kind = %q", spec.Kind)
 	}
 
-	// A connection of that type resolves to the plugin's driver.
-	conn := &Connection{ID: "res1", Name: "res", Type: "sqlite", Database: "main"}
-	drv, err := conn.startPlugin(spec)
+	// A connection of that type resolves to the plugin's driver. The database
+	// is a temp file so Open can open it without leaving a stray artifact.
+	conn := &Connection{ID: "res1", Name: "res", Type: "sqlite", Database: filepath.Join(t.TempDir(), "test.db")}
+	drv, err := conn.startPluginConn(spec)
 	if err != nil {
 		t.Fatalf("the registered plugin must start: %v", err)
 	}
@@ -119,11 +120,11 @@ func TestAFailingPluginIsReported(t *testing.T) {
 	if !ok {
 		t.Fatal("the plugin must be registered")
 	}
-	if _, err := conn.startPlugin(spec); err == nil {
+	if _, err := conn.startPluginConn(spec); err == nil {
 		t.Fatal("a plugin that cannot start must be reported")
 	}
 	// And it did not fall back to a built-in: there is none for this engine.
-	if conn.plugin != nil {
+	if conn.pluginConn != nil {
 		t.Fatal("a failed start must not leave a driver behind")
 	}
 }

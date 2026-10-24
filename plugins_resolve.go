@@ -11,6 +11,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/dbcore/dbcore"
 	"github.com/dbcore/dbcore/plugindriver"
@@ -23,7 +24,7 @@ import (
 // always has.
 func (a *App) driverForEngine(conn *Connection) (dbcore.SQLDriver, error) {
 	if spec, ok := plugins.lookup(conn.Type); ok {
-		drv, err := conn.startPlugin(spec)
+		drv, err := conn.startPluginConn(spec)
 		if err != nil {
 			// A registered plugin that cannot start is reported, not silently
 			// replaced: the user chose it, and quietly falling back would hide
@@ -67,13 +68,15 @@ func RegisteredPlugins() []string {
 	return out
 }
 
-// startPluginConn launches a plugin in connection-oriented mode: one process
-// serving several connections, the way a browser-style host does.
-func (c *Connection) startPluginConn(spec pluginSpec) (*plugindriver.ConnDriver, error) {
+// startPluginConn launches a plugin in connection-oriented mode (one process
+// serving several connections, the way a browser-style host does) and opens the
+// connection this Connection represents on it. The bound driver is returned; it
+// is what every catalog and query call goes through.
+func (c *Connection) startPluginConn(spec pluginSpec) (dbcore.SQLDriver, error) {
 	c.pluginMu.Lock()
 	defer c.pluginMu.Unlock()
-	if c.pluginConn != nil {
-		return c.pluginConn, nil
+	if c.pluginConn != nil && c.pluginConnID != "" {
+		return c.pluginConn.Bind(c.pluginConnID, c.Database), nil
 	}
 	host, err := plugindriver.StartConn(context.Background(), spec.Path, nil)
 	if err != nil {
@@ -83,6 +86,20 @@ func (c *Connection) startPluginConn(spec pluginSpec) (*plugindriver.ConnDriver,
 		_ = host.Close()
 		return nil, fmt.Errorf("plugin %s speaks %q, but it is registered as %q", spec.Path, host.Kind(), spec.Kind)
 	}
+	connID, _, err := host.Open(context.Background(), plugindriver.ConnectParams{
+		Name:     c.Name,
+		Host:     c.Host,
+		Port:     strconv.Itoa(c.Port),
+		User:     c.Username,
+		Password: c.Password,
+		Database: c.Database,
+		Options:  c.Options,
+	})
+	if err != nil {
+		_ = host.Close()
+		return nil, err
+	}
 	c.pluginConn = host
-	return host, nil
+	c.pluginConnID = connID
+	return host.Bind(connID, c.Database), nil
 }

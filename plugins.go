@@ -112,27 +112,35 @@ func (c *Connection) startPlugin(spec pluginSpec) (dbcore.SQLDriver, error) {
 }
 
 // pluginDriver returns the connection's plugin driver, starting it on first use.
+// The connection-oriented host is used: one plugin process serves this and any
+// other connection of the same engine, so a second tab does not spawn a child.
 func (a *App) pluginDriver(conn *Connection) (dbcore.SQLDriver, error) {
 	spec, ok := plugins.lookup(conn.Type)
 	if !ok {
 		return nil, fmt.Errorf("%w: no plugin is registered for %q", dbcore.ErrNotSupported, conn.Type)
 	}
-	return conn.startPlugin(spec)
+	return conn.startPluginConn(spec)
 }
 
-// closePlugin shuts the child process down; called from Disconnect. Both shapes
-// are closed: the statement-oriented driver and the connection-oriented host.
+// closePlugin shuts the child process down; called from Disconnect. The
+// connection-oriented connection is dropped first (so the process keeps serving
+// any other connection), then the host itself when nothing remains.
 func (c *Connection) closePlugin() {
 	c.pluginMu.Lock()
 	drv := c.plugin
 	host := c.pluginConn
+	connID := c.pluginConnID
 	c.plugin = nil
 	c.pluginConn = nil
+	c.pluginConnID = ""
 	c.pluginMu.Unlock()
 	if drv != nil {
 		_ = drv.Close()
 	}
 	if host != nil {
+		if connID != "" {
+			_ = host.CloseConn(context.Background(), connID)
+		}
 		_ = host.Close()
 	}
 }

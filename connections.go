@@ -63,9 +63,13 @@ type Connection struct {
 	// pluginConn is the same process in connection-oriented mode: one plugin
 	// serving several connections, the way a browser-style host does (see
 	// plugins_resolve.go). Only one of the two is used per connection.
-	pluginMu   sync.Mutex
-	plugin     dbcore.SQLDriver
-	pluginConn *plugindriver.ConnDriver
+	//
+	// pluginConnID is the id this connection opened on pluginConn, so its driver
+	// (pluginConn.Bind) can be recovered after a reload and closed on disconnect.
+	pluginMu     sync.Mutex
+	plugin       dbcore.SQLDriver
+	pluginConn   *plugindriver.ConnDriver
+	pluginConnID string
 
 	// pools caches one *sql.DB per database (internal/pool); poolsOnce builds it
 	// on first use so a connection that never browses another database pays

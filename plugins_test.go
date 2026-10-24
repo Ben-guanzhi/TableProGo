@@ -14,8 +14,11 @@ import (
 )
 
 // fakePluginMain is a plugin that claims the engine "fakeengine" and answers the
-// calls this test makes. Written to a temp module and built, so the launch path is
-// the real one.
+// connection-oriented calls this test makes. It is written to a temp module and
+// built, so the launch path is the real one: the host starts the process, opens
+// a connection, and binds it before the catalog and query calls arrive. The wire
+// shapes mirror the deployed fynequery plugins (proto.CellPayload etc.), so the
+// same decoders a real plugin relies on are exercised here.
 const fakePluginMain = `package main
 
 import (
@@ -54,37 +57,36 @@ func main() {
 				switch req.Method {
 				case plugindriver.MethodPing:
 					send("pong", "", "")
-				case plugindriver.MethodClose:
+				case "open":
+					send(plugindriver.OpenResult{ConnID: "c1"}, "", "")
+				case "close":
 					send(nil, "", "")
 					os.Exit(0)
-				case plugindriver.MethodListSchemas:
-					send([]string{"main"}, "", "")
-				case plugindriver.MethodListTables:
-					send([]plugindriver.TablePayload{
-						{Schema: "main", Name: "widgets", Type: "table"},
-						{Schema: "main", Name: "recent", Type: "view"},
+				case "tables":
+					send([]plugindriver.ConnObject{
+						{Name: "widgets", Kind: "table"},
+						{Name: "recent", Kind: "view"},
 					}, "", "")
-				case plugindriver.MethodListColumns:
-					send([]plugindriver.ColumnPayload{
-						{Name: "id", Type: "INTEGER", IsPrimaryKey: true},
+				case "columns":
+					send([]plugindriver.ConnColumn{
+						{Name: "id", Type: "INTEGER", Key: "PK"},
 						{Name: "label", Type: "TEXT", Nullable: true},
 					}, "", "")
-				case plugindriver.MethodBrowseRows:
-					send(plugindriver.BrowseResult{
-						Columns: []plugindriver.ColumnPayload{
+				case "browse":
+					send(plugindriver.ConnQueryResult{
+						Columns: []plugindriver.ConnColumn{
 							{Name: "id", Type: "INTEGER"},
 							{Name: "label", Type: "TEXT"},
 						},
-						Rows: [][]plugindriver.CellPayload{
-							{{Kind: "int", Int: 1}, {Kind: "text", Text: "first"}},
-							{{Kind: "int", Int: 2}, {Kind: "text", Text: "second"}},
+						Rows: [][]interface{}{
+							[]interface{}{plugindriver.CellPayload{Kind: "int", Int: 1}, plugindriver.CellPayload{Kind: "text", Text: "first"}},
+							[]interface{}{plugindriver.CellPayload{Kind: "int", Int: 2}, plugindriver.CellPayload{Kind: "text", Text: "second"}},
 						},
-						Total: 2,
 					}, "", "")
-				case plugindriver.MethodExecute:
-					send(plugindriver.ResultPayload{
-						Columns: []plugindriver.ColumnPayload{{Name: "answer", Type: "INTEGER"}},
-						Rows:    [][]plugindriver.CellPayload{{{Kind: "int", Int: 42}}},
+				case "query":
+					send(plugindriver.ConnQueryResult{
+						Columns: []plugindriver.ConnColumn{{Name: "answer", Type: "INTEGER"}},
+						Rows:    [][]interface{}{[]interface{}{plugindriver.CellPayload{Kind: "int", Int: 42}}},
 					}, "", "")
 				default:
 					send(nil, "unknown method "+req.Method, dbcore.ErrCodeNotSupported)
@@ -239,7 +241,7 @@ func TestPluginConnectionClosesOnDisconnect(t *testing.T) {
 	// The driver is gone, so a fresh resolve starts a new process rather than
 	// talking to a closed one.
 	conn.pluginMu.Lock()
-	still := conn.plugin
+	still := conn.pluginConn
 	conn.pluginMu.Unlock()
 	if still != nil {
 		t.Fatal("the plugin must be dropped on disconnect")
@@ -257,7 +259,7 @@ func TestPluginKindMismatchIsRefused(t *testing.T) {
 	plugins.mu.Unlock()
 
 	conn := &Connection{ID: "fake4", Name: "mis", Type: "mislabelled", Database: "main"}
-	_, err := conn.startPlugin(pluginSpec{Path: spec.Path, Kind: "mislabelled"})
+	_, err := conn.startPluginConn(pluginSpec{Path: spec.Path, Kind: "mislabelled"})
 	if err == nil {
 		t.Fatal("a plugin that claims another engine must be refused")
 	}
