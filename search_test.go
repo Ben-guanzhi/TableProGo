@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	tableprosql "github.com/dbcore/dbcore/sqltext"
 )
 
 // sqliteDB opens an empty temporary database and hands back the connection the
@@ -79,7 +82,9 @@ func TestSearchEscapesWildcardsInTheFragment(t *testing.T) {
 }
 
 func TestLikePatternEscapesForLike(t *testing.T) {
-	if got := likePattern(`a_b%c\d`); got != `%a\_b\%c\\d%` {
+	// The escaping now lives in sqltext.LikePattern (shared with the kernel's
+	// catalog queries); assert the contract through the public helper.
+	if got := tableprosql.LikePattern(`a_b%c\d`); got != `%a\_b\%c\\d%` {
 		t.Errorf("got %s", got)
 	}
 }
@@ -165,7 +170,7 @@ func TestSearchAnswersFromTheCachedCatalogBetweenChanges(t *testing.T) {
 
 	// A statement that ran moves the catalog version: the next keystroke
 	// finds the new object and has paid for exactly one more walk.
-	if result := a.runQuery(conn.ID, "CREATE TABLE spare_parts (id integer primary key)", ""); result.Error != "" {
+	if result := a.runQuery(context.Background(), "", conn.ID, "CREATE TABLE spare_parts (id integer primary key)", ""); result.Error != "" {
 		t.Fatalf("create: %s", result.Error)
 	}
 	found, err := a.SearchObjects("spare", 50)
@@ -199,8 +204,6 @@ func TestSearchMatchesWithoutRegardToCase(t *testing.T) {
 	}
 }
 
-func catalogBuildsOf(conn *Connection) int {
-	conn.catalogMu.Lock()
-	defer conn.catalogMu.Unlock()
-	return conn.catalogBuilds
-}
+// catalogBuildsOf reports how many catalog walks this connection paid for, which
+// is what "answered from memory" means: one walk per mutation, not per keystroke.
+func catalogBuildsOf(conn *Connection) int { return conn.catalog.Walks() }

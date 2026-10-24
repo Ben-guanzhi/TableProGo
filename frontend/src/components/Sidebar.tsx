@@ -1,14 +1,27 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useReducer, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Connection, DatabaseFilter, TableInfo, ColumnInfo } from '../types';
-import { GetColumns, GetDatabases, GetSchemas, GetTableStructure, GetTables, TableRef } from '../api';
+import { Connection, DatabaseFilter, KVKeyInfo } from '../types';
+import { GetColumns, GetDatabases, GetKVKeyInfo, GetKVKeys, GetSchemas, GetTableStructure, GetTables, TableRef } from '../api';
 import DatabaseFilterDialog from './DatabaseFilterDialog';
+import SidebarMenu from './SidebarMenu';
+import {
+  decideTreeKey,
+  isMenuNode,
+  isOpenWhileFiltering,
+  isVisibleWhileFiltering,
+  visibleTreeRows,
+} from '../datagrid/treeKeys';
+import {
+  loadChildren as loadChildrenFor,
+  loadMoreKeys as loadMoreKeysFor,
+  nodeKey,
+  type Loaders,
+} from '../datagrid/treeLoad';
 import type { ConfirmRequest } from './ConfirmDialog';
 import { copyText } from '../clipboard';
 import {
   FiAlertCircle,
   FiChevronRight,
-  FiCopy,
   FiDatabase,
   FiEdit2,
   FiEye,
@@ -18,7 +31,6 @@ import {
   FiHash,
   FiKey,
   FiLoader,
-  FiMinusCircle,
   FiPlus,
   FiPower,
   FiRefreshCw,
@@ -27,20 +39,19 @@ import {
   FiTrash2,
 } from 'react-icons/fi';
 
-type NodeKind = 'connection' | 'database' | 'schema' | 'table' | 'view' | 'column';
+import {
+  emptySidebarState,
+  sidebarReducer,
+  type KeyInfo,
+  type TreeNode as TreeStateNode,
+} from '../datagrid/sidebarTree';
 
-interface TreeNode {
-  key: string;
-  kind: NodeKind;
-  label: string;
-  connId: string;
-  dbType: string;
-  database?: string;
-  schema?: string;
-  table?: string;
-  dataType?: string;
-  primaryKey?: boolean;
-  nullable?: boolean;
+type NodeKind = TreeStateNode['kind'];
+
+// The tree node as this component uses it: the reducer's shape plus the saved
+// connection it may carry. The reducer stays free of the api layer, so the
+// connection is narrowed here instead of there.
+interface TreeNode extends Omit<TreeStateNode, 'connection'> {
   connection?: Connection;
 }
 
@@ -69,11 +80,15 @@ interface SidebarProps {
   onDeleteConnection: (id: string) => void;
   onSaveDatabaseFilter: (connection: Connection, filter: DatabaseFilter) => Promise<void>;
   onOpenTable: (table: TableRef, label: string, objectType: 'table' | 'view') => void;
+  onOpenKey: (key: TableRef, label: string) => void;
   onInsertText: (table: TableRef) => void;
   onNewTable: (target: NewTableTarget) => void;
   onRenameObject: (table: TableRef, newName: string) => Promise<void>;
   onDropObject: (table: TableRef) => Promise<void>;
   onTruncateObject: (table: TableRef) => Promise<void>;
+  onRenameKey: (key: TableRef, newName: string) => Promise<void>;
+  onDeleteKey: (key: TableRef) => Promise<void>;
+  onSetKeyTTL: (key: TableRef, seconds: number) => Promise<void>;
   // Drop / truncate / delete-connection ask through the app's themed dialog, so
   // the same warning style covers every way to lose something.
   onConfirm: (request: ConfirmRequest) => void;
@@ -91,7 +106,7 @@ const tableRefOf = (node: TreeNode): TableRef => ({
 const parentOfTable = (node: TreeNode): TreeNode =>
   node.schema
     ? {
-        key: `s|${node.connId}|${node.database}|${node.schema}`,
+        key: nodeKey.schema(node.connId, node.database as string, node.schema as string),
         kind: 'schema',
         label: node.schema,
         connId: node.connId,
@@ -100,7 +115,7 @@ const parentOfTable = (node: TreeNode): TreeNode =>
         schema: node.schema,
       }
     : {
-        key: `d|${node.connId}|${node.database}`,
+        key: nodeKey.database(node.connId, node.database as string),
         kind: 'database',
         label: node.database as string,
         connId: node.connId,
@@ -108,27 +123,6 @@ const parentOfTable = (node: TreeNode): TreeNode =>
         database: node.database,
       };
 
-const menuNode = (kind: NodeKind) =>
-  kind === 'table' || kind === 'view' || kind === 'database' || kind === 'schema';
-
-const MenuItem: React.FC<{
-  label: string;
-  icon?: React.ReactNode;
-  danger?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}> = ({ label, icon, danger, disabled, onClick }) => (
-  <button
-    className={`w-full flex items-center gap-2 px-2.5 py-1 text-left hover:bg-raised disabled:opacity-40 ${
-      danger ? 'text-danger' : 'text-ink'
-    }`}
-    disabled={disabled}
-    onClick={onClick}
-  >
-    <span className="w-3.5 shrink-0 flex items-center justify-center">{icon}</span>
-    <span className="truncate">{label}</span>
-  </button>
-);
 
 // Listing any pattern is what turns the filter on, so the badge follows the
 // patterns rather than a separate switch.
@@ -150,6 +144,10 @@ const NodeIcon: React.FC<{ node: TreeNode }> = ({ node }) => {
       return <FiEye size={13} className="mr-1.5 shrink-0 text-icon-view" />;
     case 'table':
       return <FiTable size={13} className="mr-1.5 shrink-0 text-success" />;
+    case 'key':
+      return <FiKey size={12} className="mr-1.5 shrink-0 text-accent" />;
+    case 'more':
+      return <FiPlus size={12} className="mr-1.5 shrink-0 text-muted" />;
     case 'column':
       return node.primaryKey
         ? <FiKey size={12} className="mr-1.5 shrink-0 text-warning" />
@@ -168,23 +166,40 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDeleteConnection,
   onSaveDatabaseFilter,
   onOpenTable,
+  onOpenKey,
   onInsertText,
   onNewTable,
   onRenameObject,
   onDropObject,
   onTruncateObject,
+  onRenameKey,
+  onDeleteKey,
+  onSetKeyTTL,
   onConfirm,
 }) => {
   const [filter, setFilter] = useState('');
   const [filterFor, setFilterFor] = useState<Connection | null>(null);
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-  const [children, setChildren] = useState<Record<string, TreeNode[]>>({});
-  const [loading, setLoading] = useState<Record<string, boolean>>({});
-  const [errors, setErrors] = useState<Record<string, string>>({});
-  const [menu, setMenu] = useState<{ node: TreeNode; x: number; y: number } | null>(null);
-  // Not null while the menu is showing its rename field instead of its items.
-  const [renameDraft, setRenameDraft] = useState<string | null>(null);
-  const [ddlBusy, setDdlBusy] = useState(false);
+  // The tree and its context menu move together (opening a menu resets its
+  // The tree and its context menu move together (opening a menu resets its
+  // drafts, refreshing a branch drops its descendants), so they live in one
+  // reducer in datagrid/sidebarTree.ts and every update is a named transition.
+  const [tree, dispatch] = useReducer(sidebarReducer, emptySidebarState);
+  const { expanded, loading, errors, menu, renameDraft, ttlDraft, keyInfo, busy: ddlBusy } = tree;
+  // The reducer stores the generic node; the component works with the narrower
+  // one (it carries the saved connection), so the map is narrowed on the way out.
+  const children = tree.children as Record<string, TreeNode[]>;
+  const menuSeq = useRef(0);
+  // Thin adapters over the reducer's actions: the menu and its inline editors are
+  // written from a dozen places, and a named setter reads better there than a
+  // dispatch with a type tag.
+  const setMenu = (anchor: { node: TreeNode; x: number; y: number } | null) =>
+    anchor
+      ? dispatch({ type: 'menuOpen', node: anchor.node as unknown as TreeStateNode, x: anchor.x, y: anchor.y })
+      : dispatch({ type: 'menuClose' });
+  const setRenameDraft = (value: string | null) => dispatch({ type: 'renameDraft', value });
+  const setTtlDraft = (value: string | null) => dispatch({ type: 'ttlDraft', value });
+  const setKeyInfo = (info: KVKeyInfo | null) => dispatch({ type: 'keyInfo', info: info as unknown as KeyInfo | null });
+  const setDdlBusy = (value: boolean) => dispatch({ type: 'busy', busy: value });
   // Roving tabindex: the tree is one tab stop, and the arrows move the row that
   // holds it. Without this the whole navigator is unreachable from the keyboard.
   const [rovingKey, setRovingKey] = useState<string | null>(null);
@@ -192,86 +207,52 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const query = filter.trim().toLowerCase();
 
-  const tableNodes = async (node: TreeNode, schema: string): Promise<TreeNode[]> => {
-    const tables: TableInfo[] = (await GetTables(node.connId, node.database as string, schema)) ?? [];
-    return tables.map(t => ({
-      key: `${t.type === 'view' ? 'v' : 't'}|${node.connId}|${node.database}|${schema}|${t.name}`,
-      kind: t.type === 'view' ? 'view' : 'table',
-      label: t.name,
-      connId: node.connId,
-      dbType: node.dbType,
-      database: node.database,
-      schema,
-      table: t.name,
-    }));
+  // Branch loading (which call answers for a node's kind, the node key formats,
+  // and Redis paging) lives in datagrid/treeLoad.ts. This file supplies the
+  // catalog calls and owns the loading/error state around them.
+  const loaders: Loaders = {
+    databases: connId => GetDatabases(connId),
+    schemas: (connId, database) => GetSchemas(connId, database),
+    tables: async (connId, database, schema) =>
+      ((await GetTables(connId, database, schema)) ?? []) as unknown as { name: string; type: string }[],
+    columns: async (connId, database, schema, table) =>
+      ((await GetColumns(connId, database, schema, table)) ?? []) as unknown as {
+        name: string;
+        type: string;
+        isPrimaryKey: boolean;
+        nullable: boolean;
+      }[],
+    kvKeys: (connId, database, cursor) => GetKVKeys(connId, database, cursor),
+  };
+
+  const loadMoreKeys = async (node: TreeNode) => {
+    if (loading[node.key]) return;
+    // The "load more" row appends to the database branch it belongs to.
+    const parentKey = nodeKey.database(node.connId, node.database as string);
+    dispatch({ type: 'loading', key: node.key });
+    try {
+      const next = await loadMoreKeysFor(
+        node,
+        (children[parentKey] ?? []) as TreeNode[],
+        loaders,
+      );
+      dispatch({ type: 'childrenSet', key: parentKey, rows: next as unknown as TreeStateNode[] });
+    } catch (error) {
+      toast.error((error as Error).message, { duration: 8000 });
+    }
+    dispatch({ type: 'loading', key: node.key });
   };
 
   const loadChildren = async (node: TreeNode) => {
-    setLoading(l => ({ ...l, [node.key]: true }));
-    setErrors(e => {
-      const next = { ...e };
-      delete next[node.key];
-      return next;
-    });
-
+    // One transition: the retry clears the old error and shows the spinner.
+    dispatch({ type: 'loading', key: node.key });
     try {
-      let kids: TreeNode[] = [];
-      if (node.kind === 'connection') {
-        const databases: string[] = (await GetDatabases(node.connId)) ?? [];
-        kids = databases
-          .filter(db => !!db)
-          .map(db => ({
-            key: `d|${node.connId}|${db}`,
-            kind: 'database' as NodeKind,
-            label: db,
-            connId: node.connId,
-            dbType: node.dbType,
-            database: db,
-          }));
-      } else if (node.kind === 'database') {
-        const schemas: string[] = (await GetSchemas(node.connId, node.database as string)) ?? [];
-        kids = schemas.length
-          ? schemas.map(s => ({
-              key: `s|${node.connId}|${node.database}|${s}`,
-              kind: 'schema' as NodeKind,
-              label: s,
-              connId: node.connId,
-              dbType: node.dbType,
-              database: node.database,
-              schema: s,
-            }))
-          : await tableNodes(node, '');
-      } else if (node.kind === 'schema') {
-        kids = await tableNodes(node, node.schema as string);
-      } else {
-        const columns: ColumnInfo[] = (await GetColumns(
-          node.connId,
-          node.database as string,
-          node.schema as string,
-          node.table as string,
-        )) ?? [];
-        kids = columns.map(c => ({
-          key: `col|${node.connId}|${node.database}|${node.schema}|${node.table}|${c.name}`,
-          kind: 'column' as NodeKind,
-          label: c.name,
-          connId: node.connId,
-          dbType: node.dbType,
-          database: node.database,
-          schema: node.schema,
-          table: node.table,
-          dataType: c.type,
-          primaryKey: c.isPrimaryKey,
-          nullable: c.nullable,
-        }));
-      }
-      setChildren(c => ({ ...c, [node.key]: kids }));
+      const kids = await loadChildrenFor(node, loaders);
+      dispatch({ type: 'loaded', key: node.key, rows: kids as unknown as TreeStateNode[] });
     } catch (error) {
-      setErrors(e => ({ ...e, [node.key]: (error as Error).message }));
-    } finally {
-      setLoading(l => ({ ...l, [node.key]: false }));
+      dispatch({ type: 'failed', key: node.key, message: (error as Error).message });
     }
   };
-
   const descendantKeys = (key: string) => {
     const found: string[] = [];
     const stack = [key];
@@ -285,28 +266,23 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const clearSubtree = (node: TreeNode) => {
-    const stale = [node.key, ...descendantKeys(node.key)];
-    setChildren(c => {
-      const next = { ...c };
-      stale.forEach(k => delete next[k]);
-      return next;
-    });
-    setExpanded(e => {
-      const next = { ...e };
-      stale.forEach(k => delete next[k]);
-      return next;
-    });
+    // Dropping a branch invalidates both its children and the expansion flags
+    // below it: one transition, so the tree never renders a stale pair.
+    dispatch({ type: 'subtreeCleared', key: node.key, keys: descendantKeys(node.key) });
   };
 
   const refresh = (node: TreeNode) => {
     clearSubtree(node);
-    setExpanded(e => ({ ...e, [node.key]: true }));
+    dispatch({ type: 'expandedSet', key: node.key, expanded: true });
     loadChildren(node);
   };
 
   const closeMenu = () => {
+    menuSeq.current++;
     setMenu(null);
     setRenameDraft(null);
+    setTtlDraft(null);
+    setKeyInfo(null);
   };
 
   // The menu is anchored to where the click happened, so anything that would
@@ -368,6 +344,58 @@ const Sidebar: React.FC<SidebarProps> = ({
     runAction(node, 'rename', draft);
   };
 
+  // Key actions change a live key, so they reload the database branch rather
+  // than one parent table. The open value tab is updated by the app.
+  const runKeyAction = async (
+    node: TreeNode,
+    action: 'rename' | 'delete' | 'ttl',
+    arg?: string | number,
+  ) => {
+    if (ddlBusy) return;
+    const target = tableRefOf(node);
+    setDdlBusy(true);
+    try {
+      if (action === 'rename') await onRenameKey(target, arg as string);
+      else if (action === 'delete') await onDeleteKey(target);
+      else await onSetKeyTTL(target, arg as number);
+
+      closeMenu();
+      refresh(parentOfTable(node));
+      toast.success(
+        action === 'rename'
+          ? `已改名为 ${arg}`
+          : action === 'delete'
+            ? `已删除键 ${node.label}`
+            : Number(arg) > 0
+              ? `TTL 已设为 ${arg} 秒`
+              : '已设为永不过期',
+      );
+    } catch (error) {
+      toast.error((error as Error).message, { duration: 8000 });
+    } finally {
+      setDdlBusy(false);
+    }
+  };
+
+  const commitKeyRename = (node: TreeNode) => {
+    const draft = (renameDraft ?? '').trim();
+    if (!draft || ddlBusy) return;
+    if (draft === node.label) {
+      closeMenu();
+      return;
+    }
+    runKeyAction(node, 'rename', draft);
+  };
+
+  const commitKeyTTL = (node: TreeNode) => {
+    const draft = (ttlDraft ?? '').trim();
+    if (!/^\d+$/.test(draft) || ddlBusy) {
+      toast.error('TTL 请填不小于 0 的整数秒');
+      return;
+    }
+    runKeyAction(node, 'ttl', Number(draft));
+  };
+
   const copyDdl = async (node: TreeNode) => {
     closeMenu();
     try {
@@ -390,8 +418,20 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const openMenuAt = (node: TreeNode, x: number, y: number) => {
+    const seq = ++menuSeq.current;
     setRenameDraft(null);
+    setTtlDraft(null);
+    setKeyInfo(null);
     setMenu({ node, x, y });
+    // The menu shows the key's type and remaining TTL above its actions. It is
+    // a read, so a failure leaves the menu usable and just omits the line.
+    if (node.kind === 'key') {
+      GetKVKeyInfo(node.connId, node.database as string, node.table as string)
+        .then(info => {
+          if (menuSeq.current === seq) setKeyInfo(info);
+        })
+        .catch(() => {});
+    }
   };
 
   const openMenu = (node: TreeNode, event: React.MouseEvent) => {
@@ -401,10 +441,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const toggle = async (node: TreeNode) => {
-    if (node.kind === 'column') return;
+    if (node.kind === 'column' || node.kind === 'key' || node.kind === 'more') return;
 
     if (!expanded[node.key]) {
-      setExpanded(e => ({ ...e, [node.key]: true }));
+      dispatch({ type: 'expandedSet', key: node.key, expanded: true });
       if (!children[node.key]) {
         if (node.kind === 'connection' && !connectedIds.includes(node.connId)) {
           if (node.connection) {
@@ -414,31 +454,17 @@ const Sidebar: React.FC<SidebarProps> = ({
         loadChildren(node);
       }
     } else {
-      setExpanded(e => ({ ...e, [node.key]: false }));
+      dispatch({ type: 'expandedSet', key: node.key, expanded: false });
     }
   };
 
-  const isVisible = (node: TreeNode): boolean => {
-    if (!query) return true;
-    if (node.label.toLowerCase().includes(query)) return true;
-    return (children[node.key] ?? []).some(isVisible);
-  };
-
-  // While filtering, keep the branches that lead to a match open; everything
-  // else still follows the user's own expand/collapse state.
-  const isOpenNode = (node: TreeNode): boolean => {
-    if (query && (children[node.key] ?? []).some(isVisible)) return true;
-    return !!expanded[node.key];
-  };
-
-  // The rows a keyboard user can actually walk, in the order they are painted.
-  const visibleRows = (nodes: TreeNode[], depth: number, out: FlatRow[] = []): FlatRow[] => {
-    for (const node of nodes.filter(isVisible)) {
-      out.push({ node, depth });
-      if (isOpenNode(node)) visibleRows(children[node.key] ?? [], depth + 1, out);
-    }
-    return out;
-  };
+  // Filtering, expansion and the painted order live in datagrid/treeKeys.ts: the
+  // keyboard has to agree with what is on screen, so both read one function.
+  const isVisible = (node: TreeNode): boolean => isVisibleWhileFiltering(node, children, query);
+  const isOpenNode = (node: TreeNode): boolean =>
+    isOpenWhileFiltering(node, children, expanded, query);
+  const visibleRows = (nodes: TreeNode[]): FlatRow[] =>
+    visibleTreeRows(nodes, children, expanded, query) as FlatRow[];
 
   const focusRow = (key: string) => {
     setRovingKey(key);
@@ -450,64 +476,38 @@ const Sidebar: React.FC<SidebarProps> = ({
   const activate = (node: TreeNode) => {
     if (node.kind === 'table' || node.kind === 'view') {
       onOpenTable(tableRefOf(node), node.label, node.kind);
+    } else if (node.kind === 'key') {
+      onOpenKey(tableRefOf(node), node.label);
+    } else if (node.kind === 'more') {
+      loadMoreKeys(node);
     } else {
       toggle(node);
     }
   };
 
+  // decideTreeKey says what the key means; this only performs it.
   const onRowKey = (event: React.KeyboardEvent, node: TreeNode, depth: number) => {
-    if (event.key === 'ContextMenu') {
-      event.preventDefault();
-      const rect = event.currentTarget.getBoundingClientRect();
-      openMenuAt(node, rect.left + 12, rect.bottom);
-      return;
-    }
-    const rows = visibleRows(roots, 0);
-    const at = rows.findIndex(row => row.node.key === node.key);
-    const go = (index: number) => {
-      const target = rows[Math.max(0, Math.min(rows.length - 1, index))];
-      if (target) focusRow(target.node.key);
-    };
-    switch (event.key) {
-      case 'ArrowDown':
-        event.preventDefault();
-        go(at + 1);
+    const action = decideTreeKey(event, node, depth, visibleRows(roots), isOpenNode(node));
+    if (action.kind === 'none') return;
+    event.preventDefault();
+    switch (action.kind) {
+      case 'focus':
+        focusRow(action.key);
         break;
-      case 'ArrowUp':
-        event.preventDefault();
-        go(at - 1);
+      case 'toggle':
+        toggle(action.node);
         break;
-      case 'Home':
-        event.preventDefault();
-        go(0);
+      case 'activate':
+        activate(action.node);
         break;
-      case 'End':
-        event.preventDefault();
-        go(rows.length - 1);
-        break;
-      case 'ArrowRight':
-        event.preventDefault();
-        if (node.kind === 'column') break;
-        if (isOpenNode(node)) go(at + 1);
-        else toggle(node);
-        break;
-      case 'ArrowLeft': {
-        event.preventDefault();
-        if (isOpenNode(node)) toggle(node);
-        else {
-          const parent = rows.slice(0, at).reverse().find(row => row.depth === depth - 1);
-          if (parent) focusRow(parent.node.key);
-        }
+      case 'contextMenu': {
+        if (!isMenuNode(action.node.kind)) return;
+        const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+        openMenuAt(action.node, rect.left + 12, rect.bottom);
         break;
       }
-      case 'Enter':
-      case ' ':
-        event.preventDefault();
-        activate(node);
-        break;
     }
   };
-
   // Rows are only 22px tall, so an action fills the row's height instead of
   // shrinking to its 11px glyph, and the hover-only group also reveals itself
   // for the row the keyboard is on.
@@ -525,7 +525,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     const isLoading = !!loading[node.key];
     const isOpen = isOpenNode(node);
     const indent = 6 + depth * 13;
-    const hasKids = node.kind !== 'column';
+    const hasKids = node.kind !== 'column' && node.kind !== 'key' && node.kind !== 'more';
     const isTabStop = (rovingKey ?? roots[0]?.key) === node.key;
 
     return (
@@ -545,18 +545,24 @@ const Sidebar: React.FC<SidebarProps> = ({
         onFocus={() => setRovingKey(node.key)}
         className={rowClassName(node)}
         style={{ paddingLeft: indent }}
-        onClick={() => toggle(node)}
+        onClick={() => {
+          if (node.kind === 'key') onOpenKey(tableRefOf(node), node.label);
+          else if (node.kind === 'more') loadMoreKeys(node);
+          else toggle(node);
+        }}
         onContextMenu={e => {
-          if (menuNode(node.kind)) openMenu(node, e);
+          if (isMenuNode(node.kind)) openMenu(node, e);
         }}
         onDoubleClick={() => {
           if (node.kind === 'table' || node.kind === 'view') {
             onInsertText(tableRefOf(node));
+          } else if (node.kind === 'key') {
+            onOpenKey(tableRefOf(node), node.label);
           }
         }}
       >
         <span className="w-3.5 shrink-0 flex items-center justify-center text-muted">
-          {node.kind !== 'column' && (
+          {hasKids && (
             <FiChevronRight size={11} className={isOpen ? 'transform rotate-90' : ''} />
           )}
         </span>
@@ -566,12 +572,20 @@ const Sidebar: React.FC<SidebarProps> = ({
           title={
             node.kind === 'table' || node.kind === 'view'
               ? '单击浏览数据与结构，双击插入表名，右键改名 / Drop / 复制 DDL'
-              : undefined
+              : node.kind === 'key'
+                ? '单击查看键值，双击编辑值单元格，右键设置 TTL / 重命名 / 删除'
+                : node.kind === 'more'
+                  ? '继续读取下一页键'
+                  : undefined
           }
           onClick={e => {
             e.stopPropagation();
             if (node.kind === 'table' || node.kind === 'view') {
               onOpenTable(tableRefOf(node), node.label, node.kind);
+            } else if (node.kind === 'key') {
+              onOpenKey(tableRefOf(node), node.label);
+            } else if (node.kind === 'more') {
+              loadMoreKeys(node);
             } else if (node.kind !== 'column') {
               toggle(node);
             }
@@ -664,7 +678,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           </span>
         )}
 
-        {node.kind !== 'connection' && (
+        {node.kind !== 'connection' && node.kind !== 'key' && node.kind !== 'more' && (
           <button
             className={`ml-auto ${ROW_ACTION} text-secondary hover:text-ink opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100`}
             title="Refresh"
@@ -703,7 +717,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
           {isOpen && kids.length > 0 && renderNodes(kids, depth + 1)}
           {isOpen && !error && kids.length === 0 && !loading[node.key] &&
-            node.kind !== 'column' && node.key in children && (
+            node.kind !== 'column' && node.kind !== 'more' && node.key in children && (
             <div
               role="presentation"
               className="text-2xs text-muted py-0.5"
@@ -716,133 +730,33 @@ const Sidebar: React.FC<SidebarProps> = ({
       );
     });
 
-  const objectMenu = (node: TreeNode) => {
-    const object = node.kind === 'table' || node.kind === 'view';
-    const where = [node.database, node.schema, node.label].filter(Boolean).join('.');
-
-    if (renameDraft !== null) {
-      return (
-        <div className="px-2.5 py-2">
-          <div className="text-2xs text-secondary mb-1 truncate" title={where}>
-            {node.label} 改名为
-          </div>
-          <input
-            autoFocus
-            aria-label="新名字"
-            value={renameDraft}
-            placeholder="只填新名字"
-            onChange={e => setRenameDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') commitRename(node);
-            }}
-            className="w-full bg-canvas border border-accent rounded px-1.5 py-0.5 text-[0.75rem] text-ink focus:outline-none"
-          />
-          <div className="flex items-center justify-end gap-1 mt-1.5">
-            <button
-              className="px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
-              onClick={closeMenu}
-            >
-              取消
-            </button>
-            <button
-              className="px-2 py-0.5 rounded text-2xs bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40"
-              disabled={!renameDraft.trim() || ddlBusy}
-              onClick={() => commitRename(node)}
-            >
-              {ddlBusy ? '执行中…' : '改名'}
-            </button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <>
-        <div className="px-2.5 pb-1 text-2xs text-muted truncate border-b border-line-soft" title={where}>
-          {where}
-        </div>
-        {(node.kind === 'database' || node.kind === 'schema') && (
-          <MenuItem
-            label="新建表"
-            icon={<FiPlus size={11} />}
-            onClick={() => {
-              closeMenu();
-              onNewTable({
-                connId: node.connId,
-                dbType: node.dbType,
-                database: node.database as string,
-                schema: node.schema ?? '',
-              });
-            }}
-          />
-        )}
-        {object && (
-          <MenuItem
-            label="复制 DDL"
-            icon={<FiCopy size={11} />}
-            onClick={() => copyDdl(node)}
-          />
-        )}
-        {object && (
-          <MenuItem
-            label="重命名…"
-            icon={<FiEdit2 size={11} />}
-            disabled={ddlBusy}
-            onClick={() => {
-              setRenameDraft('');
-            }}
-          />
-        )}
-        {node.kind === 'table' && (
-          <MenuItem
-            label="清空数据"
-            icon={<FiMinusCircle size={11} />}
-            disabled={ddlBusy}
-            onClick={() => {
-              closeMenu();
-              onConfirm({
-                title: `清空 ${where}`,
-                message: '表还在，行全部删除，这一步撤不回来。',
-                confirmLabel: '清空数据',
-                destructive: true,
-                onConfirm: () => runAction(node, 'truncate'),
-              });
-            }}
-          />
-        )}
-        {object && (
-          <MenuItem
-            label="Drop"
-            icon={<FiTrash2 size={11} />}
-            danger
-            disabled={ddlBusy}
-            onClick={() => {
-              closeMenu();
-              onConfirm({
-                title: `删除 ${where}`,
-                message: '结构和数据一起消失，撤不回来。',
-                confirmLabel: 'Drop',
-                destructive: true,
-                onConfirm: () => runAction(node, 'drop'),
-              });
-            }}
-          />
-        )}
-        <div className="my-1 border-t border-line-soft" />
-        <MenuItem
-          label="刷新"
-          icon={<FiRefreshCw size={11} />}
-          onClick={() => {
-            closeMenu();
-            refresh(node);
-          }}
-        />
-      </>
-    );
-  };
-
+  // The menu's item list (and its inline rename/TTL editors) lives in
+  // SidebarMenu; this component keeps the state machine that decides which one
+  // is showing.
+  const renderMenu = (node: TreeNode) => (
+    <SidebarMenu
+      node={node}
+      renameDraft={renameDraft}
+      ttlDraft={ttlDraft}
+      keyInfo={keyInfo as unknown as KeyInfo | null}
+      busy={ddlBusy}
+      onRenameDraft={setRenameDraft}
+      onTtlDraft={setTtlDraft}
+      onClose={closeMenu}
+      onCommitRename={commitRename}
+      onCommitKeyRename={commitKeyRename}
+      onCommitKeyTTL={commitKeyTTL}
+      onRunAction={(n, action) => runAction(n, action)}
+      onRunKeyAction={(n, action) => runKeyAction(n, action)}
+      onRefresh={refresh}
+      onRefreshKeyParent={n => refresh(parentOfTable(n))}
+      onCopyDdl={copyDdl}
+      onNewTable={onNewTable}
+      onConfirm={onConfirm}
+    />
+  );
   const roots: TreeNode[] = connections.map(c => ({
-    key: `c|${c.id}`,
+    key: nodeKey.connection(c.id),
     kind: 'connection',
     label: c.name,
     connId: c.id,
@@ -896,7 +810,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           e.stopPropagation();
         }}
       >
-        {objectMenu(menu.node)}
+        {renderMenu(menu.node as TreeNode)}
       </div>
     )}
 

@@ -1,0 +1,65 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+
+import { menuEditorFor, menuItemsFor, menuTitle } from '../src/datagrid/menuItems.ts';
+import type { TreeNode } from '../src/datagrid/sidebarTree.ts';
+
+// The context menu's rules: which items a node gets, which inline editor
+// replaces them, and the breadcrumb above. Kept as data so the component only
+// maps ids onto labels.
+
+const node = (over: Partial<TreeNode> = {}): TreeNode => ({
+  key: 't|c1|app|public|orders',
+  kind: 'table',
+  label: 'orders',
+  connId: 'c1',
+  dbType: 'postgresql',
+  database: 'app',
+  schema: 'public',
+  table: 'orders',
+  ...over,
+});
+
+test('a table can be emptied, dropped, renamed, copied and refreshed', () => {
+  assert.deepEqual(menuItemsFor(node()), ['copyDdl', 'rename', 'truncate', 'drop', 'refresh']);
+});
+
+test('a view has no truncate (it holds no rows of its own)', () => {
+  assert.deepEqual(menuItemsFor(node({ kind: 'view' })), ['copyDdl', 'rename', 'drop', 'refresh']);
+});
+
+test('a schema is a container: it gains a table and nothing else', () => {
+  assert.deepEqual(
+    menuItemsFor(node({ kind: 'schema', key: 's|1', label: 'public', table: undefined })),
+    ['newTable', 'refresh'],
+  );
+});
+
+test('a database is a container too', () => {
+  assert.deepEqual(
+    menuItemsFor(node({ kind: 'database', key: 'd|1', label: 'app', schema: undefined, table: undefined })),
+    ['newTable', 'refresh'],
+  );
+});
+
+test('a Redis key never offers DDL actions', () => {
+  const items = menuItemsFor(node({ kind: 'key', key: 'k|1', label: 'user:1', database: '0' }));
+  assert.deepEqual(items, ['keyTtl', 'keyRename', 'keyDelete', 'keyRefresh']);
+  for (const forbidden of ['drop', 'truncate', 'copyDdl', 'newTable'] as const) {
+    assert.equal(items.includes(forbidden as never), false, `${forbidden} must not appear for a key`);
+  }
+});
+
+test('a draft replaces the item list with its editor', () => {
+  assert.equal(menuEditorFor(node(), 'orders_v2', null), 'rename');
+  // TTL only makes sense for a key, so a stray ttlDraft on a table is ignored.
+  assert.equal(menuEditorFor(node(), null, '60'), null);
+  assert.equal(menuEditorFor(node({ kind: 'key' }), null, '60'), 'ttl');
+  assert.equal(menuEditorFor(node(), null, null), null);
+});
+
+test('the breadcrumb is qualified for objects and key-prefixed for keys', () => {
+  assert.equal(menuTitle(node()), 'app.public.orders');
+  assert.equal(menuTitle(node({ kind: 'database', schema: undefined })), 'app.orders');
+  assert.equal(menuTitle(node({ kind: 'key', label: 'user:1', database: '0' })), '0.user:1');
+});

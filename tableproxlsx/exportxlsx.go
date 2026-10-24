@@ -18,7 +18,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	"github.com/Ben-guanzhi/TableProGo/tableprosql"
+	tableprosql "github.com/dbcore/dbcore/sqltext"
 )
 
 // MaxRows bounds one xlsx export. The grid only ever holds a page of a

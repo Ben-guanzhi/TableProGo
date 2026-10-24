@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/Ben-guanzhi/TableProGo/tableprosql"
+	tableprosql "github.com/dbcore/dbcore/sqltext"
 
 	"fmt"
 	"strings"

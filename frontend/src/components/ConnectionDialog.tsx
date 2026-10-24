@@ -1,10 +1,23 @@
 import { useState, useEffect, useRef } from 'react';
 import { ConnectionConfig } from '../types';
+import type { SSHConfig } from '../types';
 import { FiX, FiDatabase, FiCheck } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { useDialog } from '../dialog';
 
 import { Connection } from '../types';
+
+// A disabled SSH block that still carries defaults, so toggling the checkbox
+// never leaves port 0 or a half-filled object behind.
+const emptySSH: SSHConfig = {
+  enabled: false,
+  host: '',
+  port: 22,
+  user: '',
+  password: '',
+  keyFile: '',
+  passphrase: '',
+};
 
 interface ConnectionDialogProps {
   initialConfig?: Connection | null;
@@ -29,6 +42,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
     database: '',
     sslMode: 'false',
     options: {},
+    ssh: { ...emptySSH },
   });
 
   const [testing, setTesting] = useState(false);
@@ -47,6 +61,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
         database: initialConfig.database,
         sslMode: initialConfig.sslMode || 'false',
         options: initialConfig.options || {},
+        ssh: initialConfig.ssh ? { ...emptySSH, ...initialConfig.ssh } : { ...emptySSH },
         databaseFilter: initialConfig.databaseFilter,
       });
     }
@@ -59,6 +74,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       sqlite: 0,
       sqlserver: 1433,
       oracle: 1521,
+      redis: 6379,
     };
 
     const defaults: Record<string, { username: string; database: string }> = {
@@ -67,13 +83,14 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       sqlite: { username: '', database: '' },
       sqlserver: { username: 'sa', database: 'master' },
       oracle: { username: 'system', database: 'ORCL' },
+      redis: { username: '', database: '0' },
     };
 
     const d = defaults[type] || { username: 'root', database: '' };
 
     setConfig({
       ...config,
-      type: type as 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle',
+      type: type as 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis',
       port: defaultPorts[type] || 3306,
       username: d.username,
       database: d.database,
@@ -149,6 +166,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               <option value="sqlite">SQLite</option>
               <option value="sqlserver">SQL Server</option>
               <option value="oracle">Oracle</option>
+              <option value="redis">Redis</option>
             </select>
           </div>
 
@@ -181,7 +199,8 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
           <div>
             <label htmlFor="conn-database" className="block text-sm text-secondary mb-1">
               {config.type === 'sqlite' ? 'Database File Path' :
-               config.type === 'oracle' ? 'Service Name / SID' : 'Database'}
+               config.type === 'oracle' ? 'Service Name / SID' :
+               config.type === 'redis' ? 'Logical Database (0-15)' : 'Database'}
             </label>
             <input
               id="conn-database"
@@ -192,6 +211,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               placeholder={
                 config.type === 'sqlite' ? '/path/to/database.db' :
                 config.type === 'oracle' ? 'ORCL' :
+                config.type === 'redis' ? '0' :
                 'database name'
               }
             />
@@ -230,7 +250,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
           {config.type !== 'sqlite' && (
             <div>
               <label htmlFor="conn-ssl" className="block text-sm text-secondary mb-1">
-                {config.type === 'sqlserver' ? 'Encrypt' : 'SSL Mode'}
+                {config.type === 'sqlserver' ? 'Encrypt' : config.type === 'redis' ? 'TLS' : 'SSL Mode'}
               </label>
               <select
                 id="conn-ssl"
@@ -253,6 +273,101 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                   </>
                 )}
               </select>
+            </div>
+          )}
+
+          {config.type !== 'sqlite' && (
+            <div className="border-t border-line pt-4 space-y-3">
+              <label className="flex items-center gap-2 text-sm text-secondary">
+                <input
+                  type="checkbox"
+                  checked={config.ssh?.enabled ?? false}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      ssh: { ...(config.ssh ?? emptySSH), enabled: e.target.checked },
+                    })
+                  }
+                />
+                Route through an SSH tunnel (bastion host)
+              </label>
+
+              {config.ssh?.enabled && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="col-span-2">
+                    <label htmlFor="ssh-host" className="block text-sm text-secondary mb-1">SSH Host</label>
+                    <input
+                      id="ssh-host"
+                      type="text"
+                      className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                      value={config.ssh.host}
+                      onChange={(e) => setConfig({ ...config, ssh: { ...config.ssh!, host: e.target.value } })}
+                      placeholder="bastion.example.com"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="ssh-port" className="block text-sm text-secondary mb-1">SSH Port</label>
+                    <input
+                      id="ssh-port"
+                      type="number"
+                      className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                      value={config.ssh.port}
+                      onChange={(e) => setConfig({ ...config, ssh: { ...config.ssh!, port: parseInt(e.target.value) || 22 } })}
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <label htmlFor="ssh-user" className="block text-sm text-secondary mb-1">SSH User</label>
+                    <input
+                      id="ssh-user"
+                      type="text"
+                      className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                      value={config.ssh.user}
+                      onChange={(e) => setConfig({ ...config, ssh: { ...config.ssh!, user: e.target.value } })}
+                      placeholder="deploy"
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <label htmlFor="ssh-password" className="block text-sm text-secondary mb-1">
+                      {isEdit ? 'SSH Password (leave blank to keep current)' : 'SSH Password'}
+                    </label>
+                    <input
+                      id="ssh-password"
+                      type="password"
+                      autoComplete="off"
+                      className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                      value={config.ssh.password}
+                      onChange={(e) => setConfig({ ...config, ssh: { ...config.ssh!, password: e.target.value } })}
+                      placeholder="••••••••"
+                    />
+                  </div>
+                  <div className="col-span-3">
+                    <label htmlFor="ssh-key" className="block text-sm text-secondary mb-1">
+                      Private Key File (alternative to password)
+                    </label>
+                    <input
+                      id="ssh-key"
+                      type="text"
+                      className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                      value={config.ssh.keyFile}
+                      onChange={(e) => setConfig({ ...config, ssh: { ...config.ssh!, keyFile: e.target.value } })}
+                      placeholder="C:\\Users\\me\\.ssh\\id_ed25519"
+                    />
+                  </div>
+                  {config.ssh.keyFile !== '' && (
+                    <div className="col-span-3">
+                      <label htmlFor="ssh-passphrase" className="block text-sm text-secondary mb-1">Key Passphrase</label>
+                      <input
+                        id="ssh-passphrase"
+                        type="password"
+                        autoComplete="off"
+                        className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                        value={config.ssh.passphrase}
+                        onChange={(e) => setConfig({ ...config, ssh: { ...config.ssh!, passphrase: e.target.value } })}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

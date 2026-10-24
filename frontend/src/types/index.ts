@@ -7,7 +7,7 @@ export interface DatabaseFilter {
 export interface Connection {
   id: string;
   name: string;
-  type: 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle';
+  type: 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis';
   host: string;
   port: number;
   username: string;
@@ -15,13 +15,24 @@ export interface Connection {
   database: string;
   sslMode: string;
   options: Record<string, string>;
+  ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
+}
+
+export interface SSHConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  keyFile: string;
+  passphrase: string;
 }
 
 export interface ConnectionConfig {
   id?: string;
   name: string;
-  type: 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle';
+  type: 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis';
   host: string;
   port: number;
   username: string;
@@ -29,6 +40,7 @@ export interface ConnectionConfig {
   database: string;
   sslMode: string;
   options: Record<string, string>;
+  ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
 }
 
@@ -46,12 +58,57 @@ export interface QueryResult {
   lastInsertId: number;
   executionTime: number;
   error?: string;
+  // Set when Safe Mode paused the statement: nothing ran, error explains why.
+  needsConfirmation?: boolean;
   // Set when the row cap cut a SELECT short; more rows exist than shown.
   truncated?: boolean;
   // The key of this page's first and last row, as text. Handing one back asks
   // the server for the page beside this one without counting rows past.
   startCursor?: string[];
   endCursor?: string[];
+}
+
+// One key opened from the navigator: identity, remaining lifetime and the
+// rows describing its value. The rows reuse QueryResult so the grid renders
+// them without a second model.
+export interface KVValue {
+  key: string;
+  type: string;
+  ttl: string;
+  result: QueryResult;
+}
+
+// A key's identity without its value, read before the right-click menu offers
+// TTL or rename.
+export interface KVKeyInfo {
+  key: string;
+  type: string;
+  ttl: string;
+}
+
+// One SCAN step of a logical database. The cursor is a string because Redis
+// cursors are uint64 and JSON numbers round past 2^53.
+export interface KVKeyPage {
+  cursor: string;
+  keys: string[];
+  done: boolean;
+}
+
+export interface KVField {
+  name: string;
+  value: string;
+}
+
+// One row appended to a set or stream. Both keys add an identity (SADD/XADD)
+// instead of overwriting a cell, so this is not a KVElementInput.
+export interface KVRowInput {
+  connId: string;
+  database: string;
+  key: string;
+  kind: 'set' | 'stream';
+  member?: string;
+  id?: string;
+  fields?: KVField[];
 }
 
 export interface TableInfo {
@@ -195,10 +252,11 @@ export interface Tab {
   comments?: Record<string, string>;
   isDirty: boolean;
   connectionId?: string;
-  // Object tabs browse one table instead of editing a statement; without a
-  // kind a tab is a query tab.
-  kind?: 'query' | 'table';
+  // Object tabs browse one table instead of editing a statement; a kv tab
+  // shows one Redis key read-only. Without a kind a tab is a query tab.
+  kind?: 'query' | 'table' | 'kv';
   tableRef?: TableRef;
+  kv?: SectionState<KVValue>;
   objectType?: 'table' | 'view';
   section?: ObjectSection;
   data?: SectionState<QueryResult>;

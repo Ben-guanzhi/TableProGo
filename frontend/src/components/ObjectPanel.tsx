@@ -60,6 +60,8 @@ interface ObjectPanelProps {
   // The data card's rows can be written back when they came from a table.
   editSource?: TableRef | null;
   exportName: string;
+  // Optional: opens the import dialog for this table.
+  onImport?: () => void;
   onRefresh: () => void;
   onDataApplied?: () => void;
   onPendingChange?: (total: number) => void;
@@ -345,6 +347,7 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
   showComments,
   editSource,
   exportName,
+  onImport,
   onRefresh,
   onDataApplied,
   onPendingChange,
@@ -473,6 +476,7 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
                 onPendingChange={onPendingChange}
                 onDismissError={() => onDismissError('data')}
                 exportName={exportName}
+                onImport={onImport}
               />
             </div>
           )}

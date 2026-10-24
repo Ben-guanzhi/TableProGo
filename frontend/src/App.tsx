@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FiEye, FiHelpCircle, FiLoader, FiSearch, FiTable } from 'react-icons/fi';
+import { FiEye, FiHelpCircle, FiKey, FiLoader, FiSearch, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
@@ -16,6 +16,8 @@ import ShortcutHelp from './components/ShortcutHelp';
 import ThemePicker from './components/ThemePicker';
 import ConnectionDialog from './components/ConnectionDialog';
 import ConfirmDialog, { ConfirmRequest } from './components/ConfirmDialog';
+import ImportDialog from './components/ImportDialog';
+import KvValuePanel from './components/KvValuePanel';
 import {
   Connection,
   ConnectionConfig,
@@ -28,12 +30,14 @@ import {
   HistoryEntry,
   ObjectSection,
   PreviewCursor,
+  KVValue,
+  Column,
 } from './types';
 import {
   GetConnections,
   Connect,
   Disconnect,
-  ExecuteQuery,
+  CancelQuery,
   GetDatabases,
   AddConnection,
   UpdateConnection,
@@ -56,8 +60,14 @@ import {
   ObjectMatch,
   AppSettings,
   GetCreateTableTemplate,
+  GetKVValue,
+  RenameKVKey,
+  DeleteKVKey,
+  SetKVKeyTTL,
 } from './api';
 import { applyTheme } from './theme';
+import { runGuarded, runStreamed } from './lib/queryRun';
+import { defaultSettings, saveSettings, useLoadSettings, useSettingsEffect } from './lib/useSettings';
 
 // Result columns are matched to table metadata by name, which is all a
 // projection tells us once aliases and expressions get involved.
@@ -73,11 +83,6 @@ const commentMap = (columns: ColumnInfo[]) => {
 // (SqlName → tableprosql), the one dialect table both clients share;
 // the webview used to hand-build these shapes unquoted.
 
-const defaultSettings: AppSettings = {
-  showColumnComments: false,
-  resultLimit: 1000,
-  theme: 'system',
-};
 
 const objectKey = (ref: TableRef) => `${ref.connId}|${ref.database}|${ref.schema}|${ref.table}`;
 
@@ -94,6 +99,7 @@ function App() {
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
+  const [importTarget, setImportTarget] = useState<TableRef | null>(null);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [editorHeight, setEditorHeight] = useState(200);
@@ -112,21 +118,11 @@ function App() {
 
   useEffect(() => {
     loadConnections();
-    GetSettings()
-      .then(s => setSettings(s ?? defaultSettings))
-      .catch(() => {});
   }, []);
 
-  // The palette lives in CSS variables, so painting the theme is just setting
-  // one attribute; "system" tracks the OS preference live.
-  useEffect(() => {
-    applyTheme(settings.theme);
-    if (settings.theme !== 'system') return;
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const onChange = () => applyTheme('system');
-    media.addEventListener('change', onChange);
-    return () => media.removeEventListener('change', onChange);
-  }, [settings.theme]);
+  // Settings: load the persisted choice once, then keep the palette in sync.
+  useLoadSettings(setSettings);
+  useSettingsEffect(settings);
 
   // The tab-level database picker needs the server's list, not just the
   // connection default; sqlite has nothing to choose from.
@@ -157,7 +153,7 @@ function App() {
 
   const changeSettings = (next: AppSettings) => {
     setSettings(next);
-    SaveSettings(next).catch(error => console.error('Failed to save settings:', error));
+    saveSettings(next);
   };
 
   // Cached per connection + database so completion never re-introspects on
@@ -221,7 +217,9 @@ function App() {
       }
       // Object tabs hold catalog reads that die with the pool, so close them
       // rather than leaving a dead grid on screen.
-      const kept = tabs.filter(t => !(t.kind === 'table' && t.tableRef?.connId === connId));
+      const kept = tabs.filter(
+        t => !((t.kind === 'table' || t.kind === 'kv') && t.tableRef?.connId === connId),
+      );
       if (kept.length !== tabs.length) {
         setTabs(kept);
         if (activeTab && !kept.some(t => t.id === activeTab)) {
@@ -306,7 +304,13 @@ function App() {
     const stillCurrent = () => (runSeq.current.get(tabId) ?? 0) === seq;
 
     try {
-      const result = await ExecuteQuery(activeConnection.id, tab.query, database) as unknown as QueryResult;
+      const connId = activeConnection.id;
+      const result = await runStreamed(connId, tab.query, database, partial => {
+        if (!stillCurrent()) return;
+        setTabs(current => current.map(t =>
+          t.id === tabId ? { ...t, database, result: partial, loading: true } : t
+        ));
+      });
       const comments = settings.showColumnComments && !result.error
         ? await queryComments(activeConnection.id, tab.query, database)
         : undefined;
@@ -516,6 +520,53 @@ function App() {
     loadObjectSection(tab, 'data');
   };
 
+  // A key tab is a read of one Redis key. It has no editor and no write path:
+  // the panel shows the value's rows and its type/TTL.
+  const loadKVValue = async (tab: Tab) => {
+    const ref = tab.tableRef;
+    if (!ref) return;
+    const key = `${tab.id}|kv`;
+    const seq = (objectSeq.current.get(key) ?? 0) + 1;
+    objectSeq.current.set(key, seq);
+    const stillCurrent = () => (objectSeq.current.get(key) ?? 0) === seq;
+    const patch = (next: Partial<Tab>) =>
+      setTabs(current => current.map(t => (t.id === tab.id ? { ...t, ...next } : t)));
+
+    patch({ kv: { loading: true, data: tab.kv?.data } });
+    try {
+      const value = (await GetKVValue(ref.connId, ref.database, ref.table)) as KVValue;
+      if (stillCurrent()) patch({ kv: { loading: false, data: value } });
+    } catch (error) {
+      if (stillCurrent()) {
+        patch({ kv: { loading: false, error: (error as Error).message, data: tab.kv?.data } });
+      }
+    }
+  };
+
+  const openKVTab = (ref: TableRef, label: string) => {
+    const existing = tabs.find(
+      t => t.kind === 'kv' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
+    );
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    const tab: Tab = {
+      id: `tab_${Date.now()}`,
+      title: label,
+      query: '',
+      database: ref.database,
+      isDirty: false,
+      connectionId: ref.connId,
+      kind: 'kv',
+      tableRef: ref,
+      kv: { loading: true },
+    };
+    setTabs(current => [...current, tab]);
+    setActiveTab(tab.id);
+    loadKVValue(tab);
+  };
+
   // A query page starts from the table it belongs to, so the user can run it
   // as soon as the page opens. The quoted name comes from the backend.
   const defaultObjectQuery = async (tab: Tab) => {
@@ -566,7 +617,7 @@ function App() {
 
     patch({ objectResult: { loading: true }, objectComments: undefined });
     try {
-      const result = (await ExecuteQuery(ref.connId, sql, database)) as unknown as QueryResult;
+      const result = await runGuarded(ref.connId, sql, database);
       const comments =
         settings.showColumnComments && !result.error
           ? await queryComments(ref.connId, sql, database)
@@ -652,7 +703,7 @@ function App() {
     // statement of its own instead.
     const editorTab = objectTab
       ? undefined
-      : tabs.find(t => t.id === activeTab && t.kind !== 'table');
+      : tabs.find(t => t.id === activeTab && t.kind !== 'table' && t.kind !== 'kv');
     const targetDatabase = objectTab
       ? tabDatabase(objectTab)
       : editorTab?.database || activeConnection?.database || '';
@@ -740,6 +791,37 @@ function App() {
     await RunTableAction(ref, 'truncate');
     const open = objectTabFor(ref);
     if (open && (open.section ?? 'data') === 'data') loadObjectSection(open, 'data');
+  };
+
+  const kvTabFor = (ref: TableRef) =>
+    tabs.find(t => t.kind === 'kv' && t.tableRef && objectKey(t.tableRef) === objectKey(ref));
+
+  // Rename keeps the open value tab and re-points it at the new key, so the
+  // user is not left with a tab that will 404 on its next refresh.
+  const handleRenameKVKey = async (ref: TableRef, newName: string) => {
+    await RenameKVKey(ref.connId, ref.database, ref.table, newName);
+    const open = kvTabFor(ref);
+    if (!open) return;
+    const next: Tab = {
+      ...open,
+      title: newName,
+      tableRef: { ...(open.tableRef as TableRef), table: newName },
+      kv: { loading: true, data: open.kv?.data },
+    };
+    setTabs(current => current.map(t => (t.id === open.id ? next : t)));
+    loadKVValue(next);
+  };
+
+  const handleDeleteKVKey = async (ref: TableRef) => {
+    await DeleteKVKey(ref.connId, ref.database, ref.table);
+    const open = kvTabFor(ref);
+    if (open) closeTabForReal(open.id);
+  };
+
+  const handleSetKVKeyTTL = async (ref: TableRef, seconds: number) => {
+    await SetKVKeyTTL(ref.connId, ref.database, ref.table, seconds);
+    const open = kvTabFor(ref);
+    if (open) loadKVValue(open);
   };
 
   // 新建表 is a statement to edit and run, not one the app fires off: the name
@@ -904,11 +986,15 @@ function App() {
         onDeleteConnection={handleDeleteConnection}
         onSaveDatabaseFilter={handleSaveDatabaseFilter}
         onOpenTable={openTableTab}
+        onOpenKey={openKVTab}
         onInsertText={handleInsertText}
         onNewTable={handleNewTable}
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
+        onRenameKey={handleRenameKVKey}
+        onDeleteKey={handleDeleteKVKey}
+        onSetKeyTTL={handleSetKVKeyTTL}
         onConfirm={setConfirmReq}
       />
 
@@ -917,9 +1003,12 @@ function App() {
           <div className="flex flex-1 min-w-0 overflow-x-auto">
           {tabs.map(tab => {
             const ref = tab.kind === 'table' ? tab.tableRef : undefined;
+            const kvRef = tab.kind === 'kv' ? tab.tableRef : undefined;
             const fullName = ref
               ? `${objectQualifier(ref, connections.find(c => c.id === ref.connId)?.type)}.${ref.table}`
-              : undefined;
+              : kvRef
+                ? `db ${kvRef.database} · ${kvRef.table}`
+                : undefined;
             return (
               <div
                 key={tab.id}
@@ -933,6 +1022,7 @@ function App() {
                   (tab.objectType === 'view'
                     ? <FiEye size={12} aria-hidden className="mr-1.5 shrink-0 text-icon-view" />
                     : <FiTable size={12} aria-hidden className="mr-1.5 shrink-0 text-success" />)}
+                {kvRef && <FiKey size={12} aria-hidden className="mr-1.5 shrink-0 text-accent" />}
                 <span className="text-sm max-w-[200px] truncate">{tab.title}</span>
                 {tab.isDirty && <span className="ml-2 text-warning">*</span>}
                 <button
@@ -1007,6 +1097,7 @@ function App() {
               showComments={settings.showColumnComments}
               editSource={activeTabData.objectType === 'view' ? null : objectRef}
               exportName={`${objectRef.database}.${objectRef.table}`}
+              onImport={() => setImportTarget(objectRef)}
               onRefresh={() => handleObjectRefresh(activeTabData)}
               onDataApplied={() => loadObjectSection(activeTabData, 'data')}
               onPendingChange={total => pendingEdits.current.set(activeTabData.id, total)}
@@ -1046,6 +1137,22 @@ function App() {
                 />
               }
             />
+          ) : activeTabData?.kind === 'kv' ? (
+            <KvValuePanel
+              connId={activeTabData.tableRef?.connId ?? ''}
+              database={activeTabData.database ?? ''}
+              kv={activeTabData.kv ?? { loading: false }}
+              onRefresh={() => loadKVValue(activeTabData)}
+              onDismissError={() =>
+                setTabs(current =>
+                  current.map(t =>
+                    t.id === activeTabData.id
+                      ? { ...t, kv: { loading: false, data: t.kv?.data } }
+                      : t,
+                  ),
+                )
+              }
+            />
           ) : activeTabData ? (
             <>
               <div
@@ -1063,6 +1170,14 @@ function App() {
                     ));
                   }}
                   onExecute={() => handleExecuteQuery(activeTabData)}
+                  onCancel={() => {
+                    if (!activeConnection) return;
+                    // Stop the server-side statement, then clear the spinner:
+                    // bumping the tab's sequence makes the trailing stream
+                    // events no-ops, so the rows already painted stay visible.
+                    CancelQuery(activeConnection.id).catch(() => {});
+                    cancelQuery(activeTabData.id);
+                  }}
                   isConnected={!!activeConnection}
                   loading={!!activeTabData.loading}
                   dialect={activeConnection?.type ?? 'mysql'}
@@ -1151,6 +1266,16 @@ function App() {
 
       {confirmReq && (
         <ConfirmDialog request={confirmReq} onDismiss={() => setConfirmReq(null)} />
+      )}
+
+      {importTarget && (
+        <ImportDialog
+          target={importTarget}
+          onClose={() => setImportTarget(null)}
+          onImported={() => {
+            if (activeTabData) handleObjectRefresh(activeTabData);
+          }}
+        />
       )}
 
       <Toaster position="bottom-right" />

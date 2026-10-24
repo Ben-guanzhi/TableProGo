@@ -1,4 +1,4 @@
-import { ChangeSet, ColumnInfo, Connection, ConnectionConfig, ForeignKeyInfo, HistoryEntry, PreviewCursor, QueryResult, SqlFilter, TableInfo } from './types';
+import { ChangeSet, Column, ColumnInfo, Connection, ConnectionConfig, ForeignKeyInfo, HistoryEntry, KVKeyInfo, KVKeyPage, KVRowInput, KVValue, PreviewCursor, QueryResult, SqlFilter, TableInfo } from './types';
 
 // Injected by the Go asset handler; the ?apiPort=/?apiToken= fallbacks keep the
 // vite dev server usable from a plain browser. The token is minted per process
@@ -77,6 +77,72 @@ export async function GetSchemas(connId: string, database: string): Promise<stri
 
 export async function GetColumns(connId: string, database: string, schema: string, table: string): Promise<ColumnInfo[]> {
   return post('/api/columns', { connId, database, schema, table });
+}
+
+// One Redis key read whole. The type and remaining lifetime sit beside the
+// rows so the panel can name what it is showing.
+export async function GetKVValue(connId: string, database: string, key: string): Promise<KVValue> {
+  return post('/api/kv-value', { connId, database, key });
+}
+
+// One SCAN step. An empty cursor starts at the beginning; `done` means the walk
+// reached cursor 0. Keys can repeat across pages, so callers de-duplicate.
+export async function GetKVKeys(
+  connId: string,
+  database: string,
+  cursor = '',
+  count = 0,
+): Promise<KVKeyPage> {
+  return post('/api/kv-keys', { connId, database, cursor, count });
+}
+
+export async function GetKVKeyInfo(connId: string, database: string, key: string): Promise<KVKeyInfo> {
+  return post('/api/kv-key-info', { connId, database, key });
+}
+
+export async function SetKVKeyTTL(
+  connId: string,
+  database: string,
+  key: string,
+  seconds: number,
+): Promise<void> {
+  await post('/api/kv-key-ttl', { connId, database, key, seconds });
+}
+
+export async function RenameKVKey(
+  connId: string,
+  database: string,
+  key: string,
+  newName: string,
+): Promise<void> {
+  await post('/api/kv-key-rename', { connId, database, key, newName });
+}
+
+export async function DeleteKVKey(connId: string, database: string, key: string): Promise<void> {
+  await post('/api/kv-key-delete', { connId, database, key });
+}
+
+// One element rewritten in place. `identity` follows the value's grid layout:
+// key (a string), field (hash), index (list) or member (a sorted set's score).
+// The backend keeps the key's TTL.
+export interface KVElementInput {
+  connId: string;
+  database: string;
+  key: string;
+  identity: 'key' | 'field' | 'index' | 'member';
+  id: string;
+  column: 'value' | 'score';
+  value: string;
+}
+
+export async function SetKVElement(input: KVElementInput): Promise<void> {
+  await post('/api/kv-element', input);
+}
+
+// One row appended to a set member list or a stream. The response carries the
+// identity the server assigned: the member, or the generated stream ID.
+export async function AddKVRow(input: KVRowInput): Promise<{ id: string }> {
+  return post('/api/kv-row-add', input);
 }
 
 // The key edges of the page currently on screen. `after` walks to the next page,
@@ -225,6 +291,149 @@ export async function ExecuteQuery(connId: string, query: string, database = '')
   return post('/api/execute', { connId, query, database });
 }
 
+// ExecuteQueryConfirmed re-sends a statement the Safe Mode prompt paused.
+export async function ExecuteQueryConfirmed(connId: string, query: string, database = ''): Promise<QueryResult> {
+  return post('/api/execute-confirmed', { connId, query, database });
+}
+
+// Interactive transactions (backend txn.go): one per tab, so two editor tabs on one
+// connection keep separate transactions. The statements themselves go through
+// ExecuteQueryInTab, which joins the tab's open transaction.
+export async function BeginTransaction(connId: string, tabId: string, database = ''): Promise<string> {
+  const res = await post('/api/begin-tx', { connId, tabId, database });
+  return (res as { status: string }).status;
+}
+
+export async function CommitTransaction(connId: string, tabId: string): Promise<string> {
+  const res = await post('/api/commit-tx', { connId, tabId, database: '' });
+  return (res as { status: string }).status;
+}
+
+export async function RollbackTransaction(connId: string, tabId: string): Promise<string> {
+  const res = await post('/api/rollback-tx', { connId, tabId, database: '' });
+  return (res as { status: string }).status;
+}
+
+export async function TransactionStatus(tabId: string): Promise<string> {
+  const res = await post('/api/tx-status', { connId: '', tabId, database: '' });
+  return (res as { status: string }).status;
+}
+
+// ExecuteQueryInTab runs a statement inside the tab's transaction when it has one.
+export async function ExecuteQueryInTab(
+  connId: string,
+  tabId: string,
+  query: string,
+  database = '',
+): Promise<QueryResult> {
+  return post('/api/execute-in-tab', { connId, tabId, query, database });
+}
+
+export async function ExecuteQueryInTabConfirmed(
+  connId: string,
+  tabId: string,
+  query: string,
+  database = '',
+): Promise<QueryResult> {
+  return post('/api/execute-in-tab-confirmed', { connId, tabId, query, database });
+}
+
+// CancelQuery asks the backend to abort every statement still running on the
+// connection, which cancels its context and makes the driver abort server-side.
+export async function CancelQuery(connId: string): Promise<{ cancelled: number }> {
+  return post('/api/cancel-query', { connId });
+}
+
+export interface ImportOptions {
+  format: 'csv' | 'json' | '';
+  hasHeader: boolean;
+  delimiter: string;
+  createTable: boolean;
+  inferTypes: boolean;
+  skipErrors: boolean;
+  mode: 'append' | 'truncate' | 'upsert';
+  upsertKeys?: string[];
+}
+
+export interface ImportResult {
+  rows: number;
+  skipped: number;
+  statements: number;
+  columns: string[];
+  createdTable: boolean;
+  error?: string;
+}
+
+// ImportFile parses a CSV/JSON file server-side and writes it into a table.
+export async function ImportFile(req: {
+  connId: string;
+  database: string;
+  table: string;
+  path: string;
+  options: ImportOptions;
+}): Promise<ImportResult> {
+  return post('/api/import', req);
+}
+
+// One NDJSON line of /api/execute-stream (stream.go).
+export interface StreamEvent {
+  type: 'columns' | 'rows' | 'done' | 'error';
+  columns?: Column[];
+  rows?: any[][];
+  rowCount?: number;
+  truncated?: boolean;
+  executionTime?: number;
+  error?: string;
+  needsConfirmation?: boolean;
+}
+
+export interface StreamHandlers {
+  onColumns?: (columns: Column[]) => void;
+  onRows?: (rows: any[][]) => void;
+}
+
+// ExecuteQueryStream reads the NDJSON response and calls the handlers as rows
+// arrive, resolving with the final "done"/"error" event. A Safe Mode pause comes
+// back as type "error" with needsConfirmation set (nothing ran).
+export async function ExecuteQueryStream(
+  connId: string,
+  query: string,
+  database = '',
+  handlers: StreamHandlers = {},
+): Promise<StreamEvent> {
+  const res = await fetch(`${BASE}/api/execute-stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
+    body: JSON.stringify({ connId, query, database }),
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`stream failed: HTTP ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let final: StreamEvent | null = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) {
+        const event = JSON.parse(line) as StreamEvent;
+        if (event.type === 'columns') handlers.onColumns?.(event.columns ?? []);
+        else if (event.type === 'rows') handlers.onRows?.(event.rows ?? []);
+        else final = event;
+      }
+      newline = buffer.indexOf('\n');
+    }
+  }
+  if (!final) throw new Error('stream ended without a terminal event');
+  return final;
+}
+
 // Columns of whichever table the query reads from; used for result comments
 // and editor completion without parsing SQL on this side.
 export async function QueryColumns(connId: string, query: string, database = ''): Promise<ColumnInfo[]> {
@@ -262,11 +471,18 @@ export async function GetCreateTableTemplate(dbType: string, schema: string): Pr
   return data.template;
 }
 
-export type Theme = 'system' | 'light' | 'dark';export interface AppSettings {
+export type Theme = 'system' | 'light' | 'dark';
+
+// SafeMode mirrors the backend levels (safemode.go): off, confirm every write,
+// confirm UPDATE/DELETE without WHERE, or block them outright.
+export type SafeMode = 'off' | 'confirmWrites' | 'confirmNoWhere' | 'blockNoWhere';
+
+export interface AppSettings {
   showColumnComments: boolean;
   // Rows a SELECT is capped at; 0 means no limit.
   resultLimit: number;
   theme: Theme;
+  safeMode: SafeMode;
 }
 
 export async function GetSettings(): Promise<AppSettings> {

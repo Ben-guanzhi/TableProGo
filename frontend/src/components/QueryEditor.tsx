@@ -41,7 +41,7 @@ import {
   sql,
 } from '@codemirror/lang-sql';
 import { tags } from '@lezer/highlight';
-import { FiChevronDown, FiDatabase, FiLoader, FiMinus, FiPlay, FiPlus, FiSettings } from 'react-icons/fi';
+import { FiChevronDown, FiDatabase, FiLoader, FiMinus, FiPlay, FiPlus, FiSettings, FiSquare } from 'react-icons/fi';
 import { AppSettings } from '../api';
 import { ColumnInfo } from '../types';
 
@@ -54,8 +54,18 @@ interface QueryEditorProps {
   query: string;
   onQueryChange: (query: string) => void;
   onExecute: () => void;
+  // onCancel aborts the in-flight statement server-side (cancels its context).
+  // Optional so read-only embeds (object query page) can omit it.
+  onCancel?: () => void;
   isConnected: boolean;
   loading: boolean;
+  // Interactive transaction (backend txn.go): the tab either runs in autocommit or
+  // holds one open transaction, and only one is allowed at a time.
+  txStatus?: string;
+  txActive?: boolean;
+  onBeginTx?: () => void;
+  onCommitTx?: () => void;
+  onRollbackTx?: () => void;
   dialect: string;
   // Databases the tab can target. An empty list hides the picker (sqlite).
   databases: string[];
@@ -204,6 +214,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     query,
     onQueryChange,
     onExecute,
+  onCancel,
     isConnected,
     loading,
     dialect,
@@ -409,6 +420,17 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
           {loading ? '执行中' : '执行'}
         </button>
 
+        {loading && (
+          <button
+            className="flex items-center whitespace-nowrap px-3 py-1 rounded text-xs font-medium bg-danger hover:bg-danger-hover text-on-danger"
+            onClick={onCancel ?? (() => {})}
+            title="取消当前语句（服务端中止）"
+          >
+            <FiSquare size={11} className="mr-1.5 shrink-0" />
+            取消
+          </button>
+        )}
+
         <span className="text-2xs text-muted whitespace-nowrap">
           {isConnected ? 'Ctrl+Enter 执行 · Ctrl+Space 补全关键字/表/列' : '尚未连接数据库'}
         </span>
@@ -481,6 +503,28 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                       }
                       className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"
                     />
+                  </label>
+
+                  <label className="block p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">
+                    <span>Safe Mode（写入保护）</span>
+                    <span className="block text-2xs text-muted mb-1">
+                      仅作用于 SQL 编辑器的写语句，不影响表浏览/网格编辑
+                    </span>
+                    <select
+                      value={settings.safeMode}
+                      onChange={e =>
+                        onSettingsChange({
+                          ...settings,
+                          safeMode: e.target.value as typeof settings.safeMode,
+                        })
+                      }
+                      className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"
+                    >
+                      <option value="off">关闭</option>
+                      <option value="confirmWrites">所有写操作都确认</option>
+                      <option value="confirmNoWhere">无 WHERE 的写操作需确认</option>
+                      <option value="blockNoWhere">禁止无 WHERE 的 UPDATE/DELETE</option>
+                    </select>
                   </label>
                 </div>
               </>

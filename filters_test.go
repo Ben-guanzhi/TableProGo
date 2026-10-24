@@ -5,138 +5,6 @@ import (
 	"testing"
 )
 
-func condition(t *testing.T, dbType, colType string, filter TableFilter) string {
-	t.Helper()
-	quoted, err := quoteIdent(dbType, filter.Column)
-	if err != nil {
-		t.Fatalf("quote %s: %v", filter.Column, err)
-	}
-	text, err := filterCondition(dbType, colType, quoted, filter)
-	if err != nil {
-		t.Fatalf("condition failed: %v", err)
-	}
-	return text
-}
-
-func TestFilterConditionsByDialect(t *testing.T) {
-	cases := []struct {
-		name    string
-		dbType  string
-		colType string
-		filter  TableFilter
-		want    string
-	}{
-		{
-			name:    "text equality keeps the quotes",
-			dbType:  "sqlite",
-			colType: "text",
-			filter:  TableFilter{Column: "name", Op: filterEq, Value: "ab"},
-			want:    `"name" = 'ab'`,
-		},
-		{
-			name:    "sql server needs the national prefix",
-			dbType:  "sqlserver",
-			colType: "nvarchar",
-			filter:  TableFilter{Column: "name", Op: filterNe, Value: "it's"},
-			want:    `[name] <> N'it''s'`,
-		},
-		{
-			name:    "a number stays a number",
-			dbType:  "postgresql",
-			colType: "integer",
-			filter:  TableFilter{Column: "qty", Op: filterGTE, Value: " 12 "},
-			want:    `"qty" >= 12`,
-		},
-		{
-			name:    "an absent value is compared with IS",
-			dbType:  "mysql",
-			colType: "int",
-			filter:  TableFilter{Column: "qty", Op: filterEq, Value: ""},
-			want:    "`qty` IS NULL",
-		},
-		{
-			name:    "and its negation with IS NOT",
-			dbType:  "sqlite",
-			colType: "integer",
-			filter:  TableFilter{Column: "qty", Op: filterNotNull},
-			want:    `"qty" IS NOT NULL`,
-		},
-		{
-			name:    "an empty text column means the empty string",
-			dbType:  "sqlite",
-			colType: "text",
-			filter:  TableFilter{Column: "name", Op: filterEq, Value: ""},
-			want:    `"name" = ''`,
-		},
-		{
-			name:    "contains wraps an escaped pattern",
-			dbType:  "sqlite",
-			colType: "text",
-			filter:  TableFilter{Column: "note", Op: filterContains, Value: "100%_a/"},
-			want:    `"note" LIKE '%100/%/_a//%' ESCAPE '/'`,
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := condition(t, tc.dbType, tc.colType, tc.filter); got != tc.want {
-				t.Errorf("want %s\ngot  %s", tc.want, got)
-			}
-		})
-	}
-}
-
-// A filter that matches nothing is worse than one that fails: the page looks
-// empty as if the data were gone. So a one-sided comparison with no value is
-// refused rather than turned into "col > NULL".
-func TestFilterConditionsThatCannotMatchAreRefused(t *testing.T) {
-	cases := []struct {
-		name    string
-		colType string
-		filter  TableFilter
-		want    string
-	}{
-		{
-			name:    "greater than with no value",
-			colType: "integer",
-			filter:  TableFilter{Column: "qty", Op: filterGT, Value: ""},
-			want:    "需要一个值",
-		},
-		{
-			name:    "contains on a number",
-			colType: "bigint",
-			filter:  TableFilter{Column: "qty", Op: filterContains, Value: "12"},
-			want:    "不适用",
-		},
-		{
-			name:    "text that is not a number",
-			colType: "integer",
-			filter:  TableFilter{Column: "qty", Op: filterEq, Value: "twelve"},
-			want:    "not a valid",
-		},
-		{
-			name:    "an operator the bar never sends",
-			colType: "text",
-			filter:  TableFilter{Column: "qty", Op: "DROP", Value: "1"},
-			want:    "unknown filter operator",
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			quoted, err := quoteIdent("sqlite", tc.filter.Column)
-			if err != nil {
-				t.Fatalf("quote: %v", err)
-			}
-			_, err = filterCondition("sqlite", tc.colType, quoted, tc.filter)
-			if err == nil {
-				t.Fatalf("want an error, got none")
-			}
-			if !strings.Contains(err.Error(), tc.want) {
-				t.Errorf("error %q does not mention %q", err, tc.want)
-			}
-		})
-	}
-}
-
 func TestTableWhereAndsConditionsByCatalogName(t *testing.T) {
 	conn := sqliteDB(t, "conn_w", "scratch")
 	createPartsTable(t, conn)
@@ -231,7 +99,7 @@ func TestPreviewReportsAFilterItCannotBuild(t *testing.T) {
 
 	result := searchApp(conn).Preview(conn.ID, conn.Database, "", "parts", 10, 0,
 		[]TableFilter{{Column: "id", Op: filterEq, Value: "twelve"}})
-	if result.Error == "" || !strings.Contains(result.Error, "not a valid") {
+	if result.Error == "" || !strings.Contains(result.Error, "不是数字") {
 		t.Fatalf("want a type error, got %+v", result)
 	}
 }

@@ -1,30 +1,20 @@
 package main
 
+// Cross-database pools live in internal/pool; this file keeps the engine rules
+// (which databases need a session of their own) and the connection wiring.
+
 import (
 	"database/sql"
 	"fmt"
-	"log"
-	"time"
 
-	_ "github.com/denisenkom/go-mssqldb"
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
-)
-
-const (
-	// poolCloseGrace bounds how long an evicted pool waits for its in-flight
-	// statements to finish before it is closed anyway.
-	poolCloseGrace = 30 * time.Second
-	poolCloseTick  = 200 * time.Millisecond
+	"tablepro-go/internal/pool"
 )
 
 // poolFor returns the *sql.DB to introspect the given database with. PostgreSQL
-// cannot see other databases over an existing connection, so those get a
-// lazily opened, cached pool of their own; the other engines answer metadata
-// queries through qualified names on the main pool, which keeps browsing the
-// tree from opening one connection per database.
+// cannot see other databases over an existing connection, so those get a lazily
+// opened, cached pool of their own; the other engines answer metadata queries
+// through qualified names on the main pool, which keeps browsing the tree from
+// opening one connection per database.
 func (a *App) poolFor(conn *Connection, database string) (*sql.DB, error) {
 	if conn.DB == nil {
 		return nil, fmt.Errorf("not connected")
@@ -49,98 +39,41 @@ func (a *App) queryPool(conn *Connection, database string) (*sql.DB, error) {
 	return a.poolFor(conn, database)
 }
 
+// perDatabasePool is the connection's pool cache, wired to this app's opener.
+// The opener copies the saved config, swaps the database and dials through the
+// same SSH tunnel the main session uses.
 func (a *App) perDatabasePool(conn *Connection, database string) (*sql.DB, error) {
-	conn.poolsMu.Lock()
-	defer conn.poolsMu.Unlock()
-	if db, ok := conn.pools[database]; ok {
-		conn.touchPool(database)
-		return db, nil
-	}
-
-	config := conn.Config
-	config.Database = database
-	db, err := createConnection(config)
+	conn.ensurePools()
+	db, err := conn.pools.Get(database)
 	if err != nil {
-		return nil, err
-	}
-	if err := db.Ping(); err != nil {
-		db.Close()
 		return nil, fmt.Errorf("open database %q: %w", database, err)
 	}
-	if conn.pools == nil {
-		conn.pools = make(map[string]*sql.DB)
-	}
-	// Browsing a server with hundreds of databases must not accumulate one
-	// live pool per database; the oldest-unused pool is closed instead.
-	for len(conn.pools) >= maxPoolsPerConnection {
-		conn.evictOldestPool()
-	}
-	conn.pools[database] = db
-	conn.poolOrder = append(conn.poolOrder, database)
 	return db, nil
 }
 
-// touchPool moves database to the most-recently-used end of the LRU order.
-// Callers hold poolsMu.
-func (c *Connection) touchPool(database string) {
-	for i, name := range c.poolOrder {
-		if name == database {
-			c.poolOrder = append(c.poolOrder[:i], c.poolOrder[i+1:]...)
-			break
-		}
-	}
-	c.poolOrder = append(c.poolOrder, database)
-}
-
-// evictOldestPool fences off the least-recently-used cached pool and closes it
-// once no statement is running on it. Callers hold poolsMu.
-//
-// poolFor hands the *sql.DB to callers with no reference count, so an immediate
-// Close could land inside a statement still reading from the pool. Fencing
-// stops the pool growing in the meantime: no new idle connections are kept and
-// no connection survives a single use.
-func (c *Connection) evictOldestPool() {
-	if len(c.poolOrder) == 0 {
-		return
-	}
-	oldest := c.poolOrder[0]
-	c.poolOrder = c.poolOrder[1:]
-	db, ok := c.pools[oldest]
-	if !ok {
-		return
-	}
-	delete(c.pools, oldest)
-	db.SetConnMaxLifetime(time.Nanosecond)
-	db.SetMaxIdleConns(0)
-	go closePoolWhenIdle(oldest, db)
-}
-
-// closePoolWhenIdle waits for the pool to drain and then closes it. Giving up
-// after poolCloseGrace bounds the memory a permanently stalled statement can
-// hold; past that the pool is closed anyway, which fails the stalled statement
-// rather than leaking the pool forever.
-func closePoolWhenIdle(name string, db *sql.DB) {
-	deadline := time.Now().Add(poolCloseGrace)
-	for time.Now().Before(deadline) {
-		if db.Stats().InUse == 0 {
-			if err := db.Close(); err != nil {
-				log.Printf("close evicted pool %q: %v", name, err)
+// ensurePools lazily builds the cache. The opener closes over conn so it always
+// reads the current tunnel endpoint and saved config.
+func (c *Connection) ensurePools() {
+	c.poolsOnce.Do(func() {
+		c.pools = pool.New(func(database string) (*sql.DB, error) {
+			config := c.Config
+			config.Database = database
+			host, port := c.dialTarget()
+			db, err := createConnectionAt(config, host, port)
+			if err != nil {
+				return nil, err
 			}
-			return
-		}
-		time.Sleep(poolCloseTick)
-	}
-	if err := db.Close(); err != nil {
-		log.Printf("close evicted pool %q after %v: %v", name, poolCloseGrace, err)
-	}
+			if err := db.Ping(); err != nil {
+				_ = db.Close()
+				return nil, err
+			}
+			return db, nil
+		}, maxPoolsPerConnection)
+	})
 }
 
 func (c *Connection) closePools() {
-	c.poolsMu.Lock()
-	defer c.poolsMu.Unlock()
-	for name, db := range c.pools {
-		db.Close()
-		delete(c.pools, name)
+	if c.pools != nil {
+		c.pools.Close()
 	}
-	c.poolOrder = nil
 }

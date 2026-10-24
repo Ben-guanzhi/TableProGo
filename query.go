@@ -1,13 +1,18 @@
 package main
 
 import (
-	"github.com/Ben-guanzhi/TableProGo/tableprosql"
-
+	"context"
 	"database/sql"
 	"strings"
 	"time"
 
-	_ "github.com/denisenkom/go-mssqldb"
+	"github.com/dbcore/dbcore"
+
+	"tablepro-go/internal/txn"
+	tableprosql "github.com/dbcore/dbcore/sqltext"
+
+	"tablepro-go/internal/catalogmodel"
+
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
@@ -31,13 +36,14 @@ type QueryResult struct {
 	// for an object with no usable key, whose pages are read by OFFSET.
 	StartCursor []string `json:"startCursor,omitempty"`
 	EndCursor   []string `json:"endCursor,omitempty"`
+	// NeedsConfirmation says Safe Mode paused the statement: nothing ran, and
+	// Error carries the reason. The UI confirms, then re-sends through
+	// ExecuteQueryConfirmed.
+	NeedsConfirmation bool `json:"needsConfirmation,omitempty"`
 }
 
-type Column struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Nullable bool   `json:"nullable"`
-}
+// Column is the result-grid descriptor; the shape lives in catalogmodel.
+type Column = catalogmodel.Column
 
 // QueryColumns resolves the table a query reads from and returns its columns,
 // which is how the result grid finds column comments for "SELECT *" output.
@@ -208,32 +214,94 @@ func pageOrderFrom(dbType string, columns []ColumnInfo, columnsErr error) string
 // ExecuteQuery runs a statement against database, which defaults to the
 // database the connection opened with. An empty or matching name reuses the
 // main pool, so only cross-database tabs pay for an extra connection.
+//
+// Safe Mode (see safemode.go) may stop the statement before it reaches the
+// server: a blocked statement returns Error, a statement needing confirmation
+// returns NeedsConfirmation + Error with nothing executed. The UI confirms and
+// re-sends through ExecuteQueryConfirmed.
 func (a *App) ExecuteQuery(connID string, query string, database string) QueryResult {
-	result := a.runQuery(connID, query, database)
+	return a.executeQuery("", connID, query, database, false)
+}
+
+// ExecuteQueryInTab is ExecuteQuery for a statement that belongs to a tab, so it
+// joins that tab's open transaction (txn.go) instead of running in autocommit.
+// The empty tab id means "no transaction", which is what a background statement
+// wants: it must not be captured by an editor's open transaction.
+func (a *App) ExecuteQueryInTab(connID, tabID string, query string, database string) QueryResult {
+	return a.executeQuery(tabID, connID, query, database, false)
+}
+
+// ExecuteQueryConfirmedInTab is ExecuteQueryInTab after the Safe Mode prompt.
+func (a *App) ExecuteQueryConfirmedInTab(connID, tabID string, query string, database string) QueryResult {
+	return a.executeQuery(tabID, connID, query, database, true)
+}
+
+// ExecuteQueryConfirmed is ExecuteQuery after the user acknowledged the Safe
+// Mode warning. It is a distinct entry point so skipping the prompt has to be
+// explicit in the caller's code, not a forgotten boolean.
+func (a *App) ExecuteQueryConfirmed(connID string, query string, database string) QueryResult {
+	return a.executeQuery("", connID, query, database, true)
+}
+
+func (a *App) executeQuery(tabID, connID string, query string, database string, force bool) QueryResult {
+	_, kvErr := a.kvConnection(connID)
+	if kvErr != nil {
+		// Safe Mode guards SQL statements; raw Redis commands have their own
+		// semantics (DEL/FLUSHDB do not take WHERE) and are left alone.
+		if guard := guardWrite(a.GetSettings().SafeMode, query); guard.Blocked || (guard.NeedsConfirmation && !force) {
+			return QueryResult{Error: guard.Reason, NeedsConfirmation: guard.NeedsConfirmation && !force}
+		}
+	}
+	// A tab with an open transaction runs inside it, and is told when the
+	// transaction is bound to another database rather than silently escaping it.
+	session := a.txSession(tabID)
+	if err := session.Guard(database); err != nil {
+		return QueryResult{Error: err.Error()}
+	}
+	ctx, done := a.beginRun(connID)
+	defer done()
+	var result QueryResult
+	if kvErr == nil {
+		conn, _ := a.kvConnection(connID)
+		result = a.runKVCommand(conn, database, query)
+	} else {
+		result = a.runQuery(ctx, tabID, connID, query, database)
+	}
+	// A failed statement aborts the transaction on most engines; the session has
+	// to remember that so the UI stops offering more.
+	session.Record(errorOf(result))
 	a.recordStatement(connID, database, query, result)
 	return result
 }
 
-func (a *App) runQuery(connID string, query string, database string) QueryResult {
+func (a *App) runQuery(ctx context.Context, tabID, connID, query, database string) QueryResult {
 	conn, err := a.connection(connID)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}
 
-	db, err := a.queryPool(conn, database)
+	drv, err := a.execDriver(conn, database)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}
 
+	// A tab with an open transaction runs the statement inside it. Without this the
+	// transaction would only be bookkeeping: the statement would go through the
+	// pool in autocommit and commit/rollback would govern nothing.
+	txID := ""
+	if session := a.txSession(tabID); session.Status == txn.Active || session.Status == txn.Failed {
+		txID = session.ID
+	}
+
 	start := time.Now()
-	if isSelectQuery(query) {
+	if dbcore.IsReadQuery(query) {
 		limit := a.GetSettings().ResultLimit
 		fetch := limit
 		if limit > 0 {
 			fetch = limit + 1
 		}
 		probe := withRowLimit(query, conn.Type, fetch)
-		result := runSelect(db, probe, start)
+		result := a.runStatement(ctx, conn, database, drv, txID, probe, start)
 		// The extra row is a probe only when the cap is ours: a statement with
 		// a cap of its own runs untouched and is never marked truncated.
 		if limit > 0 && probe != query && result.Error == "" && len(result.Rows) > limit {
@@ -243,7 +311,7 @@ func (a *App) runQuery(connID string, query string, database string) QueryResult
 		}
 		return result
 	}
-	result := executeCommand(db, query, start)
+	result := a.runStatement(ctx, conn, database, drv, txID, query, start)
 	if result.Error == "" && !movesDataOnly(query) {
 		// A statement that ran can have moved a catalog (CREATE/DROP/RENAME,
 		// and the menu's actions arrive through here too). Plain row DML
@@ -255,6 +323,43 @@ func (a *App) runQuery(connID string, query string, database string) QueryResult
 		a.catalogVersion.Add(1)
 	}
 	return result
+}
+
+// runStatement runs one statement, inside the tab's transaction when txID is set.
+// The transaction's own registry serializes access, so a parallel statement on the
+// same tab is refused rather than interleaved.
+func (a *App) runStatement(
+	ctx context.Context,
+	conn *Connection,
+	database string,
+	drv dbcore.SQLDriver,
+	txID string,
+	query string,
+	start time.Time,
+) QueryResult {
+	if txID == "" {
+		return runDriverStatement(ctx, drv, query, start)
+	}
+	m, err := a.txManagerFor(conn, database)
+	if err != nil {
+		return QueryResult{Error: err.Error()}
+	}
+	res, err := m.ExecuteInTx(ctx, txID, query)
+	result := queryResultFrom(res, err)
+	result.ExecutionTime = time.Since(start).Seconds()
+	return result
+}
+
+// execDriver returns the driver a user statement runs through. The pool comes
+// from queryPool, not poolFor: a tab on another database needs a session of its
+// own for MySQL and SQL Server, while metadata reads qualify the database name
+// on the main pool.
+func (a *App) execDriver(conn *Connection, database string) (dbcore.SQLDriver, error) {
+	db, err := a.queryPool(conn, database)
+	if err != nil {
+		return nil, err
+	}
+	return driverFor(conn, db)
 }
 
 // movesDataOnly reports whether a non-select statement only moves row data and
@@ -326,6 +431,9 @@ func runSelect(db *sql.DB, query string, start time.Time, args ...interface{}) Q
 		}
 		resultRows = append(resultRows, row)
 	}
+	if err := rows.Err(); err != nil {
+		return QueryResult{Error: err.Error()}
+	}
 
 	elapsed := time.Since(start).Seconds()
 	return QueryResult{
@@ -336,26 +444,115 @@ func runSelect(db *sql.DB, query string, start time.Time, args ...interface{}) Q
 	}
 }
 
-func executeCommand(db *sql.DB, query string, start time.Time) QueryResult {
-	result, err := db.Exec(query)
-	if err != nil {
-		return QueryResult{Error: err.Error()}
+// runDriverStatement runs one statement through the dbcore driver and maps the
+// kernel's result onto the shape the grid consumes.
+func runDriverStatement(ctx context.Context, drv dbcore.SQLDriver, query string, start time.Time) QueryResult {
+	res, err := drv.Execute(ctx, query)
+	result := queryResultFrom(res, err)
+	result.ExecutionTime = time.Since(start).Seconds()
+	return result
+}
+
+// beginRun registers a cancellable statement for connID. The returned done
+// removes it; CancelQuery finds it by connection.
+func (a *App) beginRun(connID string) (context.Context, func()) {
+	return a.beginRunWith(context.Background(), connID)
+}
+
+// beginRunWith is beginRun with a parent context, so a streaming HTTP request
+// also stops when the client disconnects.
+func (a *App) beginRunWith(parent context.Context, connID string) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(parent)
+	id := a.runSeq.Add(1)
+	a.runsMu.Lock()
+	if a.runs == nil {
+		a.runs = make(map[string]map[int64]context.CancelFunc)
 	}
-	affectedRows, _ := result.RowsAffected()
-	lastInsertID, _ := result.LastInsertId()
-	elapsed := time.Since(start).Seconds()
-	return QueryResult{
-		AffectedRows:  affectedRows,
-		LastInsertID:  lastInsertID,
-		ExecutionTime: elapsed,
+	if a.runs[connID] == nil {
+		a.runs[connID] = make(map[int64]context.CancelFunc)
+	}
+	a.runs[connID][id] = cancel
+	a.runsMu.Unlock()
+	return ctx, func() {
+		a.runsMu.Lock()
+		if set := a.runs[connID]; set != nil {
+			delete(set, id)
+			if len(set) == 0 {
+				delete(a.runs, connID)
+			}
+		}
+		a.runsMu.Unlock()
+		cancel()
 	}
 }
 
+// CancelQuery stops every statement still running on connID and reports how
+// many were cancelled. Cancelling a context is what makes the driver abort the
+// statement server-side (pgx/go-sql-driver both honor it); the connection pool
+// discards the broken connection on its own.
+func (a *App) CancelQuery(connID string) int {
+	a.runsMu.Lock()
+	defer a.runsMu.Unlock()
+	set := a.runs[connID]
+	n := len(set)
+	for _, cancel := range set {
+		cancel()
+	}
+	// Do not delete the map here: each cancelled run's done() removes its entry,
+	// and deleting the map first would race with those calls.
+	return n
+}
+
+func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
+	if err != nil {
+		return QueryResult{Error: err.Error()}
+	}
+	out := QueryResult{
+		Columns:      make([]Column, len(res.Columns)),
+		AffectedRows: res.AffectedRows,
+		LastInsertID: res.LastInsertID,
+	}
+	for i, c := range res.Columns {
+		out.Columns[i] = Column{Name: c.Name, Type: c.Type, Nullable: c.Nullable}
+	}
+	out.Rows = make([][]interface{}, len(res.Rows))
+	for i, row := range res.Rows {
+		cells := make([]interface{}, len(row))
+		for j, v := range row {
+			cells[j] = cellValue(v)
+		}
+		out.Rows[i] = cells
+	}
+	out.RowCount = len(out.Rows)
+	return out
+}
+
+// cellValue maps a kernel cell onto the JSON-friendly value the grid renders:
+// blobs stay text (the local scan showed their bytes) and times keep the
+// RFC3339 form the frontend already parses.
+func cellValue(v dbcore.Value) interface{} {
+	switch v.Kind {
+	case dbcore.ValInt:
+		return v.I
+	case dbcore.ValFloat:
+		return v.F
+	case dbcore.ValText:
+		return v.S
+	case dbcore.ValBlob:
+		return string(v.B)
+	case dbcore.ValBool:
+		return v.Bool
+	case dbcore.ValTime:
+		return v.T.Format(time.RFC3339)
+	default:
+		return nil
+	}
+}
+
+// isSelectQuery reports whether a statement returns rows (SELECT and its
+// row-returning cousins, including a WITH ... SELECT CTE).
 func isSelectQuery(query string) bool {
 	query = strings.ToUpper(strings.TrimSpace(query))
-	// WITH opens a CTE, which ends in a SELECT and returns rows: treating it
-	// as a command ran it with the result thrown away. RowLimit already caps
-	// a WITH ... SELECT the same way it caps a bare SELECT.
 	return strings.HasPrefix(query, "SELECT") ||
 		strings.HasPrefix(query, "WITH") ||
 		strings.HasPrefix(query, "SHOW") ||

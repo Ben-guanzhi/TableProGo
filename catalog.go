@@ -1,42 +1,83 @@
 package main
 
 import (
-	"github.com/Ben-guanzhi/TableProGo/tableprosql"
-
+	"context"
 	"database/sql"
 	"fmt"
+	"log"
+	"strconv"
 	"strings"
 
-	_ "github.com/denisenkom/go-mssqldb"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
 	_ "github.com/sijms/go-ora/v2"
+
+	"github.com/dbcore/dbcore"
+	"github.com/dbcore/dbcore/mssql"
+	"github.com/dbcore/dbcore/mysql"
+	"github.com/dbcore/dbcore/oracle"
+	"github.com/dbcore/dbcore/postgres"
+	"github.com/dbcore/dbcore/sqlite"
+	tableprosql "github.com/dbcore/dbcore/sqltext"
+
+	"tablepro-go/internal/catalogmodel"
 )
 
-type TableInfo struct {
-	Name    string `json:"name"`
-	Schema  string `json:"schema"`
-	Type    string `json:"type"`
-	Comment string `json:"comment"`
+// sqlDriver wraps the pool metadata lookups use in the matching dbcore driver.
+// NewFromDB keeps pool ownership here, so driver.Close is a no-op.
+func (a *App) sqlDriver(conn *Connection, database string) (dbcore.SQLDriver, error) {
+	db, err := a.poolFor(conn, database)
+	if err != nil {
+		return nil, err
+	}
+	return driverFor(conn, db)
 }
 
-type ColumnInfo struct {
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Nullable     bool   `json:"nullable"`
-	DefaultValue string `json:"defaultValue,omitempty"`
-	IsPrimaryKey bool   `json:"isPrimaryKey"`
-	Comment      string `json:"comment"`
+// driverFor wraps one open pool in the driver of its engine.
+func driverFor(conn *Connection, db *sql.DB) (dbcore.SQLDriver, error) {
+	switch conn.Type {
+	case "sqlite":
+		return sqlite.NewFromDB(db), nil
+	case "postgresql":
+		return postgres.NewFromDB(db), nil
+	case "mysql":
+		return mysql.NewFromDB(db), nil
+	case "sqlserver":
+		return mssql.NewFromDB(db), nil
+	case "oracle":
+		return oracle.NewFromDB(db), nil
+	default:
+		return nil, fmt.Errorf("unsupported type: %s", conn.Type)
+	}
 }
+
+// The metadata shapes live in internal/catalogmodel so paging/filters can move
+// out of package main without dragging the App with them. Aliases keep every
+// call site and JSON tag identical.
+type (
+	TableInfo  = catalogmodel.TableInfo
+	ColumnInfo = catalogmodel.ColumnInfo
+)
 
 func (a *App) GetDatabases(connID string) ([]string, error) {
-	a.connectionsMu.RLock()
-	conn, ok := a.connections[connID]
-	a.connectionsMu.RUnlock()
+	conn, err := a.liveConnection(connID)
+	if err != nil {
+		return nil, err
+	}
 
-	if !ok || conn.DB == nil {
-		return nil, fmt.Errorf("not connected")
+	if conn.Type == "redis" {
+		// Redis exposes no catalog of logical databases, so the navigator shows
+		// the default range; the database filter still applies to their names.
+		databases := make([]string, 0, redisDatabases)
+		filter := a.savedDatabaseFilter(connID)
+		for i := 0; i < redisDatabases; i++ {
+			name := strconv.Itoa(i)
+			if filter.allows(name) {
+				databases = append(databases, name)
+			}
+		}
+		return databases, nil
 	}
 
 	if conn.Type == "sqlite" {
@@ -67,6 +108,9 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 		if filter.allows(name) {
 			databases = append(databases, name)
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
 	return databases, nil
 }
@@ -111,9 +155,17 @@ func (a *App) invalidateConnFilterCacheLocked() {
 }
 
 func (a *App) GetSchemas(connID string, database string) ([]string, error) {
-	conn, err := a.connection(connID)
+	conn, err := a.liveConnection(connID)
 	if err != nil {
 		return nil, err
+	}
+	if conn.Type == "redis" {
+		// Keys are not namespaced by a schema; the tree puts them straight
+		// under the logical database.
+		return nil, nil
+	}
+	if conn.DB == nil {
+		return nil, fmt.Errorf("not connected")
 	}
 
 	// One collection loop serves both schema engines; only the catalog query
@@ -151,6 +203,9 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 		}
 		schemas = append(schemas, name)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	return schemas, nil
 }
 
@@ -163,39 +218,80 @@ func (a *App) GetTables(connID string, database string, schema string) ([]TableI
 // object asks directly instead of pulling the whole catalog: the payload stays
 // one row no matter how many tables the schema has.
 func (a *App) getTablesFiltered(connID string, database string, schema string, exact string, insensitive bool) ([]TableInfo, error) {
-	conn, err := a.connection(connID)
+	conn, err := a.liveConnection(connID)
 	if err != nil {
 		return nil, err
+	}
+	if conn.Type == "redis" {
+		keys, err := a.redisKeys(conn, database)
+		if err != nil || exact == "" {
+			return keys, err
+		}
+		for _, key := range keys {
+			if key.Name == exact {
+				return []TableInfo{key}, nil
+			}
+		}
+		return []TableInfo{}, nil
+	}
+	if conn.DB == nil {
+		return nil, fmt.Errorf("not connected")
 	}
 
 	schema = defaultSchema(conn.Type, schema)
 
-	db := conn.DB
-	if conn.Type == "postgresql" {
-		if db, err = a.poolFor(conn, database); err != nil {
+	// The exact-name lookup stays on the shared one-row statement: pulling a
+	// whole catalog to answer "is this object here" would undo its purpose.
+	if exact != "" {
+		db := conn.DB
+		if conn.Type == "postgresql" {
+			if db, err = a.poolFor(conn, database); err != nil {
+				return nil, err
+			}
+		}
+		query, args, err := tablesQuery(conn.Type, database, schema, exact, insensitive)
+		if err != nil {
 			return nil, err
 		}
+		rows, err := db.Query(query, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+
+		var tables []TableInfo
+		for rows.Next() {
+			var t TableInfo
+			if err := rows.Scan(&t.Name, &t.Type, &t.Comment); err != nil {
+				return nil, err
+			}
+			t.Type = normalizeTableType(t.Type)
+			t.Schema = schema
+			tables = append(tables, t)
+		}
+		return tables, rows.Err()
 	}
-	query, args, err := tablesQuery(conn.Type, database, schema, exact, insensitive)
+
+	drv, err := a.sqlDriver(conn, database)
 	if err != nil {
 		return nil, err
 	}
-
-	rows, err := db.Query(query, args...)
+	listSchema := schema
+	if conn.Type == "mysql" && listSchema == "" {
+		listSchema = database
+	}
+	found, err := drv.ListTables(context.Background(), listSchema)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var tables []TableInfo
-	for rows.Next() {
-		var t TableInfo
-		if err := rows.Scan(&t.Name, &t.Type, &t.Comment); err != nil {
-			return nil, err
-		}
-		t.Type = normalizeTableType(t.Type)
-		t.Schema = schema
-		tables = append(tables, t)
+	tables := make([]TableInfo, 0, len(found))
+	for _, t := range found {
+		tables = append(tables, TableInfo{
+			Name:    t.Name,
+			Schema:  t.Schema,
+			Type:    normalizeTableType(t.Type),
+			Comment: t.Comment,
+		})
 	}
 	return tables, nil
 }
@@ -236,64 +332,41 @@ func (a *App) lookupObject(connID, database, schema, name string, insensitive bo
 }
 
 func (a *App) GetColumns(connID string, database string, schema string, table string) ([]ColumnInfo, error) {
-	conn, err := a.connection(connID)
+	conn, err := a.liveConnection(connID)
 	if err != nil {
 		return nil, err
+	}
+	if conn.Type == "redis" {
+		// A key has no columns; its value layout is what the value tab shows.
+		return nil, nil
+	}
+	if conn.DB == nil {
+		return nil, fmt.Errorf("not connected")
 	}
 
 	if schema == "" {
 		schema = resolveSchema(conn, database, schema)
 	}
 
-	db := conn.DB
-	query, args, err := tableprosql.ColumnsQuery(conn.Type, database, schema, table)
+	drv, err := a.sqlDriver(conn, database)
 	if err != nil {
 		return nil, err
 	}
-	if query == "" {
-		return nil, fmt.Errorf("unsupported type: %s", conn.Type)
-	}
-	if conn.Type == "postgresql" {
-		if db, err = a.poolFor(conn, database); err != nil {
-			return nil, err
-		}
-	}
-
-	rows, err := db.Query(query, args...)
+	found, err := drv.ListColumns(context.Background(), schema, table)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var columns []ColumnInfo
-	for rows.Next() {
-		var col ColumnInfo
-		var defaultValue sql.NullString
-		var isPrimaryKey int
-
-		if conn.Type == "sqlite" {
-			// table_info's fourth field is *notnull*, the opposite of the
-			// YES/NO the other engines answer, so it gets its own reading. Its
-			// sixth is not a yes/no flag either: pk numbers the key columns
-			// 1..n, so a composite key used to lose every column but its first -
-			// which is the key rows are paged and written back by.
-			var cid, notnull, pk int
-			if err := rows.Scan(&cid, &col.Name, &col.Type, &notnull, &defaultValue, &pk); err != nil {
-				return nil, err
-			}
-			col.IsPrimaryKey = pk > 0
-			col.Nullable = notnull == 0
-		} else {
-			var nullable string
-			if err := rows.Scan(&col.Name, &col.Type, &nullable, &defaultValue, &isPrimaryKey, &col.Comment); err != nil {
-				return nil, err
-			}
-			col.IsPrimaryKey = isPrimaryKey == 1
-			col.Nullable = nullable == "YES" || nullable == "1" || nullable == "Y"
+	columns := make([]ColumnInfo, 0, len(found))
+	for _, c := range found {
+		col := ColumnInfo{
+			Name:         c.Name,
+			Type:         c.Type,
+			Nullable:     c.Nullable,
+			IsPrimaryKey: c.IsPrimaryKey,
+			Comment:      c.Comment,
 		}
-
-		if defaultValue.Valid {
-			col.DefaultValue = defaultValue.String
+		if c.Default != nil {
+			col.DefaultValue = *c.Default
 		}
 		columns = append(columns, col)
 	}
@@ -301,34 +374,11 @@ func (a *App) GetColumns(connID string, database string, schema string, table st
 }
 
 // IndexInfo describes an index or a unique/primary key constraint on a table.
-type IndexInfo struct {
-	Name    string   `json:"name"`
-	Kind    string   `json:"kind"`
-	Unique  bool     `json:"unique"`
-	Primary bool     `json:"primary"`
-	Columns []string `json:"columns"`
-}
-
-// ForeignKeyInfo describes one constraint pointing at another table; composite
-// keys keep their column pairs in catalog order.
-type ForeignKeyInfo struct {
-	Name       string   `json:"name"`
-	Columns    []string `json:"columns"`
-	RefSchema  string   `json:"refSchema"`
-	RefTable   string   `json:"refTable"`
-	RefColumns []string `json:"refColumns"`
-	OnDelete   string   `json:"onDelete"`
-	OnUpdate   string   `json:"onUpdate"`
-}
-
-// TableStructure backs the object tab's structure page. CreateTable is rendered
-// from the same rows the UI shows, so what the user reads is what they copy.
-type TableStructure struct {
-	Columns     []ColumnInfo     `json:"columns"`
-	Indexes     []IndexInfo      `json:"indexes"`
-	ForeignKeys []ForeignKeyInfo `json:"foreignKeys"`
-	CreateTable string           `json:"createTable"`
-}
+type (
+	IndexInfo      = catalogmodel.IndexInfo
+	ForeignKeyInfo = catalogmodel.ForeignKeyInfo
+	TableStructure = catalogmodel.TableStructure
+)
 
 func resolveSchema(conn *Connection, database, schema string) string {
 	switch conn.Type {
@@ -342,246 +392,50 @@ func resolveSchema(conn *Connection, database, schema string) string {
 	return schema
 }
 
-// indexRow is the flat, one-row-per-column shape the index catalogs return;
-// the FK catalogs answer in the shared tableprosql.FKRow, and the aggregated
-// lists are what the UI and the DDL want.
-type indexRow struct {
-	name    string
-	kind    string
-	column  string
-	unique  bool
-	primary bool
-}
-
-func aggregateIndexes(rows []indexRow) []IndexInfo {
-	indexes := []IndexInfo{}
-	byName := map[string]int{}
-	for _, row := range rows {
-		i, ok := byName[row.name]
-		if !ok {
-			byName[row.name] = len(indexes)
-			indexes = append(indexes, IndexInfo{
-				Name:    row.name,
-				Kind:    row.kind,
-				Unique:  row.unique,
-				Primary: row.primary,
-			})
-			i = len(indexes) - 1
-		}
-		indexes[i].Columns = append(indexes[i].Columns, row.column)
-	}
-	return indexes
-}
-
-func aggregateForeignKeys(rows []tableprosql.FKRow) []ForeignKeyInfo {
-	foreignKeys := []ForeignKeyInfo{}
-	byName := map[string]int{}
-	for _, row := range rows {
-		i, ok := byName[row.Name]
-		if !ok {
-			byName[row.Name] = len(foreignKeys)
-			foreignKeys = append(foreignKeys, ForeignKeyInfo{
-				Name:      row.Name,
-				RefSchema: row.RefSchema,
-				RefTable:  row.RefTable,
-				OnDelete:  row.OnDelete,
-				OnUpdate:  row.OnUpdate,
-			})
-			i = len(foreignKeys) - 1
-		}
-		foreignKeys[i].Columns = append(foreignKeys[i].Columns, row.Column)
-		foreignKeys[i].RefColumns = append(foreignKeys[i].RefColumns, row.RefColumn)
-	}
-	for i := range foreignKeys {
-		foreignKeys[i].OnDelete = tableprosql.ReferenceAction(foreignKeys[i].OnDelete)
-		foreignKeys[i].OnUpdate = tableprosql.ReferenceAction(foreignKeys[i].OnUpdate)
-	}
-	return foreignKeys
-}
-
 func (a *App) tableIndexes(conn *Connection, database, schema, table string) ([]IndexInfo, error) {
-	db := conn.DB
-	query, args, err := tableprosql.IndexesQuery(conn.Type, database, schema, table)
+	drv, err := a.sqlDriver(conn, database)
 	if err != nil {
 		return nil, err
 	}
-	if query == "" {
-		return a.sqliteIndexes(db, table)
-	}
-	if conn.Type == "postgresql" {
-		if db, err = a.poolFor(conn, database); err != nil {
-			return nil, err
-		}
-	}
-
-	rows, err := db.Query(query, args...)
+	found, err := drv.ListIndexes(context.Background(), schema, table)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var flat []indexRow
-	for rows.Next() {
-		var row indexRow
-		var unique, primary int
-		// Five destinations, in the order tableprosql.IndexesQuery promises:
-		// name, kind, is-unique, is-primary, column. The statement derives both
-		// flags, so nothing here re-reads the engine's own naming to guess one.
-		if err := rows.Scan(&row.name, &row.kind, &unique, &primary, &row.column); err != nil {
-			return nil, err
-		}
-		row.unique, row.primary = unique == 1, primary == 1
-		flat = append(flat, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return aggregateIndexes(flat), nil
-}
-
-// sqliteIndexes walks index_list/index_info because pragmas cannot be joined.
-func (a *App) sqliteIndexes(db *sql.DB, table string) ([]IndexInfo, error) {
-	name, err := quoteIdent("sqlite", table)
-	if err != nil {
-		return nil, err
-	}
-
-	rows, err := db.Query(fmt.Sprintf("PRAGMA index_list(%s)", name))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	type entry struct {
-		name   string
-		origin string
-		unique bool
-	}
-	var entries []entry
-	for rows.Next() {
-		var seq int
-		var e entry
-		var unique int
-		var partial string
-		if err := rows.Scan(&seq, &e.name, &unique, &e.origin, &partial); err != nil {
-			return nil, err
-		}
-		e.unique = unique == 1
-		entries = append(entries, e)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	indexes := []IndexInfo{}
-	for _, e := range entries {
-		// Implicit indexes SQLite builds for UNIQUE/PRIMARY KEY constraints are
-		// already covered by the constraint itself.
-		if strings.HasPrefix(e.name, "sqlite_autoindex") {
-			continue
-		}
-		columns, err := sqliteIndexColumns(db, e.name)
-		if err != nil {
-			return nil, err
-		}
+	indexes := make([]IndexInfo, 0, len(found))
+	for _, i := range found {
 		indexes = append(indexes, IndexInfo{
-			Name:    e.name,
-			Kind:    e.origin,
-			Unique:  e.unique,
-			Primary: e.origin == "pk",
-			Columns: columns,
+			Name:    i.Name,
+			Kind:    i.Kind,
+			Unique:  i.Unique,
+			Primary: i.Primary,
+			Columns: i.Columns,
 		})
 	}
 	return indexes, nil
 }
 
-func sqliteIndexColumns(db *sql.DB, index string) ([]string, error) {
-	name, err := quoteIdent("sqlite", index)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.Query(fmt.Sprintf("PRAGMA index_info(%s)", name))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	columns := []string{}
-	for rows.Next() {
-		var seqno, cid int
-		var column string
-		if err := rows.Scan(&seqno, &cid, &column); err != nil {
-			return nil, err
-		}
-		columns = append(columns, column)
-	}
-	return columns, rows.Err()
-}
-
 func (a *App) tableForeignKeys(conn *Connection, database, schema, table string) ([]ForeignKeyInfo, error) {
-	db := conn.DB
-	query, args, err := tableprosql.ForeignKeysQuery(conn.Type, database, schema, table)
+	drv, err := a.sqlDriver(conn, database)
 	if err != nil {
 		return nil, err
 	}
-	if query == "" {
-		return a.sqliteForeignKeys(db, table)
-	}
-	if conn.Type == "postgresql" {
-		if db, err = a.poolFor(conn, database); err != nil {
-			return nil, err
-		}
-	}
-
-	rows, err := db.Query(query, args...)
+	found, err := drv.ListForeignKeys(context.Background(), schema, table)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var flat []tableprosql.FKRow
-	for rows.Next() {
-		var row tableprosql.FKRow
-		if err := rows.Scan(&row.Name, &row.Column, &row.RefSchema, &row.RefTable, &row.RefColumn,
-			&row.OnDelete, &row.OnUpdate); err != nil {
-			return nil, err
-		}
-		flat = append(flat, row)
+	foreignKeys := make([]ForeignKeyInfo, 0, len(found))
+	for _, fk := range found {
+		foreignKeys = append(foreignKeys, ForeignKeyInfo{
+			Name:       fk.Name,
+			Columns:    fk.Columns,
+			RefSchema:  fk.RefSchema,
+			RefTable:   fk.RefTable,
+			RefColumns: fk.RefColumns,
+			OnDelete:   fk.OnDelete,
+			OnUpdate:   fk.OnUpdate,
+		})
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return aggregateForeignKeys(flat), nil
-}
-
-func (a *App) sqliteForeignKeys(db *sql.DB, table string) ([]ForeignKeyInfo, error) {
-	name, err := quoteIdent("sqlite", table)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := db.Query(fmt.Sprintf("PRAGMA foreign_key_list(%s)", name))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var flat []tableprosql.FKRow
-	for rows.Next() {
-		var id, seq int
-		var row tableprosql.FKRow
-		var onUpdate, onDelete, match string
-		if err := rows.Scan(&id, &seq, &row.RefTable, &row.Column, &row.RefColumn,
-			&onUpdate, &onDelete, &match); err != nil {
-			return nil, err
-		}
-		row.Name = fmt.Sprintf("fk_%d", id)
-		row.OnUpdate, row.OnDelete = onUpdate, onDelete
-		flat = append(flat, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return aggregateForeignKeys(flat), nil
+	return foreignKeys, nil
 }
 
 // oraLiteral renders a string as an Oracle single-quoted literal. It delegates
@@ -657,6 +511,12 @@ func fullColumnTypes(conn *Connection, database, schema, table string) map[strin
 			return nil
 		}
 		types[name] = strings.TrimSpace(def)
+	}
+	if err := rows.Err(); err != nil {
+		// The caller treats a nil map as "no full types available"; returning
+		// the map collected so far keeps the structure page usable while the
+		// truncated read is still visible in the log.
+		log.Printf("fullColumnTypes %s: %v", table, err)
 	}
 	return types
 }

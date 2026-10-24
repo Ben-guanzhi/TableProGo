@@ -1,12 +1,11 @@
 package main
 
 import (
-	"github.com/Ben-guanzhi/TableProGo/tableprosql"
+	tableprosql "github.com/dbcore/dbcore/sqltext"
 
 	"regexp"
 	"strings"
 
-	_ "github.com/denisenkom/go-mssqldb"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"

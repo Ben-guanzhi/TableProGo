@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // movesDataOnly 的判据：只有纯 DML 才不算"可能改目录"。
 func TestMovesDataOnly(t *testing.T) {
@@ -42,7 +45,7 @@ func TestCatalogVersionOnlyBumpsForCatalogChangingStatements(t *testing.T) {
 	a := searchApp(conn)
 
 	base := a.catalogVersion.Load()
-	if r := a.runQuery("conn_0", "CREATE TABLE t(v integer)", ""); r.Error != "" {
+	if r := a.runQuery(context.Background(), "", "conn_0", "CREATE TABLE t(v integer)", ""); r.Error != "" {
 		t.Fatalf("create: %v", r.Error)
 	}
 	if got := a.catalogVersion.Load(); got != base+1 {
@@ -55,7 +58,7 @@ func TestCatalogVersionOnlyBumpsForCatalogChangingStatements(t *testing.T) {
 		"UPDATE t SET v = 2",
 		"DELETE FROM t",
 	} {
-		if r := a.runQuery("conn_0", q, ""); r.Error != "" {
+		if r := a.runQuery(context.Background(), "", "conn_0", q, ""); r.Error != "" {
 			t.Fatalf("%q: %v", q, r.Error)
 		}
 	}
@@ -63,7 +66,7 @@ func TestCatalogVersionOnlyBumpsForCatalogChangingStatements(t *testing.T) {
 		t.Fatalf("DML bumped version to %d, want unchanged %d", got, base)
 	}
 
-	if r := a.runQuery("conn_0", "DROP TABLE t", ""); r.Error != "" {
+	if r := a.runQuery(context.Background(), "", "conn_0", "DROP TABLE t", ""); r.Error != "" {
 		t.Fatalf("drop: %v", r.Error)
 	}
 	if got := a.catalogVersion.Load(); got != base+1 {

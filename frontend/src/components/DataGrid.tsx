@@ -1,18 +1,6 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import {
-  FiArrowDown,
-  FiArrowUp,
-  FiChevronDown,
-  FiCopy,
-  FiDownload,
-  FiFilter,
-  FiPlus,
-  FiSearch,
-  FiTrash2,
-  FiX,
-  FiXCircle,
-} from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiFilter, FiX } from 'react-icons/fi';
 import {
   ApplyChanges,
   BuildChanges,
@@ -58,6 +46,7 @@ import ErrorBanner from './ErrorBanner';
 import FKPickerPanel from './FKPickerPanel';
 import FilterMenu, { MenuItem } from './FilterMenu';
 import ReviewDialog from './ReviewDialog';
+import DataGridToolbar from './DataGridToolbar';
 
 interface DataGridProps {
   result: QueryResult;
@@ -67,6 +56,8 @@ interface DataGridProps {
   onDismissError?: () => void;
   // File name stem used by the CSV/JSON export.
   exportName?: string;
+  // Optional import trigger shown beside the export menu (table tabs only).
+  onImport?: () => void;
   // The table these rows came from. Without it the grid stays read-only,
   // because there is no row to write back to.
   editSource?: TableRef | null;
@@ -75,6 +66,10 @@ interface DataGridProps {
   // How many edits are waiting for the database. The owner needs it to warn
   // before a tab holding them goes away.
   onPendingChange?: (total: number) => void;
+  // Rows that live outside a SQL table (a Redis value) still want a per-cell
+  // action. When set, double-clicking a cell reports the row's original index
+  // and the column name instead of opening the SQL editor.
+  onCellDoubleClick?: (rowIndex: number, column: string) => void;
 }
 
 // The open candidate list: which cell it belongs to and where to draw it. The
@@ -110,9 +105,11 @@ const DataGrid: React.FC<DataGridProps> = ({
   showComments,
   onDismissError,
   exportName,
+  onImport,
   editSource,
   onApplied,
   onPendingChange,
+  onCellDoubleClick,
 }) => {
   // Three clusters, one reducer each, so the transition table of every cluster is
   // readable on its own. The clusters barely touch: only the FK picker reaches
@@ -628,138 +625,34 @@ const DataGrid: React.FC<DataGridProps> = ({
 
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden bg-canvas">
-      <div className="flex items-center gap-2 px-2 py-1 bg-panel border-b border-line shrink-0">
-        <div className="relative">
-          <FiSearch
-            size={11}
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted pointer-events-none"
-          />
-          <input
-            value={locate}
-            onChange={e => dispatchColumns({ type: 'locateType', value: e.target.value })}
-            onKeyDown={e => {
-              if (e.key === 'Escape') dispatchColumns({ type: 'locateClear' });
-              if (e.key === 'Enter' && matches.length) {
-                dispatchColumns({ type: 'locateNext', total: matches.length });
-              }
-            }}
-            placeholder="定位列"
-            aria-label="定位到指定列"
-            className="w-44 bg-canvas border border-line rounded pl-6 pr-6 py-0.5 text-2xs text-ink placeholder-muted focus:outline-none focus:border-accent"
-          />
-          {locate && (
-            <button
-              className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 text-muted hover:text-ink"
-              onClick={() => dispatchColumns({ type: 'locateClear' })}
-              title="清空"
-              aria-label="清空定位列的搜索词"
-            >
-              <FiX size={11} />
-            </button>
-          )}
-        </div>
-        {locate && (
-          <span className="text-2xs text-muted">
-            {matches.length ? `${Math.min(activeMatch + 1, matches.length)} / ${matches.length}` : '无匹配列'}
-          </span>
-        )}
-
-        {isFiltered && (
-          <button
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink"
-            onClick={clearViews}
-            title="清除排序与所有列筛选"
-          >
-            <FiXCircle size={11} />
-            {sort ? `${sort.column} ${sort.dir === 'asc' ? '升序' : '降序'}` : ''}
-            {sort && filterCount ? ' · ' : ''}
-            {filterCount ? `${filterCount} 个筛选` : ''}
-          </button>
-        )}
-
-        {editSource && (
-          <div className="flex items-center gap-1 pl-2 border-l border-line">
-            <button
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
-              onClick={appendRow}
-              title="新增一行：只有填过的列会写入，其余列交给数据库默认值"
-            >
-              <FiPlus size={11} />
-              新增行
-            </button>
-            <button
-              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
-              onClick={duplicateRow}
-              disabled={selected === null}
-              title="复制选中的行：值一起带过来，主键留空交给数据库"
-            >
-              <FiCopy size={11} />
-              复制行
-            </button>
-            <button
-              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs disabled:opacity-40 disabled:cursor-not-allowed ${
-                selected !== null && queue.deletes.includes(selected)
-                  ? 'text-warning hover:text-ink hover:bg-raised'
-                  : 'text-secondary hover:text-danger hover:bg-raised'
-              }`}
-              onClick={toggleSelectedDelete}
-              disabled={selected === null}
-              title={
-                selected !== null && queue.deletes.includes(selected)
-                  ? '撤销这条删除标记'
-                  : '标记删除选中的行，应用前可以撤销'
-              }
-            >
-              <FiTrash2 size={11} />
-              {selected !== null && queue.deletes.includes(selected) ? '撤销删除' : '删除行'}
-            </button>
-          </div>
-        )}
-
-        <div className="ml-auto relative">
-          <button
-            className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
-            aria-haspopup="true"
-            aria-expanded={!!exportMenu}
-            title="导出当前视图：CSV / JSON / Markdown / SQL"
-            onPointerDown={e => e.stopPropagation()}
-            onClick={e => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              if (exportMenu) dispatchColumns({ type: 'exportMenuClose' });
-              else dispatchColumns({ type: 'exportMenuOpen', left: rect.left, top: rect.bottom + 2 });
-            }}
-          >
-            <FiDownload size={11} />
-            导出
-            <FiChevronDown size={10} aria-hidden />
-          </button>
-          {exportMenu && (
-            <div
-              className="fixed z-50 w-[190px] bg-panel border border-line-strong rounded-md shadow-xl py-1 text-[0.75rem]"
-              aria-label="导出格式"
-              style={{
-                left: Math.max(4, Math.min(exportMenu.left, window.innerWidth - 198)),
-                top: Math.max(4, Math.min(exportMenu.top, window.innerHeight - 240)),
-              }}
-              onPointerDown={e => e.stopPropagation()}
-            >
-              <MenuItem label="CSV" onClick={() => exportAs('csv')} />
-              <MenuItem label="JSON" onClick={() => exportAs('json')} />
-              <MenuItem label="Markdown 表格" onClick={() => exportAs('markdown')} />
-              <MenuItem label="Excel（XLSX）" onClick={() => exportAs('xlsx')} />
-              <div className="my-1 border-t border-line-soft" />
-              <MenuItem label="SQL（INSERT 文件）" disabled={!editSource} onClick={() => exportAs('sql')} />
-              <MenuItem label="复制为 INSERT" disabled={!editSource} onClick={copyInserts} />
-              {!editSource && (
-                <div className="px-2.5 pt-1 text-2xs text-muted leading-snug">
-                  当前结果没有来源表（视图或自定义查询），生成不了 INSERT
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-
+      <DataGridToolbar
+        locate={locate}
+        onLocateChange={value => dispatchColumns({ type: 'locateType', value })}
+        onLocateClear={() => dispatchColumns({ type: 'locateClear' })}
+        onLocateNext={total => dispatchColumns({ type: 'locateNext', total })}
+        matchCount={matches.length}
+        activeMatch={activeMatch}
+        sortLabel={sort ? `${sort.column} ${sort.dir === 'asc' ? '升序' : '降序'}` : ''}
+        filterCount={filterCount}
+        isFiltered={isFiltered}
+        onClearViews={clearViews}
+        editable={!!editSource}
+        onAppendRow={appendRow}
+        onDuplicateRow={duplicateRow}
+        onToggleDelete={toggleSelectedDelete}
+        selected={selected !== null}
+        deleteQueued={selected !== null && queue.deletes.includes(selected)}
+        onImport={onImport}
+        exportMenu={exportMenu}
+        onExportToggle={rect => {
+          if (exportMenu) dispatchColumns({ type: 'exportMenuClose' });
+          else dispatchColumns({ type: 'exportMenuOpen', left: rect.left, top: rect.bottom + 2 });
+        }}
+        onExportClose={() => dispatchColumns({ type: 'exportMenuClose' })}
+        canExportSQL={!!editSource}
+        onExport={exportAs}
+        onCopyInserts={copyInserts}
+      />
       <div ref={scrollerRef} className="flex-1 min-h-0 overflow-auto">
         <table className="border-separate border-spacing-0 text-[0.8125rem]">
           <thead>
@@ -930,6 +823,10 @@ const DataGrid: React.FC<DataGridProps> = ({
                           if (fresh && editable) startEdit(target, col.name, startValue);
                         }}
                         onDoubleClick={() => {
+                          if (!fresh && onCellDoubleClick) {
+                            onCellDoubleClick(index, col.name);
+                            return;
+                          }
                           if (!fresh && editable) startEdit(target, col.name, pending ?? startValue);
                         }}
                         title={

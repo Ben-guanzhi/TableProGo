@@ -7,9 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"tablepro-go/internal/txn"
 	"sync/atomic"
 
-	_ "github.com/denisenkom/go-mssqldb"
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
@@ -38,6 +39,19 @@ type App struct {
 	// it; saveToFile folds in only what other clients added since then.
 	connObserved []ConnectionConfig
 
+	// runs holds the cancel funcs of statements still executing, keyed by
+	// connection. A connection can have more than one in flight (a tab switch
+	// starts the next statement before the previous returns), so each keeps a
+	// set rather than a single handle. CancelQuery drains it.
+	runsMu sync.Mutex
+	runs   map[string]map[int64]context.CancelFunc
+	runSeq atomic.Int64
+
+	// txSessions is the interactive transaction each tab holds (txn.go). Keyed by
+	// tab id so two tabs on one connection keep separate transactions.
+	txSessionsMu sync.Mutex
+	txSessions   map[string]*txn.Session
+
 	// catalogVersion bumps on every statement that could have changed a
 	// catalog. The quick-open snapshot (search.go) is rebuilt only when this
 	// moves; between bumps, a keystroke is answered from memory.
@@ -57,6 +71,9 @@ type AppSettings struct {
 	// Theme is "system", "light" or "dark"; the front end resolves "system"
 	// against the OS setting, so the backend only stores the choice.
 	Theme string `json:"theme"`
+	// SafeMode gates writing statements in the query editor (see safemode.go):
+	// "off", "confirmWrites", "confirmNoWhere" or "blockNoWhere".
+	SafeMode string `json:"safeMode"`
 }
 
 // defaultResultLimit matches what GUI clients hand out before the user says
@@ -179,6 +196,7 @@ func (a *App) SaveSettings(settings AppSettings) error {
 	defer a.settingsMu.Unlock()
 
 	settings.Theme = normalizeTheme(settings.Theme)
+	settings.SafeMode = normalizeSafeMode(settings.SafeMode)
 
 	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
@@ -205,6 +223,9 @@ func (a *App) loadFromFile() {
 		if conns[i].Password != "" && !isSealedValue(conns[i].Password) {
 			needsSealing = true
 		}
+		if conns[i].SSH.Password != "" && !isSealedValue(conns[i].SSH.Password) {
+			needsSealing = true
+		}
 		password, err := unprotectSecret(conns[i].Password)
 		if err != nil {
 			// A password from another Windows account or machine cannot be
@@ -214,6 +235,14 @@ func (a *App) loadFromFile() {
 			password = ""
 		}
 		conns[i].Password = password
+		// The SSH password is a credential too; it is sealed with the same
+		// DPAPI/keyring layer so it never lands in the JSON in clear text.
+		sshPassword, err := unprotectSecret(conns[i].SSH.Password)
+		if err != nil {
+			log.Printf("Connection %s (ssh): %v", conns[i].ID, err)
+			sshPassword = ""
+		}
+		conns[i].SSH.Password = sshPassword
 	}
 	a.savedConnections = conns
 	a.connObserved = append([]ConnectionConfig(nil), conns...)
@@ -237,6 +266,12 @@ func (a *App) saveToFile() {
 			return
 		}
 		sealed[i].Password = password
+		sshPassword, err := protectSecret(sealed[i].SSH.Password)
+		if err != nil {
+			log.Printf("Failed to encrypt ssh password for %s: %v", sealed[i].ID, err)
+			return
+		}
+		sealed[i].SSH.Password = sshPassword
 	}
 
 	// The Fyne client shares this file. Fold in the connections it saved
@@ -273,6 +308,12 @@ func (a *App) saveToFile() {
 			} else {
 				log.Printf("Connection %s: %v", c.ID, err)
 				c.Password = ""
+			}
+			if pw, err := unprotectSecret(c.SSH.Password); err == nil {
+				c.SSH.Password = pw
+			} else {
+				log.Printf("Connection %s (ssh): %v", c.ID, err)
+				c.SSH.Password = ""
 			}
 			a.savedConnections = append(a.savedConnections, c)
 		}
@@ -311,6 +352,7 @@ func (a *App) Shutdown(ctx context.Context) {
 		if conn.DB != nil {
 			conn.DB.Close()
 		}
+		conn.closeKV()
 		conn.closePools()
 		delete(a.connections, id)
 	}

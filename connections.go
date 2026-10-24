@@ -1,16 +1,25 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
-	"net/url"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/denisenkom/go-mssqldb"
+	"github.com/dbcore/dbcore"
+
+	dbcoremssql "github.com/dbcore/dbcore/mssql"
+	dbcoremysql "github.com/dbcore/dbcore/mysql"
+	dbcoreoracle "github.com/dbcore/dbcore/oracle"
+	dbcorepg "github.com/dbcore/dbcore/postgres"
+	dbcoresqlite "github.com/dbcore/dbcore/sqlite"
+	"tablepro-go/internal/catalogsnap"
+	"tablepro-go/internal/pool"
+
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
@@ -28,21 +37,34 @@ type Connection struct {
 	Database string            `json:"database"`
 	SSLMode  string            `json:"sslMode"`
 	Options  map[string]string `json:"options"`
+	SSH      SSHConfig         `json:"ssh"`
 	DB       *sql.DB           `json:"-"`
-	Config   ConnectionConfig  `json:"-"`
+	// KV is set instead of DB for key/value engines. Selecting a logical
+	// database is connection state in Redis, so kvMu keeps one connection's
+	// reads on the database they asked for even when two panels run at once.
+	KV     dbcore.KVDriver  `json:"-"`
+	Config ConnectionConfig `json:"-"`
 
-	poolsMu   sync.Mutex
-	pools     map[string]*sql.DB
-	poolOrder []string // per-database pool LRU, least-recently-used first
+	// tunnel is non-nil when the connection is routed through an SSH jump host;
+	// dialHost/dialPort then point at its loopback listener.
+	tunnel    *sshTunnel `json:"-"`
+	dialHost  string     `json:"-"`
+	dialPort  int        `json:"-"`
+	kvMu      sync.Mutex
+	kvDefault int
+	kvDB      int
+	kvDBSet   bool
 
-	// Quick-open snapshot: this connection's whole object list, rebuilt only
-	// when App.catalogVersion moves past the generation it was built at.
-	// The lock lets a keystroke wait on the one builder instead of starting a
-	// second catalog walk. catalogBuilds counts rebuilds and is pinned by
-	// tests so the "answered from memory" claim stays true.
-	catalogMu     sync.Mutex
-	catalog       catalogSnapshot
-	catalogBuilds int
+	// pools caches one *sql.DB per database (internal/pool); poolsOnce builds it
+	// on first use so a connection that never browses another database pays
+	// nothing.
+	poolsOnce sync.Once
+	pools     *pool.Set
+
+	// catalog caches this connection's whole object list for quick-open,
+	// rebuilt only when App.catalogVersion moves past its generation
+	// (internal/catalogsnap).
+	catalog catalogsnap.Cache
 }
 
 type ConnectionConfig struct {
@@ -56,6 +78,10 @@ type ConnectionConfig struct {
 	Database string            `json:"database"`
 	SSLMode  string            `json:"sslMode"`
 	Options  map[string]string `json:"options"`
+	// SSH optionally routes the connection through a jump host. The database
+	// host/port above stay the ones the user typed; the tunnel rewrites only the
+	// dialed endpoint (see dialTarget).
+	SSH SSHConfig `json:"ssh"`
 
 	DatabaseFilter DatabaseFilter `json:"databaseFilter"`
 }
@@ -114,9 +140,40 @@ func matchMask(pattern, name string) bool {
 }
 
 func (a *App) TestConnection(config ConnectionConfig) error {
-	log.Printf("Testing connection: type=%s host=%s:%d db=%s user=%s encrypt=%s",
-		config.Type, config.Host, config.Port, config.Database, config.Username, config.SSLMode)
-	db, err := createConnection(config)
+	log.Printf("Testing connection: type=%s host=%s:%d db=%s user=%s encrypt=%s ssh=%v",
+		config.Type, config.Host, config.Port, config.Database, config.Username, config.SSLMode, config.SSH.Enabled)
+
+	host, port := config.Host, config.Port
+	if config.SSH.Enabled {
+		if config.Type == "sqlite" {
+			return fmt.Errorf("ssh: SQLite is a local file and cannot use a tunnel")
+		}
+		tun, localHost, localPort, err := openSSHTunnel(config.SSH, config.Host, config.Port)
+		if err != nil {
+			return fmt.Errorf("ssh tunnel failed: %w", err)
+		}
+		defer tun.Close()
+		host, port = localHost, localPort
+	}
+
+	if config.Type == "redis" {
+		kvConfig := config
+		kvConfig.Host, kvConfig.Port = host, port
+		drv, err := openKV(kvConfig)
+		if err != nil {
+			log.Printf("openKV error: %v", err)
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		defer drv.Close()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := drv.Ping(ctx); err != nil {
+			log.Printf("redis ping error: %v", err)
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		return nil
+	}
+	db, err := createConnectionAt(config, host, port)
 	if err != nil {
 		log.Printf("createConnection error: %v", err)
 		return fmt.Errorf("connection failed: %w", err)
@@ -136,6 +193,9 @@ func (a *App) GetConnections() []ConnectionConfig {
 	for i, c := range a.savedConnections {
 		clean := c
 		clean.Password = ""
+		// The SSH password is a credential too: never send it back to the UI.
+		// UpdateConnection restores it when the field comes back blank.
+		clean.SSH.Password = ""
 		result[i] = clean
 	}
 	return result
@@ -164,6 +224,9 @@ func (a *App) UpdateConnection(config ConnectionConfig) error {
 			if config.Password == "" {
 				config.Password = c.Password
 			}
+			if config.SSH.Password == "" {
+				config.SSH.Password = c.SSH.Password
+			}
 			a.savedConnections[i] = config
 			a.invalidateConnFilterCacheLocked()
 			a.saveToFile()
@@ -179,8 +242,14 @@ func (a *App) DeleteConnection(id string) error {
 
 	for i, c := range a.savedConnections {
 		if c.ID == id {
-			if conn, ok := a.connections[id]; ok && conn.DB != nil {
-				conn.DB.Close()
+			if conn, ok := a.connections[id]; ok {
+				if conn.DB != nil {
+					conn.DB.Close()
+				}
+				conn.closeKV()
+				conn.closePools()
+				closeTxns(id)
+				conn.tunnel.Close()
 				delete(a.connections, id)
 			}
 			a.savedConnections = append(a.savedConnections[:i], a.savedConnections[i+1:]...)
@@ -189,6 +258,15 @@ func (a *App) DeleteConnection(id string) error {
 		}
 	}
 	return fmt.Errorf("connection not found: %s", id)
+}
+
+// dialTarget returns the endpoint the drivers should dial: the tunnel's loopback
+// listener when SSH is active, otherwise the configured host/port.
+func (c *Connection) dialTarget() (string, int) {
+	if c.tunnel != nil && c.dialHost != "" {
+		return c.dialHost, c.dialPort
+	}
+	return c.Host, c.Port
 }
 
 func (a *App) Connect(id string) error {
@@ -210,15 +288,12 @@ func (a *App) Connect(id string) error {
 		if existing.DB != nil {
 			existing.DB.Close()
 		}
+		existing.closeKV()
 		existing.closePools()
+		existing.tunnel.Close()
 	}
 
-	db, err := createConnection(*config)
-	if err != nil {
-		return fmt.Errorf("connection failed: %w", err)
-	}
-
-	a.connections[id] = &Connection{
+	conn := &Connection{
 		ID:       id,
 		Name:     config.Name,
 		Type:     config.Type,
@@ -229,9 +304,42 @@ func (a *App) Connect(id string) error {
 		Database: config.Database,
 		SSLMode:  config.SSLMode,
 		Options:  config.Options,
-		DB:       db,
+		SSH:      config.SSH,
 		Config:   *config,
 	}
+	if config.SSH.Enabled {
+		if config.Type == "sqlite" {
+			return fmt.Errorf("ssh: SQLite is a local file and cannot use a tunnel")
+		}
+		tun, host, port, err := openSSHTunnel(config.SSH, config.Host, config.Port)
+		if err != nil {
+			return fmt.Errorf("ssh tunnel failed: %w", err)
+		}
+		conn.tunnel, conn.dialHost, conn.dialPort = tun, host, port
+	}
+	if config.Type == "redis" {
+		kvConfig := *config
+		kvConfig.Host, kvConfig.Port = conn.dialTarget()
+		drv, err := openKV(kvConfig)
+		if err != nil {
+			conn.tunnel.Close()
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		conn.KV = drv
+		conn.kvDefault, _ = redisDBIndex(config.Database)
+		conn.kvDB = conn.kvDefault
+		conn.kvDBSet = true
+	} else {
+		host, port := conn.dialTarget()
+		db, err := createConnectionAt(*config, host, port)
+		if err != nil {
+			conn.tunnel.Close()
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		conn.DB = db
+	}
+
+	a.connections[id] = conn
 	a.currentConnID = id
 
 	return nil
@@ -246,7 +354,12 @@ func (a *App) Disconnect(connID string) error {
 			conn.DB.Close()
 			conn.DB = nil
 		}
+		conn.closeKV()
 		conn.closePools()
+		// A manager wraps a driver built from the DB just closed; leaving it
+		// registered would make the next statement fail with "database is closed".
+		closeTxns(connID)
+		conn.tunnel.Close()
 	}
 	if a.currentConnID == connID {
 		a.currentConnID = ""
@@ -265,6 +378,30 @@ func (a *App) connection(connID string) (*Connection, error) {
 	return conn, nil
 }
 
+// liveConnection accepts either engine: catalog entries that exist for both
+// SQL and key/value connections branch on Type after the lookup.
+func (a *App) liveConnection(connID string) (*Connection, error) {
+	a.connectionsMu.RLock()
+	defer a.connectionsMu.RUnlock()
+
+	conn, ok := a.connections[connID]
+	if !ok || (conn.DB == nil && conn.KV == nil) {
+		return nil, fmt.Errorf("not connected")
+	}
+	return conn, nil
+}
+
+func (a *App) kvConnection(connID string) (*Connection, error) {
+	a.connectionsMu.RLock()
+	defer a.connectionsMu.RUnlock()
+
+	conn, ok := a.connections[connID]
+	if !ok || conn.KV == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+	return conn, nil
+}
+
 // Connection-pool bounds. Without these database/sql defaults to unlimited
 // open connections, so a fan-out (per-database metadata browse, concurrent
 // grid requests) could open one server-side connection per goroutine.
@@ -276,40 +413,68 @@ const (
 	maxPoolsPerConnection = 32
 )
 
+// connSpec maps a saved connection onto the shared kernel's ConnSpec so the DSN
+// text for every engine comes from dbcore instead of five hand-written format
+// strings. That also fixes SSLMode spellings: the UI stores "true"/"false" while
+// lib/pq only accepts disable/require/verify-*, and dbcore's mapping translates.
+func connSpec(config ConnectionConfig) dbcore.ConnSpec {
+	return connSpecAt(config, config.Host, config.Port)
+}
+
+// connSpecAt is connSpec with the dialed endpoint overridden (SSH tunnel).
+func connSpecAt(config ConnectionConfig, host string, port int) dbcore.ConnSpec {
+	kind := dbcore.DatabaseKind(config.Type)
+	switch config.Type {
+	case "postgresql":
+		kind = dbcore.KindPostgres
+	case "sqlserver":
+		kind = dbcore.KindMSSQL
+	case "sqlite":
+		kind = dbcore.KindSQLite
+	case "mysql":
+		kind = dbcore.KindMySQL
+	case "oracle":
+		kind = dbcore.KindOracle
+	}
+	return dbcore.ConnSpec{
+		Kind:     kind,
+		Host:     host,
+		Port:     port,
+		User:     config.Username,
+		Password: config.Password,
+		Database: config.Database, // MySQL database / PG db / MSSQL db / Oracle service
+		File:     config.Database, // SQLite: Database holds the file path
+		SSLMode:  config.SSLMode,
+	}
+}
+
 func createConnection(config ConnectionConfig) (*sql.DB, error) {
+	return createConnectionAt(config, config.Host, config.Port)
+}
+
+// createConnectionAt opens the engine at an explicit host/port. The SSH tunnel
+// passes its loopback endpoint here, so the DSN builders never need to know a
+// tunnel exists.
+func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB, error) {
+	spec := connSpecAt(config, host, port)
 	var dsn string
 	var driver string
 	switch config.Type {
 	case "mysql":
 		driver = "mysql"
-		dsn = fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
-			config.Username, config.Password, config.Host, config.Port, config.Database)
-		if config.SSLMode == "true" {
-			dsn += "?tls=true"
-		}
+		dsn = dbcoremysql.DSN(spec)
 	case "postgresql":
 		driver = "postgres"
-		dsn = fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-			config.Host, config.Port, config.Username, config.Password, config.Database, config.SSLMode)
+		dsn = dbcorepg.DSN(spec)
 	case "sqlite":
 		driver = "sqlite3"
-		dsn = config.Database
+		dsn = dbcoresqlite.DSN(spec)
 	case "sqlserver":
 		driver = "sqlserver"
-		encrypt := config.SSLMode
-		if encrypt == "false" || encrypt == "true" {
-			if encrypt == "false" {
-				encrypt = "disable"
-			} else {
-				encrypt = "require"
-			}
-		}
-		dsn = fmt.Sprintf("sqlserver://%s:%s@%s:%d?database=%s&encrypt=%s&TrustServerCertificate=true",
-			config.Username, config.Password, config.Host, config.Port, url.QueryEscape(config.Database), encrypt)
+		dsn = dbcoremssql.DSN(spec)
 	case "oracle":
 		driver = "oracle"
-		dsn = fmt.Sprintf("oracle://%s:%s@%s:%d/%s",
-			config.Username, config.Password, config.Host, config.Port, config.Database)
+		dsn = dbcoreoracle.DSN(spec)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", config.Type)
 	}

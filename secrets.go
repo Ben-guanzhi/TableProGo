@@ -140,10 +140,17 @@ func keyringRefID(v string) (string, bool) {
 	return "", false
 }
 
+// passwordsOf lists every credential a connection carries, so keyring GC also
+// sees SSH passwords (they are sealed with the same layer).
 func passwordsOf(conns []ConnectionConfig) []string {
-	out := make([]string, len(conns))
-	for i, c := range conns {
-		out[i] = c.Password
+	out := make([]string, 0, len(conns)*2)
+	for _, c := range conns {
+		if c.Password != "" {
+			out = append(out, c.Password)
+		}
+		if c.SSH.Password != "" {
+			out = append(out, c.SSH.Password)
+		}
 	}
 	return out
 }
