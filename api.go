@@ -435,6 +435,11 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/execute-confirmed", 400, func(a *App, body queryRequest) (any, error) {
 		return a.ExecuteQueryConfirmed(body.ConnID, body.Query, body.Database), nil
 	})
+	// The plan reader: the statement is never executed (see explain.go), so it
+	// has no Safe Mode gate and no confirmed variant.
+	post(a, mux, "/api/explain", 400, func(a *App, body queryRequest) (any, error) {
+		return a.ExplainQuery(body.ConnID, body.Query, body.Database), nil
+	})
 	// The AI assistant: a chat whose model reaches the database through the MCP
 	// tools (llm.go). The provider settings live in their own file.
 	// The assistant's write path: the model proposes, the user disposes. These
