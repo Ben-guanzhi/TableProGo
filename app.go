@@ -30,6 +30,9 @@ type App struct {
 	settingsMu       sync.RWMutex
 	history          []HistoryEntry
 	historyPath      string
+	favoritesPath    string
+	favoritesMu      sync.Mutex
+	favorites        []FavoriteEntry
 	historySeq       int64
 	historyMu        sync.Mutex
 	// histObserved is the history file as this process last read or wrote it;
@@ -168,14 +171,16 @@ func historyFilePath() string { return userDataFilePath("history.json") }
 
 func NewApp() *App {
 	a := &App{
-		connections:  make(map[string]*Connection),
-		filePath:     connectionsFilePath(),
-		settingsPath: settingsFilePath(),
-		historyPath:  historyFilePath(),
+		connections:   make(map[string]*Connection),
+		filePath:      connectionsFilePath(),
+		settingsPath:  settingsFilePath(),
+		historyPath:   historyFilePath(),
+		favoritesPath: favoritesFilePath(),
 	}
 	a.loadFromFile()
 	a.loadSettings()
 	a.loadHistory()
+	a.loadFavorites()
 	return a
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"tablepro-go/internal/llm"
+	"tablepro-go/internal/sqlformat"
 
 	"bytes"
 	"crypto/subtle"
@@ -420,6 +421,54 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"base64": workbook}, nil
 	})
+	mux.HandleFunc("/api/favorites", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			writeJSON(w, a.ListFavorites())
+		case http.MethodPost:
+			var body struct {
+				ConnID   string `json:"connId"`
+				Database string `json:"database"`
+				Name     string `json:"name"`
+				SQL      string `json:"sql"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeError(w, 400, err.Error())
+				return
+			}
+			entry, err := a.AddFavorite(body.ConnID, body.Database, body.Name, body.SQL)
+			if err != nil {
+				writeError(w, 400, err.Error())
+				return
+			}
+			writeJSON(w, entry)
+		default:
+			w.WriteHeader(405)
+		}
+	})
+	post(a, mux, "/api/favorites/delete", 400, func(a *App, body struct {
+		ID string `json:"id"`
+	}) (any, error) {
+		return nil, a.DeleteFavorite(body.ID)
+	})
+
+	mux.HandleFunc("/api/format-sql", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(405)
+			return
+		}
+		var body struct {
+			SQL string `json:"sql"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		// The formatter lives in an internal package, like the script splitter:
+		// one scanner, package-tested, no connection involved.
+		writeJSON(w, map[string]string{"sql": sqlformat.Format(body.SQL)})
+	})
+
 	mux.HandleFunc("/api/security-notice", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(405)

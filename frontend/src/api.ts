@@ -102,6 +102,39 @@ export async function GetColumns(connId: string, database: string, schema: strin
 
 // One Redis key read whole. The type and remaining lifetime sit beside the
 // rows so the panel can name what it is showing.
+export interface Favorite {
+  id: string;
+  connId: string;
+  database: string;
+  name: string;
+  sql: string;
+  createdAt: number;
+}
+
+export async function ListFavorites(): Promise<Favorite[]> {
+  return (await get('/api/favorites')) as Favorite[];
+}
+
+export async function AddFavorite(
+  connId: string,
+  database: string,
+  name: string,
+  sql: string,
+): Promise<Favorite> {
+  return post('/api/favorites', { connId, database, name, sql });
+}
+
+export async function DeleteFavorite(id: string): Promise<void> {
+  await post('/api/favorites/delete', { id });
+}
+
+// Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
+// in the Go formatter (internal/sqlformat), so every client shares one style.
+export async function FormatSQL(sql: string): Promise<string> {
+  const data = await post('/api/format-sql', { sql });
+  return data.sql ?? sql;
+}
+
 // One-shot security notice (e.g. the OS keyring fell back to plain text).
 // Empty string means nothing to tell the user.
 export async function SecurityNotice(): Promise<string> {

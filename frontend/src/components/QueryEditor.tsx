@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from 'react';
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
 import {
   EditorView,
@@ -13,6 +13,7 @@ import {
   rectangularSelection,
 } from '@codemirror/view';
 import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirror/commands';
+import { FiAlignLeft, FiStar, FiTrash2, FiX } from 'react-icons/fi';
 import {
   HighlightStyle,
   bracketMatching,
@@ -54,8 +55,12 @@ import {
   FiSettings,
   FiSquare,
 } from 'react-icons/fi';
-import { AppSettings } from '../api';
+import toast from 'react-hot-toast';
+import { AddFavorite, AppSettings, DeleteFavorite,
+  Favorite, FormatSQL, ListFavorites,
+} from '../api';
 import { ColumnInfo } from '../types';
+import { findNamedParams, substituteParams } from '../lib/namedParams';
 
 export interface QueryEditorHandle {
   insertAtCursor: (text: string) => void;
@@ -249,11 +254,78 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   const viewRef = useRef<EditorView | null>(null);
   const lastEmitted = useRef(query);
   const [showSettings, setShowSettings] = React.useState(false);
+  // Favorites: the curated counterpart of history. Loaded when the menu opens,
+  // so a favorite saved in another tab shows up without a refresh.
+  const [favorites, setFavorites] = useState<Favorite[]>([]);
+  const [showFavorites, setShowFavorites] = useState(false);
+
+  // Named parameters: a statement with `:name` markers asks for values before
+  // it runs. The substitution lands in the editor itself, so what runs is
+  // exactly what the user sees — the same contract a typed statement has.
+  const [paramDialog, setParamDialog] = useState<{ names: string[]; values: Record<string, string> } | null>(null);
+
+  const executeWithParams = () => {
+    const sql = viewRef.current?.state.doc.toString() ?? '';
+    const names = findNamedParams(sql);
+    if (names.length === 0) {
+      onExecute();
+      return;
+    }
+    setParamDialog({ names, values: {} });
+  };
+
+  const confirmParams = () => {
+    if (!paramDialog) return;
+    const view = viewRef.current;
+    if (!view) return;
+    const sql = view.state.doc.toString();
+    const filled = substituteParams(sql, paramDialog.values);
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: filled },
+      selection: { anchor: Math.min(view.state.selection.main.head, filled.length) },
+    });
+    setParamDialog(null);
+    onExecute();
+  };
+
+  const refreshFavorites = () => {
+    ListFavorites()
+      .then(list => setFavorites(list))
+      .catch(error => toast.error(`收藏加载失败：${(error as Error).message}`));
+  };
+
+  const saveFavorite = async () => {
+    const sql = viewRef.current?.state.doc.toString().trim() ?? '';
+    if (!sql) {
+      toast.error('编辑器为空，没有可收藏的语句');
+      return;
+    }
+    const name = window.prompt('收藏名称', sql.split('\n')[0].slice(0, 50));
+    if (!name) return;
+    try {
+      await AddFavorite('', '', name.trim(), sql);
+      toast.success('已收藏');
+      refreshFavorites();
+    } catch (error) {
+      toast.error(`收藏失败：${(error as Error).message}`);
+    }
+  };
+
+  const removeFavorite = async (id: string) => {
+    try {
+      await DeleteFavorite(id);
+      refreshFavorites();
+    } catch (error) {
+      toast.error(`删除收藏失败：${(error as Error).message}`);
+    }
+  };
 
   // Callbacks change on every parent render; routing them through a ref lets
   // the editor instance be created once.
   const handlers = useRef({ onQueryChange, onExecute, getTables, getColumns, loading });
   handlers.current = { onQueryChange, onExecute, getTables, getColumns, loading };
+  const executeGate = useRef<() => void>(() => {});
+  executeGate.current = executeWithParams;
 
   const fontCompartment = useMemo(() => new Compartment(), []);
   const dialectCompartment = useMemo(() => new Compartment(), []);
@@ -314,7 +386,15 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
               run: () => {
                 // A second run while the first is in flight only piles up
                 // connections against the server.
-                if (!handlers.current.loading) handlers.current.onExecute();
+                if (!handlers.current.loading) executeGate.current();
+                return true;
+              },
+            },
+            {
+              key: 'Ctrl-Shift-f',
+              mac: 'Cmd-Shift-f',
+              run: () => {
+                void formatSQL();
                 return true;
               },
             },
@@ -386,6 +466,23 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     focus: () => viewRef.current?.focus(),
   }));
 
+  const formatSQL = async () => {
+    const view = viewRef.current;
+    if (!view) return;
+    try {
+      const formatted = await FormatSQL(view.state.doc.toString());
+      if (!formatted) return;
+      // Replace the whole document but keep the cursor where it was, clamped.
+      const pos = Math.min(view.state.selection.main.head, formatted.length);
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: formatted },
+        selection: { anchor: pos },
+      });
+    } catch (error) {
+      toast.error(`格式化失败：${(error as Error).message}`);
+    }
+  };
+
   const adjustFont = (delta: number) => {
     const view = viewRef.current;
     if (!view) return;
@@ -438,7 +535,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
               ? 'bg-success hover:bg-success-hover text-on-success'
               : 'bg-raised text-muted cursor-not-allowed'
           }`}
-          onClick={onExecute}
+          onClick={executeWithParams}
           disabled={!isConnected || loading}
           title="执行 (Ctrl+Enter)"
         >
@@ -508,6 +605,75 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
         </span>
 
         <div className="ml-auto flex items-center gap-1">
+          <div className="relative">
+            <button
+              className={`flex items-center justify-center w-6 h-6 rounded hover:bg-raised ${
+                showFavorites ? 'text-accent' : 'text-secondary hover:text-ink'
+              }`}
+              onClick={() => {
+                if (!showFavorites) refreshFavorites();
+                setShowFavorites(v => !v);
+              }}
+              aria-label="查询收藏"
+              aria-expanded={showFavorites}
+              title="查询收藏"
+            >
+              <FiStar size={12} />
+            </button>
+
+            {showFavorites && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowFavorites(false)} />
+                <div className="absolute right-0 top-7 z-50 w-72 max-h-80 overflow-auto p-1 bg-panel border border-line-strong rounded shadow-xl">
+                  <button
+                    className="w-full text-left px-2 py-1.5 text-xs text-accent hover:bg-raised rounded"
+                    onClick={() => {
+                      void saveFavorite();
+                      setShowFavorites(false);
+                    }}
+                  >
+                    ☆ 收藏当前语句
+                  </button>
+                  {favorites.length === 0 && (
+                    <div className="px-2 py-1.5 text-2xs text-muted">还没有收藏，编辑好语句后点上面收藏</div>
+                  )}
+                  {favorites.map(f => (
+                    <div key={f.id} className="group flex items-center gap-1 px-1 py-0.5 rounded hover:bg-raised">
+                      <button
+                        className="flex-1 min-w-0 text-left px-1 py-1 rounded"
+                        onClick={() => {
+                          viewRef.current?.dispatch({
+                            changes: { from: 0, to: viewRef.current.state.doc.length, insert: f.sql },
+                          });
+                          setShowFavorites(false);
+                        }}
+                        title={f.sql}
+                      >
+                        <span className="block text-xs text-ink truncate">{f.name}</span>
+                        <span className="block text-2xs text-muted truncate">{f.sql}</span>
+                      </button>
+                      <button
+                        className="shrink-0 p-1 text-secondary hover:text-danger opacity-0 group-hover:opacity-100"
+                        onClick={() => void removeFavorite(f.id)}
+                        aria-label={`删除收藏 ${f.name}`}
+                        title="删除收藏"
+                      >
+                        <FiTrash2 size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+          <button
+            className="flex items-center justify-center w-6 h-6 text-secondary hover:text-ink rounded hover:bg-raised"
+            onClick={() => void formatSQL()}
+            aria-label="格式化 SQL (Ctrl+Shift+F)"
+            title="格式化 SQL (Ctrl+Shift+F)"
+          >
+            <FiAlignLeft size={12} />
+          </button>
           <button
             className="flex items-center justify-center w-6 h-6 text-secondary hover:text-ink rounded hover:bg-raised"
             onClick={() => adjustFont(-1)}
@@ -626,6 +792,61 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
       </div>
 
       <div ref={hostRef} className="flex-1 min-h-0 overflow-hidden" />
+
+      {paramDialog && (
+        <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50">
+          <div className="bg-panel rounded-lg w-full max-w-sm shadow-xl" role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+              <h2 className="text-sm font-semibold">填写查询参数</h2>
+              <button className="text-secondary hover:text-ink" onClick={() => setParamDialog(null)} aria-label="取消">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-2xs text-muted">语句里的 :参数 会替换成下面的值再执行；留空则保持原样。</p>
+              {paramDialog.names.map((name, idx) => (
+                <label key={name} className="block text-xs text-secondary">
+                  <span className="mb-1 block font-mono">:{name}</span>
+                  <input
+                    type="text"
+                    autoFocus={idx === 0}
+                    value={paramDialog.values[name] ?? ''}
+                    onChange={e =>
+                      setParamDialog({
+                        ...paramDialog,
+                        values: { ...paramDialog.values, [name]: e.target.value },
+                      })
+                    }
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        confirmParams();
+                      }
+                    }}
+                    className="w-full bg-canvas border border-line-strong rounded px-2 py-1.5 text-xs text-ink font-mono focus:outline-none focus:border-accent"
+                  />
+                </label>
+              ))}
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded text-xs bg-raised hover:bg-emphasis text-ink"
+                  onClick={() => setParamDialog(null)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded text-xs bg-accent hover:bg-accent-hover text-on-accent flex items-center gap-1"
+                  onClick={confirmParams}
+                >
+                  替换并执行
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
