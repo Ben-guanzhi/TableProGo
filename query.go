@@ -537,7 +537,7 @@ func (a *App) CancelQuery(connID string) int {
 
 func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 	if err != nil {
-		return QueryResult{Error: err.Error()}
+		return QueryResult{Error: friendlyDBError(err)}
 	}
 	out := QueryResult{
 		Columns:      make([]Column, len(res.Columns)),
