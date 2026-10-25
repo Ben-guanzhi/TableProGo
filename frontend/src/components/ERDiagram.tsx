@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { FiDownload, FiMaximize2, FiZoomIn, FiZoomOut } from 'react-icons/fi';
-import { GetERDiagram } from '../api';
+import { CancelQuery, GetERDiagram } from '../api';
 import type { Theme } from '../api';
 import type { ERSchema } from '../types';
 import {
@@ -296,7 +296,17 @@ const ERDiagram: React.FC<Props> = ({ connId, database, schema, title, theme }) 
           {error}
         </div>
       )}
-      {loading && <div className="p-4 text-secondary text-sm">读取结构关系…</div>}
+      {loading && (
+        <div className="p-4 flex items-center gap-3 text-secondary text-sm">
+          读取结构关系…
+          <button
+            className="px-2 py-0.5 rounded border border-line text-2xs text-secondary hover:text-ink hover:bg-raised"
+            onClick={() => CancelQuery(connId).catch(() => {})}
+          >
+            取消
+          </button>
+        </div>
+      )}
 
       <div
         ref={containerRef}

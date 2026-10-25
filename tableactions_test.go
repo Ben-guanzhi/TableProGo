@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -232,5 +233,54 @@ func TestTableActionIsRecordedInHistory(t *testing.T) {
 	}
 	if entries[0].SQL != statement {
 		t.Errorf("history holds %q, want %q", entries[0].SQL, statement)
+	}
+}
+
+// Safe Mode must pause a menu action the same way it pauses a typed statement:
+// nothing runs, the caller gets a confirmation request, and only the confirmed
+// entry point executes. A block must refuse even the confirmed path.
+func TestTableActionSafeModePauseAndBlock(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actions.db")
+	app := &App{
+		connections:      map[string]*Connection{},
+		savedConnections: []ConnectionConfig{{ID: "c1", Name: "safe", Type: "sqlite", Database: path}},
+		settings:         AppSettings{SafeMode: safeModeConfirmWrites},
+	}
+	t.Cleanup(func() { _ = app.Disconnect("c1") })
+	if err := app.Connect("c1"); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	seedParts(t, app.connections["c1"])
+
+	// Pause: nothing executed, the error is a confirmation request.
+	if _, err := app.TableAction("c1", "", "", "parts", actionTruncate, ""); err == nil {
+		t.Fatal("truncate under ConfirmWrites should pause, not run")
+	} else if reason, paused := isNeedsConfirmation(err); !paused || reason == "" {
+		t.Fatalf("pause should carry the guard reason, got %v", err)
+	}
+	if got := tableState(t, app.connections["c1"], `SELECT id FROM parts ORDER BY id`); len(got) != 2 {
+		t.Fatalf("paused truncate still ran: %d rows left", len(got))
+	}
+
+	// Confirm: the explicit entry point executes.
+	if _, err := app.TableActionConfirmed("c1", "", "", "parts", actionTruncate, ""); err != nil {
+		t.Fatalf("confirmed truncate: %v", err)
+	}
+	if got := tableState(t, app.connections["c1"], `SELECT id FROM parts ORDER BY id`); len(got) != 0 {
+		t.Fatalf("confirmed truncate left %d rows", len(got))
+	}
+
+	// Block: even the confirmed path refuses, and nothing changes. The table
+	// still exists from before (that was the point of the block), so re-seed
+	// rows only.
+	app.settings = AppSettings{SafeMode: safeModeBlockNoWhere}
+	if _, err := app.connections["c1"].DB.Exec(`INSERT INTO parts (id, name, qty) VALUES (1,'a',10),(2,'b',20)`); err != nil {
+		t.Fatalf("re-seed: %v", err)
+	}
+	if _, err := app.TableActionConfirmed("c1", "", "", "parts", actionTruncate, ""); err == nil {
+		t.Fatal("blockNoWhere should refuse the confirmed truncate")
+	}
+	if got := tableState(t, app.connections["c1"], `SELECT id FROM parts ORDER BY id`); len(got) != 2 {
+		t.Fatalf("blocked truncate still ran: %d rows left", len(got))
 	}
 }

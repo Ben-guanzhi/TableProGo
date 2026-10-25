@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -117,7 +116,8 @@ const maxComparePlans = 16
 // CompareSchemas reads both sides and returns the changes that would make the
 // target look like the source, with the statements that carry them out.
 func (a *App) CompareSchemas(source, target CompareTarget, opts CompareOptions) (CompareResult, error) {
-	ctx := context.Background()
+	ctx, done := a.beginRun(source.ConnID)
+	defer done()
 
 	sourceConn, err := a.liveConnection(source.ConnID)
 	if err != nil {
@@ -230,7 +230,8 @@ func (a *App) ApplySync(req ApplySyncRequest) (ApplySyncResult, error) {
 		return ApplySyncResult{}, err
 	}
 
-	ctx := context.Background()
+	ctx, done := a.beginRun(plan.target.ConnID)
+	defer done()
 	for _, s := range statements {
 		if verdict := guardWrite(a.GetSettings().SafeMode, s.SQL); verdict.Blocked {
 			result.Failures = append(result.Failures, ApplyFailure{

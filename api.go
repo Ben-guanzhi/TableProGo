@@ -423,6 +423,20 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/table-action", 400, func(a *App, body tableActionRequest) (any, error) {
 		statement, err := a.TableAction(body.ConnID, body.Database, body.Schema, body.Table, body.Action, body.NewName)
 		if err != nil {
+			// A Safe Mode pause is not a failure: hand the statement and the
+			// reason back so the UI can confirm and resend.
+			if reason, paused := isNeedsConfirmation(err); paused {
+				return map[string]any{"needsConfirmation": true, "reason": reason, "statement": statement}, nil
+			}
+			return nil, err
+		}
+		return map[string]string{"status": "ok", "statement": statement}, nil
+	})
+	// Safe Mode: the UI confirms, then re-sends through this route, mirroring
+	// /api/execute-confirmed — skipping the prompt cannot be a request flag.
+	post(a, mux, "/api/table-action-confirmed", 400, func(a *App, body tableActionRequest) (any, error) {
+		statement, err := a.TableActionConfirmed(body.ConnID, body.Database, body.Schema, body.Table, body.Action, body.NewName)
+		if err != nil {
 			return nil, err
 		}
 		return map[string]string{"status": "ok", "statement": statement}, nil

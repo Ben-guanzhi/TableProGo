@@ -1,10 +1,11 @@
 package main
 
 import (
-	tableprosql "github.com/dbcore/dbcore/sqltext"
-
+	"errors"
 	"fmt"
 	"strings"
+
+	tableprosql "github.com/dbcore/dbcore/sqltext"
 )
 
 // What the sidebar's object menu can do to a table or a view. Each one is
@@ -80,6 +81,21 @@ func tableActionStatement(o objectNames, action string) (string, error) {
 	return "", fmt.Errorf("unknown table action %q", action)
 }
 
+// needsConfirmationError says Safe Mode paused the action: nothing ran. The
+// HTTP layer turns it into a structured pause the UI can confirm and resend,
+// instead of the caller mistaking it for an execution failure.
+type needsConfirmationError struct{ reason string }
+
+func (e needsConfirmationError) Error() string { return e.reason }
+
+func isNeedsConfirmation(err error) (string, bool) {
+	var e needsConfirmationError
+	if errors.As(err, &e) {
+		return e.reason, true
+	}
+	return "", false
+}
+
 // TableAction runs one of the menu's actions and returns the statement it ran,
 // so the caller can say out loud what happened.
 //
@@ -89,6 +105,17 @@ func tableActionStatement(o objectNames, action string) (string, error) {
 // with odd characters through - the quoting is then the only thing standing
 // between it and a statement, and it was never the client's to write.
 func (a *App) TableAction(connID, database, schema, table, action, newName string) (string, error) {
+	return a.runTableAction(connID, database, schema, table, action, newName, false)
+}
+
+// TableActionConfirmed is TableAction after the user acknowledged the Safe Mode
+// warning. A distinct entry point, like ExecuteQueryConfirmed, so skipping the
+// prompt has to be explicit in the caller's code.
+func (a *App) TableActionConfirmed(connID, database, schema, table, action, newName string) (string, error) {
+	return a.runTableAction(connID, database, schema, table, action, newName, true)
+}
+
+func (a *App) runTableAction(connID, database, schema, table, action, newName string, force bool) (string, error) {
 	conn, err := a.connection(connID)
 	if err != nil {
 		return "", err
@@ -128,9 +155,17 @@ func (a *App) TableAction(connID, database, schema, table, action, newName strin
 	if err != nil {
 		return "", err
 	}
+	// The guard runs here, not by accident through ExecuteQuery: a pause has to
+	// come back as a confirmation request, not as a generic error the UI would
+	// show as "the drop failed".
+	if guard := guardWrite(a.GetSettings().SafeMode, statement); guard.Blocked {
+		return statement, fmt.Errorf("%s", guard.Reason)
+	} else if guard.NeedsConfirmation && !force {
+		return statement, needsConfirmationError{reason: guard.Reason}
+	}
 	// The same path a typed statement takes, so the action lands in the
 	// history with its error if it fails.
-	result := a.ExecuteQuery(connID, statement, database)
+	result := a.ExecuteQueryConfirmed(connID, statement, database)
 	if result.Error != "" {
 		return statement, fmt.Errorf("%s", result.Error)
 	}

@@ -84,6 +84,12 @@ func closeTxns(connID string) {
 	prefix := connID + "|"
 	for key, m := range txns.m {
 		if strings.HasPrefix(key, prefix) {
+			// Roll open transactions back before dropping the manager: Close
+			// only stops the sweeper, and a still-open transaction keeps its
+			// dedicated pool connection checked out — DB.Close alone cannot
+			// reclaim it (on SQLite the file stays locked until the
+			// transaction goes away).
+			m.RollbackAll()
 			m.Close()
 			delete(txns.m, key)
 		}

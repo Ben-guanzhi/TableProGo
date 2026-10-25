@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { ImportFile, ImportOptions, ImportResult } from '../api';
+import { CancelQuery, ImportFile, ImportOptions, ImportResult } from '../api';
 import { TableRef } from '../types';
 import { FiUpload, FiX } from 'react-icons/fi';
 import toast from 'react-hot-toast';
@@ -30,7 +30,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
   });
   // Conflict keys stay a comma-separated string in the input; the API wants a list.
   const [upsertKeys, setUpsertKeys] = useState('');
-  const isSQL = /\\.sql$/i.test(path.trim());
+  const isSQL = /\.sql$/i.test(path.trim());
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [error, setError] = useState('');
@@ -193,6 +193,15 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
               <FiUpload size={14} className="mr-2" />
               {running ? '导入中…' : '开始导入'}
             </button>
+            {running && (
+              <button
+                type="button"
+                className="px-4 py-2 rounded text-sm border border-line text-secondary hover:text-ink hover:bg-raised"
+                onClick={() => CancelQuery(target.connId).catch(() => {})}
+              >
+                取消
+              </button>
+            )}
           </div>
         </div>
       </div>

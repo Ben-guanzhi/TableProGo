@@ -64,17 +64,19 @@ func Normalize(opts Options, path string) Options {
 
 // Parse returns column names and rows. JSON objects may omit keys; the missing
 // cells become NULL. CSV cells are always text ("" stays an empty string, not
-// NULL, because CSV has no null literal).
+// NULL, because CSV has no null literal). The whole file is materialized; the
+// streaming variants (CSVStream) keep memory bounded for large imports.
 func Parse(path string, opts Options) ([]string, [][]*string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer f.Close()
+	dec := DecodingReader(f)
 	if opts.Format == "json" {
-		return ParseJSON(f)
+		return ParseJSON(dec)
 	}
-	return ParseCSV(f, opts)
+	return ParseCSV(dec, opts)
 }
 
 // ParseCSV reads a delimited file. Ragged rows are reported per row rather than

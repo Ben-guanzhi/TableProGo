@@ -195,7 +195,9 @@ func (a *App) TestConnection(config ConnectionConfig) error {
 		return fmt.Errorf("connection failed: %w", err)
 	}
 	defer db.Close()
-	if err := db.Ping(); err != nil {
+	pctx, cancel := context.WithTimeout(context.Background(), connectPingTimeout)
+	defer cancel()
+	if err := db.PingContext(pctx); err != nil {
 		log.Printf("db.Ping error: %v", err)
 		return fmt.Errorf("connection failed: %w", err)
 	}
@@ -307,6 +309,10 @@ func (a *App) Connect(id string) error {
 		}
 		existing.closeKV()
 		existing.closePools()
+		existing.closePlugin()
+		// Same reason as Disconnect: a manager left behind would fail its next
+		// statement with "database is closed" against the new connection.
+		closeTxns(id)
 		existing.tunnel.Close()
 	}
 
@@ -342,6 +348,14 @@ func (a *App) Connect(id string) error {
 			conn.tunnel.Close()
 			return fmt.Errorf("connection failed: %w", err)
 		}
+		pctx, pcancel := context.WithTimeout(context.Background(), connectPingTimeout)
+		pingErr := drv.Ping(pctx)
+		pcancel()
+		if pingErr != nil {
+			drv.Close()
+			conn.tunnel.Close()
+			return fmt.Errorf("connection failed: %w", pingErr)
+		}
 		conn.KV = drv
 		conn.kvDefault, _ = redisDBIndex(config.Database)
 		conn.kvDB = conn.kvDefault
@@ -352,6 +366,18 @@ func (a *App) Connect(id string) error {
 		if err != nil {
 			conn.tunnel.Close()
 			return fmt.Errorf("connection failed: %w", err)
+		}
+		// sql.Open is lazy: without a ping, wrong credentials or a dead host
+		// would only surface on the first query, after the UI already showed
+		// "connected". Bounded so a black-holed address fails here, not at the
+		// OS-level dial timeout.
+		pctx, pcancel := context.WithTimeout(context.Background(), connectPingTimeout)
+		pingErr := db.PingContext(pctx)
+		pcancel()
+		if pingErr != nil {
+			db.Close()
+			conn.tunnel.Close()
+			return fmt.Errorf("connection failed: %w", pingErr)
 		}
 		conn.DB = db
 	}
@@ -502,6 +528,11 @@ func createConnection(config ConnectionConfig) (*sql.DB, error) {
 // createConnectionAt opens the engine at an explicit host/port. The SSH tunnel
 // passes its loopback endpoint here, so the DSN builders never need to know a
 // tunnel exists.
+// connectPingTimeout bounds the reachability check in Connect and
+// TestConnection: a black-holed address must fail with a real error instead of
+// hanging until the OS gives up on the dial.
+const connectPingTimeout = 10 * time.Second
+
 func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB, error) {
 	spec := connSpecAt(config, host, port)
 	var dsn string

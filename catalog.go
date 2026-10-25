@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"log"
@@ -96,7 +95,9 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		schemas, err := drv.ListSchemas(context.Background())
+		ctx, done := a.beginRun(connID)
+		defer done()
+		schemas, err := drv.ListSchemas(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -195,7 +196,9 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		found, err := drv.ListSchemas(context.Background())
+		ctx, done := a.beginRun(connID)
+		defer done()
+		found, err := drv.ListSchemas(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -321,7 +324,9 @@ func (a *App) getTablesFiltered(connID string, database string, schema string, e
 	if conn.Type == "mysql" && listSchema == "" {
 		listSchema = database
 	}
-	found, err := drv.ListTables(context.Background(), listSchema)
+	ctx, done := a.beginRun(connID)
+	defer done()
+	found, err := drv.ListTables(ctx, listSchema)
 	if err != nil {
 		return nil, err
 	}
@@ -393,7 +398,9 @@ func (a *App) GetColumns(connID string, database string, schema string, table st
 	if err != nil {
 		return nil, err
 	}
-	found, err := drv.ListColumns(context.Background(), schema, table)
+	ctx, done := a.beginRun(connID)
+	defer done()
+	found, err := drv.ListColumns(ctx, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -438,7 +445,9 @@ func (a *App) tableIndexes(conn *Connection, database, schema, table string) ([]
 	if err != nil {
 		return nil, err
 	}
-	found, err := drv.ListIndexes(context.Background(), schema, table)
+	ctx, done := a.beginRun(conn.ID)
+	defer done()
+	found, err := drv.ListIndexes(ctx, schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +469,9 @@ func (a *App) tableForeignKeys(conn *Connection, database, schema, table string)
 	if err != nil {
 		return nil, err
 	}
-	found, err := drv.ListForeignKeys(context.Background(), schema, table)
+	ctx, done := a.beginRun(conn.ID)
+	defer done()
+	found, err := drv.ListForeignKeys(ctx, schema, table)
 	if err != nil {
 		return nil, err
 	}

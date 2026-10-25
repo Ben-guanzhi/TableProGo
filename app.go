@@ -179,27 +179,45 @@ func NewApp() *App {
 func (a *App) loadSettings() {
 	a.settings.ResultLimit = defaultResultLimit
 	a.settings.Theme = defaultTheme
+	a.settings.SafeMode = safeModeOff
 
 	data, err := os.ReadFile(a.settingsPath)
 	if err != nil {
 		return
 	}
-	// The limit is read through a pointer so an explicit 0 (no limit) survives,
-	// while a file written before the setting existed falls back to the default.
+	// Every field is read through a pointer so an explicit zero value (0 =
+	// no limit, "off" safe mode) survives, while a field absent from a file
+	// written by an older version falls back to the default set above.
 	var stored struct {
-		ShowColumnComments bool   `json:"showColumnComments"`
-		ResultLimit        *int   `json:"resultLimit"`
-		Theme              string `json:"theme"`
+		ShowColumnComments *bool   `json:"showColumnComments"`
+		ResultLimit        *int    `json:"resultLimit"`
+		Theme              *string `json:"theme"`
+		SafeMode           *string `json:"safeMode"`
+		MCPAllowWrites     *bool   `json:"mcpAllowWrites"`
+		MCPMaxRows         *int    `json:"mcpMaxRows"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		log.Printf("Failed to load settings: %v", err)
 		return
 	}
-	a.settings.ShowColumnComments = stored.ShowColumnComments
+	if stored.ShowColumnComments != nil {
+		a.settings.ShowColumnComments = *stored.ShowColumnComments
+	}
 	if stored.ResultLimit != nil {
 		a.settings.ResultLimit = *stored.ResultLimit
 	}
-	a.settings.Theme = normalizeTheme(stored.Theme)
+	if stored.Theme != nil {
+		a.settings.Theme = normalizeTheme(*stored.Theme)
+	}
+	if stored.SafeMode != nil {
+		a.settings.SafeMode = normalizeSafeMode(*stored.SafeMode)
+	}
+	if stored.MCPAllowWrites != nil {
+		a.settings.MCPAllowWrites = *stored.MCPAllowWrites
+	}
+	if stored.MCPMaxRows != nil {
+		a.settings.MCPMaxRows = *stored.MCPMaxRows
+	}
 }
 
 func (a *App) GetSettings() AppSettings {

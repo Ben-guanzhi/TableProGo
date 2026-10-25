@@ -340,6 +340,16 @@ function App() {
     setTabs(current => current.map(t => (t.id === tabId ? { ...t, loading: false } : t)));
   };
 
+  // Same idea for the object tab's query page: bump its sequence so the
+  // trailing execute's result becomes a no-op, then drop the spinner.
+  const cancelObjectQuery = (tabId: string) => {
+    const key = `${tabId}|query`;
+    objectSeq.current.set(key, (objectSeq.current.get(key) ?? 0) + 1);
+    setTabs(current =>
+      current.map(t => (t.id === tabId ? { ...t, objectResult: { loading: false } } : t))
+    );
+  };
+
   const handleExecuteQuery = async (tab: Tab) => {
     if (!activeConnection) return;
     const database = tabDatabase(tab);
@@ -1242,6 +1252,11 @@ function App() {
                     )
                   }
                   onExecute={() => handleObjectExecute(activeTabData)}
+                  onCancel={() => {
+                    if (!activeConnection) return;
+                    CancelQuery(activeConnection.id).catch(() => {});
+                    cancelObjectQuery(activeTabData.id);
+                  }}
                   loading={!!activeTabData.objectResult?.loading}
                   isConnected={!!activeConnection}
                   dialect={activeConnection?.type ?? 'mysql'}

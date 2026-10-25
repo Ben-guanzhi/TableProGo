@@ -190,13 +190,25 @@ export type TableDdlAction = 'drop' | 'truncate' | 'rename';
 
 // Rename/truncate/drop one object. The backend renders the statement from the
 // names in its own catalog - and refuses anything that is not there - so no
-// text typed in the menu can reach the database as SQL.
+// text typed in the menu can reach the database as SQL. When Safe Mode pauses
+// the statement, one blocking confirmation is collected and the action is
+// resent through the confirmed endpoint; cancelling throws, so the caller
+// treats it like any other aborted action.
 export async function RunTableAction(
   ref: TableRef,
   action: TableDdlAction,
   newName = '',
+  confirm: (message: string) => boolean = message => window.confirm(message),
 ): Promise<string> {
   const data = await post('/api/table-action', { ...ref, action, newName });
+  if (data.needsConfirmation) {
+    const reason: string = data.reason ?? '';
+    if (!confirm(`${reason}\n\n仍要执行这条语句吗？`)) {
+      throw new Error('Cancelled (Safe Mode)');
+    }
+    const confirmed = await post('/api/table-action-confirmed', { ...ref, action, newName });
+    return confirmed.statement ?? '';
+  }
   return data.statement ?? '';
 }
 

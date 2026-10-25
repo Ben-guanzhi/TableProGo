@@ -5,7 +5,6 @@ package main
 // rest of the package (and the JSON API) already uses.
 
 import (
-	"context"
 	"fmt"
 	"regexp"
 	"strings"
@@ -199,7 +198,8 @@ func (a *App) ApplyChanges(set ChangeSet) (int64, error) {
 		return 0, fmt.Errorf("unsupported type: %s", conn.Type)
 	}
 
-	ctx := context.Background()
+	ctx, done := a.beginRun(set.ConnID)
+	defer done()
 	tx, err := txDrv.Begin(ctx, dbcore.TxMode{})
 	if err != nil {
 		return 0, err

@@ -15,7 +15,6 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	github.com/adrg/xdg v0.5.3 // indirect
-	github.com/alicebob/miniredis/v2 v2.40.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/coder/websocket v1.8.14 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
@@ -43,15 +42,12 @@ require (
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.53.0 // indirect
 )
 
 // tableproxlsx lives inside this repo, so it is pinned to the working tree
@@ -61,6 +57,12 @@ require github.com/dbcore/dbcore v0.1.0
 
 replace github.com/dbcore/dbcore => ../dbcore
 
-require github.com/Ben-guanzhi/TableProGo/tableproxlsx v0.1.0
+require (
+	github.com/Ben-guanzhi/TableProGo/tableproxlsx v0.1.0
+	github.com/alicebob/miniredis/v2 v2.40.0
+	golang.org/x/crypto v0.55.0
+	golang.org/x/text v0.41.0
+	modernc.org/sqlite v1.53.0
+)
 
 replace github.com/Ben-guanzhi/TableProGo/tableproxlsx => ./tableproxlsx

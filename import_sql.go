@@ -4,7 +4,6 @@ package main
 // internal/sqlscript; this file runs the statements through the kernel driver.
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -40,11 +39,15 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
-	ctx := context.Background()
+	ctx, done := a.beginRun(req.ConnID)
+	defer done()
 
 	if req.Options.SkipErrors {
-		for _, stmt := range statements {
+		for i, stmt := range statements {
 			if _, err := drv.Execute(ctx, stmt); err != nil {
+				if res.FirstError == "" {
+					res.FirstError = fmt.Sprintf("语句 %d: %s", i+1, err.Error())
+				}
 				res.Skipped++
 				continue
 			}
@@ -55,10 +58,10 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 
 	txDrv, ok := drv.(dbcore.SQLTxDriver)
 	if !ok {
-		for _, stmt := range statements {
+		for i, stmt := range statements {
 			if _, err := drv.Execute(ctx, stmt); err != nil {
-				res.Error = err.Error()
-				return res, err
+				res.Error = fmt.Sprintf("语句 %d: %s", i+1, err.Error())
+				return res, fmt.Errorf("语句 %d: %w", i+1, err)
 			}
 			res.Statements++
 		}
@@ -69,11 +72,11 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
-	for _, stmt := range statements {
+	for i, stmt := range statements {
 		if _, err := txDrv.ExecuteIn(tx, ctx, stmt); err != nil {
 			_ = tx.Rollback()
-			res.Error = err.Error()
-			return res, err
+			res.Error = fmt.Sprintf("语句 %d: %s", i+1, err.Error())
+			return res, fmt.Errorf("语句 %d: %w", i+1, err)
 		}
 		res.Statements++
 	}

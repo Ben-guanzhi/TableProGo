@@ -9,9 +9,10 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/dbcore/dbcore"
 	tableprosql "github.com/dbcore/dbcore/sqltext"
@@ -58,7 +59,10 @@ type ImportResult struct {
 	Statements   int      `json:"statements"`
 	Columns      []string `json:"columns"`
 	CreatedTable bool     `json:"createdTable"`
-	Error        string   `json:"error,omitempty"`
+	// FirstError is the first skipped row's error with its 1-based row number,
+	// so "skipped 300" is not a dead end. Empty when nothing was skipped.
+	FirstError string `json:"firstError,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 // importBatchSize caps how many rows go into one multi-row INSERT: large enough
@@ -68,6 +72,11 @@ const importBatchSize = 200
 
 // ImportFile parses path and writes its rows into table. A .sql path runs as a
 // script instead, where the file itself decides the tables.
+//
+// CSV rows stream in chunks (importfile.CSVStream), so memory stays bounded by
+// one chunk rather than the whole file; JSON is materialized (its array format
+// needs the whole document anyway). Either way the run is one transaction
+// unless skipErrors was asked for.
 func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 	res := ImportResult{}
 	opts := importfile.Normalize(importfile.Options{
@@ -86,17 +95,6 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 	if req.Table == "" {
 		return res, fmt.Errorf("import: target table is required")
 	}
-	cols, rows, err := importfile.Parse(req.Path, opts)
-	if err != nil {
-		res.Error = err.Error()
-		return res, err
-	}
-	res.Columns = cols
-	if len(cols) == 0 {
-		err := fmt.Errorf("import: no columns found in %s", filepath.Base(req.Path))
-		res.Error = err.Error()
-		return res, err
-	}
 
 	conn, err := a.connection(req.ConnID)
 	if err != nil {
@@ -108,7 +106,8 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
-	ctx := context.Background()
+	ctx, done := a.beginRun(req.ConnID)
+	defer done()
 
 	if opts.Mode == "truncate" {
 		stmt, terr := tableprosql.TruncateStatement(conn.Type, importfile.Ident(conn.Type, req.Table))
@@ -122,29 +121,207 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 		}
 	}
 
-	if req.Options.CreateTable {
-		created, err := a.ensureImportTable(ctx, drv, conn.Type, req.Database, req.Table, cols, rows, opts)
-		if err != nil {
-			res.Error = err.Error()
-			return res, err
-		}
-		res.CreatedTable = created
+	w := &importWriter{
+		ctx: ctx, drv: drv, dbType: conn.Type, table: req.Table,
+		opts: opts, skipErrors: req.Options.SkipErrors, res: &res,
 	}
-
-	if opts.Mode == "upsert" {
-		keys, err := a.resolveUpsertKeys(ctx, drv, conn.Type, req.Database, req.Table, cols, opts.UpsertKeys)
-		if err != nil {
-			res.Error = err.Error()
-			return res, err
-		}
-		opts.UpsertKeys = keys
-	}
-
-	if err := a.insertImportedRows(ctx, drv, conn.Type, req.Database, req.Table, cols, rows, opts, req.Options.SkipErrors, &res); err != nil {
+	if err := w.begin(); err != nil {
 		res.Error = err.Error()
 		return res, err
 	}
-	return res, nil
+	if opts.Format == "json" {
+		err = a.importJSONRows(req, opts, w)
+	} else {
+		err = a.importCSVRows(req, opts, w)
+	}
+	if err == nil {
+		err = w.finish()
+	} else {
+		w.abort()
+	}
+	if err != nil {
+		res.Error = err.Error()
+	}
+	return res, err
+}
+
+// importWriter owns the execution side of one import run. Everything goes
+// through one transaction unless skipErrors was asked for, in which case rows
+// are written in autocommit batches and the first failure is captured (with
+// its 1-based row number) instead of aborting the run.
+type importWriter struct {
+	ctx        context.Context
+	drv        dbcore.SQLDriver
+	txDrv      dbcore.SQLTxDriver // nil without transaction support or with skipErrors
+	tx         *sql.Tx
+	dbType     string
+	table      string
+	opts       importfile.Options
+	skipErrors bool
+	res        *ImportResult
+	cols       []string
+}
+
+func (w *importWriter) begin() error {
+	if w.skipErrors {
+		return nil
+	}
+	d, ok := w.drv.(dbcore.SQLTxDriver)
+	if !ok {
+		return nil // no transaction support: autocommit batches, as before
+	}
+	w.txDrv = d
+	tx, err := d.Begin(w.ctx, dbcore.TxMode{})
+	if err != nil {
+		return err
+	}
+	w.tx = tx
+	return nil
+}
+
+func (w *importWriter) finish() error {
+	if w.txDrv == nil {
+		return nil
+	}
+	tx := w.tx
+	w.tx = nil
+	return tx.Commit()
+}
+
+func (w *importWriter) abort() {
+	if w.txDrv == nil || w.tx == nil {
+		return
+	}
+	_ = w.tx.Rollback()
+	w.tx = nil
+}
+
+// write sends one chunk of rows. firstRow is the chunk's 1-based position in
+// the file, so an error names the rows the user can find.
+func (w *importWriter) write(chunk [][]*string, firstRow int) error {
+	if len(chunk) == 0 {
+		return nil
+	}
+	batch := importBatchSize
+	if w.dbType == "oracle" {
+		// Oracle has no multi-row VALUES clause on older versions; one row per
+		// statement keeps the import correct at the cost of round trips.
+		batch = 1
+	}
+	for start := 0; start < len(chunk); start += batch {
+		end := minInt(start+batch, len(chunk))
+		stmt, args, err := importfile.InsertSQL(w.dbType, w.table, w.cols, chunk[start:end], w.opts)
+		if err != nil {
+			return err
+		}
+		if w.txDrv != nil {
+			if _, err := w.txDrv.ExecuteIn(w.tx, w.ctx, stmt, args...); err != nil {
+				return fmt.Errorf("import: insert rows %d-%d: %w", firstRow+start, firstRow+end-1, err)
+			}
+		} else if _, err := w.drv.Execute(w.ctx, stmt, args...); err != nil {
+			if !w.skipErrors {
+				return fmt.Errorf("import: insert rows %d-%d: %w", firstRow+start, firstRow+end-1, err)
+			}
+			// Retry the failed batch row by row so one bad row does not lose
+			// the rest; the first failure is reported, not swallowed.
+			for i := start; i < end; i++ {
+				one, oneArgs, err := importfile.InsertSQL(w.dbType, w.table, w.cols, chunk[i:i+1], w.opts)
+				if err != nil {
+					return err
+				}
+				if _, err := w.drv.Execute(w.ctx, one, oneArgs...); err != nil {
+					if w.res.FirstError == "" {
+						w.res.FirstError = fmt.Sprintf("行 %d: %s", firstRow+i, err.Error())
+					}
+					w.res.Skipped++
+					continue
+				}
+				w.res.Rows++
+			}
+			continue
+		}
+		w.res.Rows += end - start
+		w.res.Statements++
+	}
+	return nil
+}
+
+// importCSVRows streams the file chunk by chunk. The first chunk doubles as
+// the setup trigger (create table / upsert keys) and the type-inference sample.
+func (a *App) importCSVRows(req ImportRequest, opts importfile.Options, w *importWriter) error {
+	f, err := os.Open(req.Path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	base := 0 // 1-based file position of the next chunk's first row
+	return importfile.CSVStream(f, opts, func(cols []string, chunk [][]*string, isFirst bool) error {
+		if isFirst {
+			if len(cols) == 0 {
+				return fmt.Errorf("import: file is empty")
+			}
+			w.res.Columns = cols
+			if err := a.prepareImport(w, req, opts, cols, chunk); err != nil {
+				return err
+			}
+		}
+		if err := w.write(chunk, base+1); err != nil {
+			return err
+		}
+		base += len(chunk)
+		return nil
+	})
+}
+
+// importJSONRows materializes the JSON document (its array format needs the
+// whole thing anyway) and writes it through the same chunked writer.
+func (a *App) importJSONRows(req ImportRequest, opts importfile.Options, w *importWriter) error {
+	f, err := os.Open(req.Path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cols, rows, err := importfile.ParseJSON(importfile.DecodingReader(f))
+	if err != nil {
+		return err
+	}
+	w.res.Columns = cols
+	if len(cols) == 0 {
+		return fmt.Errorf("import: no columns found in %s", filepath.Base(req.Path))
+	}
+	if err := a.prepareImport(w, req, opts, cols, rows); err != nil {
+		return err
+	}
+	for start := 0; start < len(rows); start += importfile.StreamChunkSize {
+		end := minInt(start+importfile.StreamChunkSize, len(rows))
+		if err := w.write(rows[start:end], start+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prepareImport runs the once-per-import setup on the first chunk: create the
+// table when asked (the chunk is the inference sample) and resolve the upsert
+// conflict keys against the real columns.
+func (a *App) prepareImport(w *importWriter, req ImportRequest, opts importfile.Options, cols []string, sample [][]*string) error {
+	w.cols = cols
+	if req.Options.CreateTable {
+		created, err := a.ensureImportTable(w.ctx, w.drv, w.dbType, req.Database, req.Table, cols, sample, opts)
+		if err != nil {
+			return err
+		}
+		w.res.CreatedTable = created
+	}
+	if opts.Mode == "upsert" {
+		keys, err := a.resolveUpsertKeys(w.ctx, w.drv, w.dbType, req.Database, req.Table, cols, opts.UpsertKeys)
+		if err != nil {
+			return err
+		}
+		w.opts.UpsertKeys = keys
+	}
+	return nil
 }
 
 // importSchema is the catalog namespace ListTables expects.
@@ -217,72 +394,6 @@ func (a *App) resolveUpsertKeys(ctx context.Context, drv dbcore.SQLDriver, dbTyp
 	return keys, nil
 }
 
-// insertImportedRows writes the parsed rows, batched when the engine allows a
-// multi-row VALUES list. With skipErrors the batch is not wrapped in a
-// transaction and failing rows are counted instead of aborting.
-func (a *App) insertImportedRows(ctx context.Context, drv dbcore.SQLDriver, dbType, database, table string, cols []string, rows [][]*string, opts importfile.Options, skipErrors bool, res *ImportResult) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	batch := importBatchSize
-	if dbType == "oracle" {
-		// Oracle has no multi-row VALUES clause on older versions; one row per
-		// statement keeps the import correct at the cost of round trips.
-		batch = 1
-	}
-	txDrv, hasTx := drv.(dbcore.SQLTxDriver)
-	if hasTx && !skipErrors {
-		tx, err := txDrv.Begin(ctx, dbcore.TxMode{})
-		if err != nil {
-			return err
-		}
-		for start := 0; start < len(rows); start += batch {
-			end := minInt(start+batch, len(rows))
-			stmt, args, err := importfile.InsertSQL(dbType, table, cols, rows[start:end], opts)
-			if err != nil {
-				_ = tx.Rollback()
-				return err
-			}
-			if _, err := txDrv.ExecuteIn(tx, ctx, stmt, args...); err != nil {
-				_ = tx.Rollback()
-				return fmt.Errorf("import: insert rows %d-%d: %w", start+1, end, err)
-			}
-			res.Rows += end - start
-			res.Statements++
-		}
-		return tx.Commit()
-	}
-	for start := 0; start < len(rows); start += batch {
-		end := minInt(start+batch, len(rows))
-		stmt, args, err := importfile.InsertSQL(dbType, table, cols, rows[start:end], opts)
-		if err != nil {
-			return err
-		}
-		if _, err := drv.Execute(ctx, stmt, args...); err != nil {
-			if !skipErrors {
-				return fmt.Errorf("import: insert rows %d-%d: %w", start+1, end, err)
-			}
-			// Retry the batch row by row so one bad row does not lose the rest.
-			for i := start; i < end; i++ {
-				one, oneArgs, err := importfile.InsertSQL(dbType, table, cols, rows[i:i+1], opts)
-				if err != nil {
-					return err
-				}
-				if _, err := drv.Execute(ctx, one, oneArgs...); err != nil {
-					res.Skipped++
-					continue
-				}
-				res.Rows++
-			}
-			res.Statements++
-			continue
-		}
-		res.Rows += end - start
-		res.Statements++
-	}
-	return nil
-}
-
 // SplitSQLScript splits text into statements at top-level semicolons; kept as a
 // package-level helper because the editor's script handling uses it too.
 func SplitSQLScript(text string) []string { return sqlscript.Split(text) }
@@ -294,5 +405,3 @@ func minInt(a, b int) int {
 	}
 	return b
 }
-
-var _ = strings.TrimSpace

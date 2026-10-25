@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiAlertTriangle, FiArrowRight, FiCopy, FiPlay, FiRefreshCw } from 'react-icons/fi';
 
-import { ApplySync, CompareSchemas, GetDatabases, GetSchemas } from '../api';
+import { ApplySync, CancelQuery, CompareSchemas, GetDatabases, GetSchemas } from '../api';
 import type {
   ApplySyncResult,
   CompareEntry,
@@ -171,7 +171,7 @@ export default function CompareView({ connections, connectedIds, initialSource, 
 
   return (
     <div className="flex flex-col h-full min-h-0 text-ink">
-      <div className="flex flex-wrap items-end gap-3 px-3 py-2 border-b border-edge">
+      <div className="flex flex-wrap items-end gap-3 px-3 py-2 border-b border-line">
         <TargetPicker
           label="源（以它为准）"
           target={source}
@@ -192,7 +192,7 @@ export default function CompareView({ connections, connectedIds, initialSource, 
           onPickConnection={id => pickConnection('target', id)}
         />
         <button
-          className="px-2.5 py-1.5 text-xs bg-accent text-white hover:opacity-90 disabled:opacity-40"
+          className="px-2.5 py-1.5 text-xs bg-accent text-on-accent hover:opacity-90 disabled:opacity-40"
           onClick={() => void runCompare()}
           disabled={loading || !source.connId || !target.connId}
         >
@@ -233,11 +233,11 @@ export default function CompareView({ connections, connectedIds, initialSource, 
       </div>
 
       {error && (
-        <div className="px-3 py-1.5 text-xs text-danger border-b border-edge">{error}</div>
+        <div className="px-3 py-1.5 text-xs text-danger border-b border-line">{error}</div>
       )}
 
       {result && (
-        <div className="flex items-center gap-2 px-3 py-1.5 text-2xs text-secondary border-b border-edge">
+        <div className="flex items-center gap-2 px-3 py-1.5 text-2xs text-secondary border-b border-line">
           <span>
             {result.sourceLabel} <span className="text-muted">→</span> {result.targetLabel}
           </span>
@@ -273,7 +273,7 @@ export default function CompareView({ connections, connectedIds, initialSource, 
       )}
 
       {result?.warnings && result.warnings.length > 0 && (
-        <div className="px-3 py-1.5 text-2xs text-warning border-b border-edge">
+        <div className="px-3 py-1.5 text-2xs text-warning border-b border-line">
           {result.warnings.map(w => (
             <div key={w} className="flex items-start gap-1.5">
               <FiAlertTriangle size={11} aria-hidden className="mt-0.5 shrink-0" />
@@ -284,7 +284,7 @@ export default function CompareView({ connections, connectedIds, initialSource, 
       )}
 
       {applyResult && (
-        <div className="px-3 py-1.5 text-2xs border-b border-edge">
+        <div className="px-3 py-1.5 text-2xs border-b border-line">
           {applyResult.failures.length === 0 ? (
             <span className="text-success">
               已执行 {applyResult.applied} / {applyResult.total} 条语句
@@ -322,7 +322,7 @@ export default function CompareView({ connections, connectedIds, initialSource, 
             </thead>
             <tbody>
               {result.entries.map(entry => (
-                <tr key={entry.id} className="border-t border-edge/60">
+                <tr key={entry.id} className="border-t border-line/60">
                   <td className="px-2 py-1 align-top">
                     <input
                       type="checkbox"
@@ -350,22 +350,30 @@ export default function CompareView({ connections, connectedIds, initialSource, 
         )}
 
         {showScript && visibleStatements.length > 0 && (
-          <pre className="m-3 p-2 text-2xs bg-raised border border-edge overflow-auto whitespace-pre-wrap">
+          <pre className="m-3 p-2 text-2xs bg-raised border border-line overflow-auto whitespace-pre-wrap">
             {visibleStatements.map(s => s.sql).join('\n')}
           </pre>
         )}
       </div>
 
       {result && result.entries.length > 0 && (
-        <div className="flex items-center gap-3 px-3 py-2 border-t border-edge">
+        <div className="flex items-center gap-3 px-3 py-2 border-t border-line">
           <button
-            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-accent text-white hover:opacity-90 disabled:opacity-40"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-accent text-on-accent hover:opacity-90 disabled:opacity-40"
             onClick={() => void runApply()}
             disabled={applying || selectedCount === 0}
           >
             <FiPlay size={11} aria-hidden />
             {applying ? '执行中…' : `执行 ${selectedCount} 项`}
           </button>
+          {applying && (
+            <button
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-line text-secondary hover:text-ink hover:bg-raised"
+              onClick={() => CancelQuery(target.connId).catch(() => {})}
+            >
+              取消
+            </button>
+          )}
           {destructiveCount > 0 && (
             <span className="flex items-center gap-1 text-2xs text-danger">
               <FiAlertTriangle size={11} aria-hidden />
@@ -398,7 +406,7 @@ interface TargetPickerProps {
 }
 
 function TargetPicker({ label, target, connections, databases, schemas, onChange, onPickConnection }: TargetPickerProps) {
-  const selectClass = 'text-xs bg-raised border border-edge px-1.5 py-1 text-ink';
+  const selectClass = 'text-xs bg-raised border border-line px-1.5 py-1 text-ink';
   return (
     <div className="flex flex-col gap-1">
       <span className="text-2xs text-muted">{label}</span>
