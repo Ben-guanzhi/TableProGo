@@ -19,6 +19,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # This repo resolves the shared kernel through a local replace, so both
+      # replace targets have to exist before any go command runs: the root module
+      # declares `replace github.com/dbcore/dbcore => ../dbcore`, and the nested
+      # tableprosql / tableproxlsx modules declare ../../dbcore - which lands on
+      # the same directory (a sibling of this checkout). dbcore's declared module
+      # path does not match its real remote (github.com/Ben-guanzhi/dbcore), so
+      # it cannot be fetched as a normal dependency; without this step every
+      # build/vet/test step fails with
+      # "replacement directory ../dbcore does not exist".
+      #
+      # Stopgap for CI only: see PUBLISH-BLOCKER-dbcore-module-path-2026-10-26.md
+      # at the workspace root for the permanent fix.
+      - name: check out dbcore (sibling, for the local replace)
+        env:
+          # Left unset on purpose: the workflow token is scoped to THIS repo and
+          # cannot read a different one, so it is only sent when a PAT exists
+          # (needed only if dbcore is made private).
+          DBCORE_TOKEN: ${{ secrets.DBCORE_CHECKOUT_TOKEN }}
+        run: |
+          set -eu
+          dest="$(dirname "$GITHUB_WORKSPACE")/dbcore"
+          if [ -n "${DBCORE_TOKEN:-}" ]; then
+            hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$DBCORE_TOKEN" | base64 -w0)"
+            git -c "http.extraheader=$hdr" clone --depth 1 https://github.com/Ben-guanzhi/dbcore.git "$dest"
+          else
+            git clone --depth 1 https://github.com/Ben-guanzhi/dbcore.git "$dest"
+          fi
+
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -89,6 +117,24 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+
+      # The root module is built in this job, and it declares
+      # `replace github.com/dbcore/dbcore => ../dbcore`; see the `go` job above
+      # for why that directory must be cloned first. It is done here, before the
+      # frontend build, simply so the clone failure surfaces before the expensive
+      # npm steps rather than at the root `go vet` ten minutes later.
+      - name: check out dbcore (sibling, for the local replace)
+        env:
+          DBCORE_TOKEN: ${{ secrets.DBCORE_CHECKOUT_TOKEN }}
+        run: |
+          set -eu
+          dest="$(dirname "$GITHUB_WORKSPACE")/dbcore"
+          if [ -n "${DBCORE_TOKEN:-}" ]; then
+            hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$DBCORE_TOKEN" | base64 -w0)"
+            git -c "http.extraheader=$hdr" clone --depth 1 https://github.com/Ben-guanzhi/dbcore.git "$dest"
+          else
+            git clone --depth 1 https://github.com/Ben-guanzhi/dbcore.git "$dest"
+          fi
 
       - uses: actions/setup-node@v4
         with:

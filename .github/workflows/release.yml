@@ -39,6 +39,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same sibling replaces as CI (see the `go` job in ci.yml): both the root
+      # module's ../dbcore and the nested modules' ../../dbcore resolve to a
+      # sibling of this checkout, and nothing else provides it, so a tag-triggered
+      # release fails at the first go build without this step. See
+      # PUBLISH-BLOCKER-dbcore-module-path-2026-10-26.md at the workspace root.
+      - name: check out dbcore (sibling, for the local replace)
+        env:
+          DBCORE_TOKEN: ${{ secrets.DBCORE_CHECKOUT_TOKEN }}
+        run: |
+          set -eu
+          dest="$(dirname "$GITHUB_WORKSPACE")/dbcore"
+          if [ -n "${DBCORE_TOKEN:-}" ]; then
+            hdr="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$DBCORE_TOKEN" | base64 -w0)"
+            git -c "http.extraheader=$hdr" clone --depth 1 https://github.com/Ben-guanzhi/dbcore.git "$dest"
+          else
+            git clone --depth 1 https://github.com/Ben-guanzhi/dbcore.git "$dest"
+          fi
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
