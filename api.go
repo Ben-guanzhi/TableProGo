@@ -382,6 +382,20 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/structure", 400, func(a *App, body tableRefRequest) (any, error) {
 		return a.GetTableStructure(body.ConnID, body.Database, body.Schema, body.Table)
 	})
+	// The relationship diagram of one schema: every base table with its columns
+	// and foreign keys, read-only, so the frontend can lay it out as an SVG.
+	post(a, mux, "/api/er", 400, func(a *App, body tableRefRequest) (any, error) {
+		return a.GetERDiagram(body.ConnID, body.Database, body.Schema)
+	})
+	// Schema comparison and synchronization. The comparison rules live in
+	// dbcore/schemadiff; the apply route takes a plan id and entry ids rather
+	// than SQL, so a client can only run statements this process computed.
+	post(a, mux, "/api/compare", 400, func(a *App, body CompareRequest) (any, error) {
+		return a.CompareSchemas(body.Source, body.Target, body.Options)
+	})
+	post(a, mux, "/api/compare/apply", 400, func(a *App, body ApplySyncRequest) (any, error) {
+		return a.ApplySync(body)
+	})
 	post(a, mux, "/api/preview", 400, func(a *App, body previewRequest) (any, error) {
 		return a.previewPage(body.ConnID, body.Database, body.Schema, body.Table,
 			body.Limit, body.Offset, body.Filters, body.After, body.Before), nil

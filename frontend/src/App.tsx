@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { FiEye, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiTable } from 'react-icons/fi';
+import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
@@ -18,7 +18,9 @@ import ThemePicker from './components/ThemePicker';
 import ConnectionDialog from './components/ConnectionDialog';
 import ConfirmDialog, { ConfirmRequest } from './components/ConfirmDialog';
 import ImportDialog from './components/ImportDialog';
+import CompareView from './components/CompareView';
 import KvValuePanel from './components/KvValuePanel';
+import ERDiagram from './components/ERDiagram';
 import {
   Connection,
   ConnectionConfig,
@@ -225,9 +227,10 @@ function App() {
         setActiveConnection(null);
       }
       // Object tabs hold catalog reads that die with the pool, so close them
-      // rather than leaving a dead grid on screen.
+      // rather than leaving a dead grid on screen. An ER tab's metadata reads
+      // the same pool, so it goes with them.
       const kept = tabs.filter(
-        t => !((t.kind === 'table' || t.kind === 'kv') && t.tableRef?.connId === connId),
+        t => !((t.kind === 'table' || t.kind === 'kv' || t.kind === 'er') && t.tableRef?.connId === connId),
       );
       if (kept.length !== tabs.length) {
         setTabs(kept);
@@ -612,6 +615,52 @@ function App() {
     setTabs(current => [...current, tab]);
     setActiveTab(tab.id);
     loadKVValue(tab);
+  };
+
+  // An ER diagram is a read of every table in a schema; re-opening the same
+  // database+schema focuses the existing tab rather than stacking duplicates.
+  const openERTab = (ref: TableRef) => {
+    const existing = tabs.find(
+      t => t.kind === 'er' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
+    );
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    const qualifier = ref.schema ? `${ref.database}.${ref.schema}` : ref.database;
+    const tab: Tab = {
+      id: `tab_${Date.now()}`,
+      title: `ER ${qualifier}`,
+      query: '',
+      database: ref.database,
+      isDirty: false,
+      connectionId: ref.connId,
+      kind: 'er',
+      tableRef: ref,
+    };
+    setTabs(current => [...current, tab]);
+    setActiveTab(tab.id);
+  };
+
+  // Schema comparison is a tool, not a view of one object: it starts from the
+  // connection the navigator is on and lets the user pick both sides.
+  const openCompareTab = () => {
+    const existing = tabs.find(t => t.kind === 'compare');
+    if (existing) {
+      setActiveTab(existing.id);
+      return;
+    }
+    const tab: Tab = {
+      id: `tab_${Date.now()}`,
+      title: '结构对比',
+      query: '',
+      isDirty: false,
+      connectionId: activeConnection?.id,
+      kind: 'compare',
+      compareSource: { connId: activeConnection?.id ?? '', database: '', schema: '' },
+    };
+    setTabs(current => [...current, tab]);
+    setActiveTab(tab.id);
   };
 
   // A query page starts from the table it belongs to, so the user can run it
@@ -1036,6 +1085,7 @@ function App() {
         onOpenKey={openKVTab}
         onInsertText={handleInsertText}
         onNewTable={handleNewTable}
+        onOpenER={openERTab}
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
@@ -1051,6 +1101,7 @@ function App() {
           {tabs.map(tab => {
             const ref = tab.kind === 'table' ? tab.tableRef : undefined;
             const kvRef = tab.kind === 'kv' ? tab.tableRef : undefined;
+            const erRef = tab.kind === 'er' ? tab.tableRef : undefined;
             const fullName = ref
               ? `${objectQualifier(ref, connections.find(c => c.id === ref.connId)?.type)}.${ref.table}`
               : kvRef
@@ -1070,6 +1121,7 @@ function App() {
                     ? <FiEye size={12} aria-hidden className="mr-1.5 shrink-0 text-icon-view" />
                     : <FiTable size={12} aria-hidden className="mr-1.5 shrink-0 text-success" />)}
                 {kvRef && <FiKey size={12} aria-hidden className="mr-1.5 shrink-0 text-accent" />}
+                {erRef && <FiGitBranch size={12} aria-hidden className="mr-1.5 shrink-0 text-accent" />}
                 <span className="text-sm max-w-[200px] truncate">{tab.title}</span>
                 {tab.isDirty && <span className="ml-2 text-warning">*</span>}
                 <button
@@ -1095,6 +1147,14 @@ function App() {
             +
           </button>
           <div className="ml-auto flex items-center gap-1 pr-2">
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
+              onClick={openCompareTab}
+              title="结构对比 / 同步：把一个库的结构同步到另一个"
+              aria-label="结构对比与同步"
+            >
+              <FiShuffle size={14} />
+            </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
@@ -1127,7 +1187,21 @@ function App() {
         </div>
 
         <div className="flex-1 flex flex-col min-h-0">
-          {activeTabData && objectRef ? (
+          {activeTabData?.kind === 'compare' ? (
+            <CompareView
+              connections={connections}
+              connectedIds={connectedIds}
+              initialSource={activeTabData.compareSource}
+            />
+          ) : activeTabData?.kind === 'er' ? (
+            <ERDiagram
+              connId={activeTabData.tableRef?.connId ?? ''}
+              database={activeTabData.tableRef?.database ?? ''}
+              schema={activeTabData.tableRef?.schema ?? ''}
+              title={activeTabData.title}
+              theme={settings.theme}
+            />
+          ) : activeTabData && objectRef ? (
             <ObjectPanel
               tableName={objectRef.table}
               qualifier={objectQualifier(

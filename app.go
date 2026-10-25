@@ -39,6 +39,12 @@ type App struct {
 	// it; saveToFile folds in only what other clients added since then.
 	connObserved []ConnectionConfig
 
+	// comparePlans holds a computed schema comparison between the call that
+	// shows it and the call that applies it, so the client selects entry ids
+	// rather than handing SQL back for execution.
+	comparePlans map[string]*comparePlan
+	compareMu    sync.Mutex
+
 	// runs holds the cancel funcs of statements still executing, keyed by
 	// connection. A connection can have more than one in flight (a tab switch
 	// starts the next statement before the previous returns), so each keeps a

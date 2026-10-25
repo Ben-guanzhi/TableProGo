@@ -2,6 +2,7 @@ import {
   FiClock,
   FiCopy,
   FiEdit2,
+  FiGitBranch,
   FiMinusCircle,
   FiPlus,
   FiRefreshCw,
@@ -51,6 +52,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onRefreshKeyParent: (node: TNode) => void;
   onCopyDdl: (node: TNode) => void;
   onNewTable: (target: NewTableTarget) => void;
+  onOpenER: (node: TNode) => void;
   onConfirm: (request: ConfirmRequest) => void;
 }
 
@@ -167,6 +169,16 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
               database: node.database as string,
               schema: node.schema ?? '',
             });
+          }}
+        />
+      )}
+      {items.has('er') && (
+        <MenuItem
+          label="ER 图"
+          icon={<FiGitBranch size={11} />}
+          onClick={() => {
+            props.onClose();
+            props.onOpenER(node);
           }}
         />
       )}

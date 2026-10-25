@@ -83,6 +83,7 @@ interface SidebarProps {
   onOpenKey: (key: TableRef, label: string) => void;
   onInsertText: (table: TableRef) => void;
   onNewTable: (target: NewTableTarget) => void;
+  onOpenER: (ref: TableRef) => void;
   onRenameObject: (table: TableRef, newName: string) => Promise<void>;
   onDropObject: (table: TableRef) => Promise<void>;
   onTruncateObject: (table: TableRef) => Promise<void>;
@@ -175,6 +176,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onRenameKey,
   onDeleteKey,
   onSetKeyTTL,
+  onOpenER,
   onConfirm,
 }) => {
   const [filter, setFilter] = useState('');
@@ -752,6 +754,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       onRefreshKeyParent={n => refresh(parentOfTable(n))}
       onCopyDdl={copyDdl}
       onNewTable={onNewTable}
+      onOpenER={n => onOpenER(tableRefOf(n))}
       onConfirm={onConfirm}
     />
   );

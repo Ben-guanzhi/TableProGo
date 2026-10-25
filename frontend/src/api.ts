@@ -1,9 +1,14 @@
 import type {
+  ApplySyncResult,
   ChangeSet,
   Column,
   ColumnInfo,
+  CompareOptions,
+  CompareResult,
+  CompareTarget,
   Connection,
   ConnectionConfig,
+  ERSchema,
   ForeignKeyInfo,
   HistoryEntry,
   KVKeyInfo,
@@ -197,6 +202,30 @@ export async function RunTableAction(
 
 export async function GetTableStructure(connId: string, database: string, schema: string, table: string): Promise<any> {
   return post('/api/structure', { connId, database, schema, table });
+}
+
+// One schema's relationship diagram: every base table with its columns and
+// foreign keys. Read-only, so the frontend lays it out as an SVG without ever
+// sending a statement to the database.
+export async function GetERDiagram(connId: string, database: string, schema: string): Promise<ERSchema> {
+  return post('/api/er', { connId, database, schema });
+}
+
+// Compare two schemas and return the plan that would make the target look like
+// the source. Read-only: nothing runs until ApplySync is called with the plan id
+// this call returned.
+export async function CompareSchemas(
+  source: CompareTarget,
+  target: CompareTarget,
+  options: CompareOptions,
+): Promise<CompareResult> {
+  return post('/api/compare', { source, target, options });
+}
+
+// Run the selected entries of a plan. The request carries the plan id and entry
+// ids, never SQL — the backend renders the statements from the plan it stored.
+export async function ApplySync(planId: string, entryIds: string[]): Promise<ApplySyncResult> {
+  return post('/api/compare/apply', { planId, entryIds, confirm: true });
 }
 
 export interface TableRef {

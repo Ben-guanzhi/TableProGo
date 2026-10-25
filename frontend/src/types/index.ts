@@ -145,6 +145,40 @@ export interface ForeignKeyInfo {
   onUpdate: string;
 }
 
+// One attribute of a table in the relationship (ER) diagram. Carries only what
+// the SVG node needs: the name, the engine type and whether it anchors the PK.
+export interface ERColumn {
+  name: string;
+  type: string;
+  nullable: boolean;
+  isPrimaryKey: boolean;
+}
+
+// One foreign key of a table, pointing at another table in the same diagram.
+export interface ERFK {
+  name: string;
+  columns: string[];
+  refSchema: string;
+  refTable: string;
+  refColumns: string[];
+  onDelete: string;
+  onUpdate: string;
+}
+
+// One node of the diagram: its columns and the foreign keys leaving it.
+export interface ERTable {
+  name: string;
+  schema: string;
+  columns: ERColumn[];
+  foreignKeys: ERFK[];
+}
+
+// The whole diagram: every base table of one schema plus the relationships
+// between them. Returned by the backend and laid out as an SVG by the frontend.
+export interface ERSchema {
+  tables: ERTable[];
+}
+
 export interface TableStructure {
   columns: ColumnInfo[];
   indexes: IndexInfo[];
@@ -234,6 +268,65 @@ export interface SectionState<T> {
   error?: string;
 }
 
+// ---- schema comparison / synchronization ----
+
+// One side of a comparison: a connection plus the database and schema in it.
+export interface CompareTarget {
+  connId: string;
+  database: string;
+  schema: string;
+}
+
+export interface CompareOptions {
+  ignoreDefaults: boolean;
+  ignoreNullability: boolean;
+  ignoreIndexes: boolean;
+  ignoreForeignKeys: boolean;
+}
+
+// One change the plan proposes. `selected` is the initial tick: additive
+// changes start ticked, destructive ones do not.
+export interface CompareEntry {
+  id: string;
+  op: string;
+  table: string;
+  object: string;
+  from: string;
+  to: string;
+  phase: number;
+  reason: string;
+  destructive: boolean;
+  selected: boolean;
+}
+
+export interface CompareStatement {
+  entryId: string;
+  sql: string;
+}
+
+export interface CompareResult {
+  planId: string;
+  sourceLabel: string;
+  targetLabel: string;
+  kind: string;
+  schema: string;
+  entries: CompareEntry[];
+  statements: CompareStatement[];
+  warnings: string[];
+}
+
+export interface ApplySyncFailure {
+  entryId: string;
+  sql: string;
+  error: string;
+}
+
+export interface ApplySyncResult {
+  applied: number;
+  total: number;
+  failures: ApplySyncFailure[];
+}
+
 export type ObjectSection = 'data' | 'structure' | 'query' | 'history';
 
 export interface Tab {
@@ -254,11 +347,14 @@ export interface Tab {
   connectionId?: string;
   // Object tabs browse one table instead of editing a statement; a kv tab
   // shows one Redis key read-only. Without a kind a tab is a query tab.
-  kind?: 'query' | 'table' | 'kv';
+  kind?: 'query' | 'table' | 'kv' | 'er' | 'compare';
   tableRef?: TableRef;
   kv?: SectionState<KVValue>;
   objectType?: 'table' | 'view';
   section?: ObjectSection;
+  // A compare tab starts from the connection the navigator was on; the view lets
+  // the user change both sides from there.
+  compareSource?: CompareTarget;
   // An open interactive transaction, as the backend describes it ("事务中 · 2 条语句 ·
   // app"). Empty means the tab runs in autocommit.
   txStatus?: string;

@@ -28,17 +28,17 @@ test('a view has no truncate (it holds no rows of its own)', () => {
   assert.deepEqual(menuItemsFor(node({ kind: 'view' })), ['copyDdl', 'rename', 'drop', 'refresh']);
 });
 
-test('a schema is a container: it gains a table and nothing else', () => {
+test('a schema is a container: it gains a table and an ER diagram', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'schema', key: 's|1', label: 'public', table: undefined })),
-    ['newTable', 'refresh'],
+    ['newTable', 'er', 'refresh'],
   );
 });
 
 test('a database is a container too', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'database', key: 'd|1', label: 'app', schema: undefined, table: undefined })),
-    ['newTable', 'refresh'],
+    ['newTable', 'er', 'refresh'],
   );
 });
 

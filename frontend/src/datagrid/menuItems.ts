@@ -6,6 +6,7 @@ import type { TreeNode } from './sidebarTree';
 
 export type MenuItemId =
   | 'newTable'
+  | 'er'
   | 'copyDdl'
   | 'rename'
   | 'truncate'
@@ -27,7 +28,12 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     return ['keyTtl', 'keyRename', 'keyDelete', 'keyRefresh'];
   }
   const items: MenuItemId[] = [];
-  if (node.kind === 'database' || node.kind === 'schema') items.push('newTable');
+  if (node.kind === 'database' || node.kind === 'schema') {
+    items.push('newTable');
+    // The ER diagram reads every table in the schema, so it only makes sense for
+    // a container node that actually owns tables.
+    items.push('er');
+  }
   if (node.kind === 'table' || node.kind === 'view') {
     items.push('copyDdl', 'rename');
     if (node.kind === 'table') items.push('truncate');
