@@ -334,52 +334,11 @@ func InsertSQL(dbType, table string, cols []string, rows [][]*string, opts Optio
 	}
 	stmt := "INSERT INTO " + Ident(dbType, table) + " (" + strings.Join(quotedCols, ", ") + ") VALUES " + strings.Join(tuples, ", ")
 	if opts.Mode == "upsert" {
-		clause, err := UpsertClause(dbType, cols, opts.UpsertKeys)
+		clause, err := sqltext.UpsertClause(dbType, cols, opts.UpsertKeys)
 		if err != nil {
 			return "", nil, err
 		}
 		stmt += clause
 	}
 	return stmt, args, nil
-}
-
-// UpsertClause returns the engine's conflict clause for Mode="upsert".
-//
-// SQL Server and Oracle need a full MERGE statement (source values, matched and
-// not-matched branches); fabricating one here would be a second, untested write
-// path, so those two report a clear error and the user keeps append mode.
-func UpsertClause(dbType string, cols, keys []string) (string, error) {
-	if len(keys) == 0 {
-		return "", fmt.Errorf("import: upsert needs a conflict target (the table's primary key or a unique column)")
-	}
-	known := make(map[string]bool, len(cols))
-	for _, c := range cols {
-		known[c] = true
-	}
-	quotedKeys := make([]string, 0, len(keys))
-	for _, k := range keys {
-		if !known[k] {
-			return "", fmt.Errorf("import: upsert key %q is not one of the imported columns", k)
-		}
-		quotedKeys = append(quotedKeys, Ident(dbType, k))
-	}
-	assignments := make([]string, 0, len(cols))
-	switch dbType {
-	case "mysql":
-		// MySQL ignores the key list: any unique index can conflict.
-		for _, c := range cols {
-			q := Ident(dbType, c)
-			assignments = append(assignments, q+"=VALUES("+q+")")
-		}
-		return " ON DUPLICATE KEY UPDATE " + strings.Join(assignments, ", "), nil
-	case "postgresql", "sqlite":
-		for _, c := range cols {
-			q := Ident(dbType, c)
-			assignments = append(assignments, q+"=excluded."+q)
-		}
-		return " ON CONFLICT (" + strings.Join(quotedKeys, ", ") + ") DO UPDATE SET " + strings.Join(assignments, ", "), nil
-	case "sqlserver", "oracle":
-		return "", fmt.Errorf("import: %s does not support upsert import (needs MERGE); use append or truncate mode", dbType)
-	}
-	return "", fmt.Errorf("import: upsert is not supported for %s", dbType)
 }

@@ -159,15 +159,6 @@ func TestOracleRejectsMultiRowInsert(t *testing.T) {
 	}
 }
 
-func TestUpsertClauseRequiresKeysAndKnownColumns(t *testing.T) {
-	if _, err := UpsertClause("postgresql", []string{"id"}, nil); err == nil {
-		t.Fatal("missing keys must be rejected")
-	}
-	if _, err := UpsertClause("postgresql", []string{"id"}, []string{"nope"}); err == nil {
-		t.Fatal("unknown key must be rejected")
-	}
-}
-
 func TestNormalizeInfersFormatAndMode(t *testing.T) {
 	if got := Normalize(Options{}, "x.SQL"); got.Format != "sql" {
 		t.Errorf("format = %q", got.Format)

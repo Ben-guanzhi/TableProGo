@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"tablepro-go/internal/importfile"
+	"github.com/dbcore/dbcore/sqltext"
 )
 
 func TestImportUpsertUpdatesExistingRows(t *testing.T) {
@@ -56,7 +56,7 @@ func TestImportUpsertRejectsUnknownKey(t *testing.T) {
 
 func TestImportUpsertRejectedOnMSSQLAndOracle(t *testing.T) {
 	for _, typ := range []string{"sqlserver", "oracle"} {
-		if _, err := importfile.UpsertClause(typ, []string{"id", "name"}, []string{"id"}); err == nil {
+		if _, err := sqltext.UpsertClause(typ, []string{"id", "name"}, []string{"id"}); err == nil {
 			t.Errorf("%s: upsert must be rejected, not silently ignored", typ)
 		}
 	}
@@ -64,15 +64,15 @@ func TestImportUpsertRejectedOnMSSQLAndOracle(t *testing.T) {
 
 // The upsert clause must be the engine's own syntax.
 func TestImportUpsertClausePerEngine(t *testing.T) {
-	my, err := importfile.UpsertClause("mysql", []string{"id", "name"}, []string{"id"})
+	my, err := sqltext.UpsertClause("mysql", []string{"id", "name"}, []string{"id"})
 	if err != nil || my != " ON DUPLICATE KEY UPDATE `id`=VALUES(`id`), `name`=VALUES(`name`)" {
 		t.Fatalf("mysql clause = %q (%v)", my, err)
 	}
-	pg, err := importfile.UpsertClause("postgresql", []string{"id", "name"}, []string{"id"})
+	pg, err := sqltext.UpsertClause("postgresql", []string{"id", "name"}, []string{"id"})
 	if err != nil || pg != ` ON CONFLICT ("id") DO UPDATE SET "id"=excluded."id", "name"=excluded."name"` {
 		t.Fatalf("pg clause = %q (%v)", pg, err)
 	}
-	sq, err := importfile.UpsertClause("sqlite", []string{"id"}, []string{"id"})
+	sq, err := sqltext.UpsertClause("sqlite", []string{"id"}, []string{"id"})
 	if err != nil || sq != ` ON CONFLICT ("id") DO UPDATE SET "id"=excluded."id"` {
 		t.Fatalf("sqlite clause = %q (%v)", sq, err)
 	}
