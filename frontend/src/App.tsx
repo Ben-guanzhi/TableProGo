@@ -2,6 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
+import BackupDialog from './components/BackupDialog';
+import StructureEditorDialog from './components/StructureEditorDialog';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
 import DataGrid from './components/DataGrid';
 import ObjectPanel, { DEFAULT_PAGE_SIZE } from './components/ObjectPanel';
@@ -682,6 +684,20 @@ function App() {
 
   // An ER diagram is a read of every table in a schema; re-opening the same
   // database+schema focuses the existing tab rather than stacking duplicates.
+  // 备份数据库：目标来自侧栏菜单，对话框只管收集模式/表/输出路径。
+  // 结构可视编辑：目标与初始列来自对象面板的结构页。
+  const [structureEditTarget, setStructureEditTarget] = useState<{
+    ref: TableRef;
+    columns: { name: string; type: string; nullable: boolean; defaultValue: string }[];
+  } | null>(null);
+
+  const [backupTarget, setBackupTarget] = useState<{
+    connId: string;
+    dbType: string;
+    database: string;
+    schema?: string;
+  } | null>(null);
+
   const openERTab = (ref: TableRef) => {
     const existing = tabs.find(
       t => t.kind === 'er' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
@@ -1159,6 +1175,14 @@ function App() {
         onInsertText={handleInsertText}
         onNewTable={handleNewTable}
         onOpenER={openERTab}
+        onBackup={node =>
+          setBackupTarget({
+            connId: node.connId,
+            dbType: node.dbType,
+            database: (node.database as string) ?? '',
+            schema: node.schema ?? '',
+          })
+        }
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
@@ -1299,6 +1323,20 @@ function App() {
               showComments={settings.showColumnComments}
               editSource={activeTabData.objectType === 'view' ? null : objectRef}
               exportName={`${objectRef.database}.${objectRef.table}`}
+              tableRef={activeTabData.tableRef ?? null}
+              onEditStructure={() => {
+                if (!activeTabData.tableRef || !activeTabData.structure?.data) return;
+                setStructureEditTarget({
+                  ref: activeTabData.tableRef,
+                  columns: activeTabData.structure.data.columns.map(c => ({
+                    name: c.name,
+                    type: c.type,
+                    nullable: c.nullable,
+                    defaultValue: c.defaultValue ?? '',
+
+                  })),
+                });
+              }}
               onImport={() => setImportTarget(objectRef)}
               onRefresh={() => handleObjectRefresh(activeTabData)}
               onDataApplied={() => loadObjectSection(activeTabData, 'data')}
@@ -1458,6 +1496,22 @@ function App() {
             setEditingConnection(null);
           }}
           onTest={handleTestConnection}
+        />
+      )}
+
+      {backupTarget && (
+        <BackupDialog target={backupTarget} onClose={() => setBackupTarget(null)} />
+      )}
+
+      {structureEditTarget && (
+        <StructureEditorDialog
+          target={structureEditTarget.ref}
+          columns={structureEditTarget.columns}
+          onApplied={() => {
+            const tab = tabs.find(t => t.tableRef && objectKey(t.tableRef) === objectKey(structureEditTarget.ref));
+            if (tab) loadObjectSection(tab, 'structure');
+          }}
+          onClose={() => setStructureEditTarget(null)}
         />
       )}
 

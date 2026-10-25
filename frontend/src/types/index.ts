@@ -179,10 +179,18 @@ export interface ERSchema {
   tables: ERTable[];
 }
 
+export interface TriggerInfo {
+  name: string;
+  timing: string;
+  event: string;
+  enabled: string;
+}
+
 export interface TableStructure {
   columns: ColumnInfo[];
   indexes: IndexInfo[];
   foreignKeys: ForeignKeyInfo[];
+  triggers?: TriggerInfo[];
   createTable: string;
 }
 

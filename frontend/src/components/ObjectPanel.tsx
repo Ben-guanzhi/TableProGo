@@ -11,6 +11,7 @@ import {
   FiRefreshCw,
   FiTable,
   FiTrash2,
+  FiX,
 } from 'react-icons/fi';
 import {
   HistoryEntry,
@@ -22,6 +23,7 @@ import {
   TableRef,
 } from '../types';
 import toast from 'react-hot-toast';
+import { GetTriggerDefinition } from '../api';
 import { copyText } from '../clipboard';
 import DataGrid from './DataGrid';
 import ErrorBanner from './ErrorBanner';
@@ -62,6 +64,11 @@ interface ObjectPanelProps {
   // The data card's rows can be written back when they came from a table.
   editSource?: TableRef | null;
   exportName: string;
+  // The object this panel belongs to, for features that re-read the catalog
+  // (the trigger definition lookup).
+  tableRef?: TableRef | null;
+  // Optional: opens the structure editor for this table.
+  onEditStructure?: () => void;
   // Optional: opens the import dialog for this table.
   onImport?: () => void;
   onRefresh: () => void;
@@ -180,6 +187,72 @@ const ForeignKeyList: React.FC<{ structure: TableStructure }> = ({ structure }) 
     </tbody>
   </table>
 );
+
+const TriggerList: React.FC<{
+  structure: TableStructure;
+  connId: string;
+  database: string;
+  schema: string;
+}> = ({ structure, connId, database, schema }) => {
+  const [openTrigger, setOpenTrigger] = useState<{ name: string; def: string } | null>(null);
+  return (
+    <>
+      <table className={gridClass}>
+        <thead>
+          <tr>
+            <th className={thClass}>名称</th>
+            <th className={thClass}>时机</th>
+            <th className={thClass}>事件</th>
+            <th className={thClass}>状态</th>
+            <th className={thClass}>定义</th>
+          </tr>
+        </thead>
+        <tbody>
+          {structure.triggers?.map(tr => (
+            <tr key={tr.name} className="even:bg-row-alt/40">
+              <td className={`${tdClass} ${monoClass}`}>{tr.name}</td>
+              <td className={tdClass}>{tr.timing}</td>
+              <td className={`${tdClass} text-secondary`}>{tr.event}</td>
+              <td className={tdClass}>{tr.enabled}</td>
+              <td className={tdClass}>
+                <button
+                  className="text-accent hover:underline text-2xs"
+                  onClick={() => {
+                    GetTriggerDefinition(connId, database, schema, tr.name)
+                      .then(def => setOpenTrigger({ name: tr.name, def }))
+                      .catch(e => toast.error((e as Error).message));
+                  }}
+                >
+                  查看
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {openTrigger && (
+        <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50" onClick={() => setOpenTrigger(null)}>
+          <div
+            className="bg-panel rounded-lg w-full max-w-2xl max-h-[70vh] shadow-xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+              <h2 className="text-sm font-semibold font-mono">{openTrigger.name}</h2>
+              <button className="text-secondary hover:text-ink" onClick={() => setOpenTrigger(null)} aria-label="关闭">
+                <FiX size={16} />
+              </button>
+            </div>
+            <pre className="flex-1 overflow-auto p-4 text-xs font-mono text-ink whitespace-pre-wrap break-all">
+              {openTrigger.def}
+            </pre>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
 
 const DdlCard: React.FC<{ ddl: string; label: string }> = ({ ddl, label }) => {
   const [expanded, setExpanded] = useState(false);
@@ -353,6 +426,8 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
   showComments,
   editSource,
   exportName,
+  tableRef,
+  onEditStructure,
   onImport,
   onRefresh,
   onDataApplied,
@@ -504,7 +579,20 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
           )}
           {!structure.loading && structure.data && (
             <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-3">
-              <Card title="字段" count={structure.data.columns.length}>
+              <Card
+                title="字段"
+                count={structure.data.columns.length}
+                actions={
+                  onEditStructure && objectType === 'table' ? (
+                    <button
+                      className="px-1.5 py-0.5 text-2xs text-secondary hover:text-ink"
+                      onClick={onEditStructure}
+                    >
+                      编辑结构…
+                    </button>
+                  ) : undefined
+                }
+              >
                 <ColumnList structure={structure.data} showComments={!!showComments} />
               </Card>
               {structure.data.indexes.length > 0 && (
@@ -515,6 +603,16 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
               {structure.data.foreignKeys.length > 0 && (
                 <Card title="外键" count={structure.data.foreignKeys.length}>
                   <ForeignKeyList structure={structure.data} />
+                </Card>
+              )}
+              {(structure.data.triggers?.length ?? 0) > 0 && tableRef && (
+                <Card title="触发器" count={structure.data.triggers!.length}>
+                  <TriggerList
+                    structure={structure.data}
+                    connId={tableRef.connId}
+                    database={tableRef.database}
+                    schema={tableRef.schema}
+                  />
                 </Card>
               )}
               {structure.data.createTable && (

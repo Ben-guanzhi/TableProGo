@@ -532,10 +532,12 @@ func (a *App) GetTableStructure(connID, database, schema, table string) (TableSt
 		columns[i].DefaultValue = normalizeDefault(conn.Type, columns[i].DefaultValue)
 	}
 
+	triggers := a.tableTriggers(conn, database, schema, table)
 	return TableStructure{
 		Columns:     columns,
 		Indexes:     indexes,
 		ForeignKeys: foreignKeys,
+		Triggers:    triggers,
 		CreateTable: ddl,
 	}, nil
 }

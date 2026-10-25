@@ -102,6 +102,24 @@ export async function GetColumns(connId: string, database: string, schema: strin
 
 // One Redis key read whole. The type and remaining lifetime sit beside the
 // rows so the panel can name what it is showing.
+export interface BackupRequest {
+  connId: string;
+  database: string;
+  mode: 'full' | 'structure' | 'data';
+  tables: string[];
+  outPath: string;
+}
+
+export interface BackupResult {
+  ok: boolean;
+  log: string[];
+  error?: string;
+}
+
+export async function BackupDatabase(req: BackupRequest): Promise<BackupResult> {
+  return post('/api/backup', req);
+}
+
 export interface Favorite {
   id: string;
   connId: string;
@@ -250,6 +268,49 @@ export async function RunTableAction(
     return confirmed.statement ?? '';
   }
   return data.statement ?? '';
+}
+
+export async function GetTriggerDefinition(
+  connId: string,
+  database: string,
+  schema: string,
+  trigger: string,
+): Promise<string> {
+  const data = await post('/api/trigger-definition', { connId, database, schema, table: trigger });
+  return data.definition ?? '';
+}
+
+export interface ColumnEdit {
+  name: string;
+  type: string;
+  nullable: boolean;
+  defaultValue: string;
+  isNew?: boolean;
+}
+
+export interface StructureEditResult {
+  statements: string[];
+  warnings: string[];
+}
+
+export async function PreviewStructureEdit(req: {
+  connId: string;
+  database: string;
+  schema: string;
+  table: string;
+  columns: ColumnEdit[];
+}): Promise<StructureEditResult> {
+  return post('/api/structure-preview', req);
+}
+
+export async function ApplyStructureEdit(req: {
+  connId: string;
+  database: string;
+  schema: string;
+  table: string;
+  columns: ColumnEdit[];
+}): Promise<StructureEditResult> {
+  return post('/api/structure-edit', req);
 }
 
 export async function GetTableStructure(connId: string, database: string, schema: string, table: string): Promise<any> {

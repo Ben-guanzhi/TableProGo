@@ -452,6 +452,24 @@ func (a *App) routes() *http.ServeMux {
 		return nil, a.DeleteFavorite(body.ID)
 	})
 
+	post(a, mux, "/api/structure-preview", 400, func(a *App, body StructureEditRequest) (any, error) {
+		return a.PreviewStructureEdit(body)
+	})
+	post(a, mux, "/api/structure-edit", 400, func(a *App, body StructureEditRequest) (any, error) {
+		return a.ApplyStructureEdit(body)
+	})
+	post(a, mux, "/api/trigger-definition", 400, func(a *App, body tableRefRequest) (any, error) {
+		def, err := a.GetTriggerDefinition(body.ConnID, body.Database, body.Schema, body.Table)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"definition": def}, nil
+	})
+
+	post(a, mux, "/api/backup", 400, func(a *App, body BackupRequest) (any, error) {
+		return a.Backup(body)
+	})
+
 	mux.HandleFunc("/api/format-sql", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			w.WriteHeader(405)

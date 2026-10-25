@@ -400,13 +400,21 @@ func movesDataOnly(query string) bool {
 	return false
 }
 
+// runSelect keeps the original shape for callers without a context.
 func runSelect(db *sql.DB, query string, start time.Time, args ...interface{}) QueryResult {
-	rows, err := db.Query(query, args...)
+	return runSelectCtx(context.Background(), db, query, args...)
+}
+
+// runSelectCtx is runSelect with a caller-owned context, so a version probe
+// (backup) aborts with the run instead of hanging on a dead server.
+func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interface{}) QueryResult {
+	rows, err := db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}
 	defer rows.Close()
 
+	start := time.Now()
 	columns, err := rows.Columns()
 	if err != nil {
 		return QueryResult{Error: err.Error()}
@@ -427,7 +435,7 @@ func runSelect(db *sql.DB, query string, start time.Time, args ...interface{}) Q
 		}
 	}
 
-	// The scan destinations are reused across rows (as fynequery's runSelect
+	// The scan destinations are reused across rows (as fynequery's runSelectCtx
 	// already does): one allocation for values and one for valuePtrs instead of
 	// two per row. Only the interpreted row - the slice the caller keeps - is
 	// allocated per iteration.

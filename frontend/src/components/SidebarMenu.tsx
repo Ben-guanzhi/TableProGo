@@ -1,6 +1,7 @@
 import {
   FiClock,
   FiCopy,
+  FiDownload,
   FiEdit2,
   FiGitBranch,
   FiMinusCircle,
@@ -53,6 +54,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onCopyDdl: (node: TNode) => void;
   onNewTable: (target: NewTableTarget) => void;
   onOpenER: (node: TNode) => void;
+  onBackup: (node: TNode) => void;
   onConfirm: (request: ConfirmRequest) => void;
 }
 
@@ -179,6 +181,16 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
           onClick={() => {
             props.onClose();
             props.onOpenER(node);
+          }}
+        />
+      )}
+      {items.has('backup') && (
+        <MenuItem
+          label="备份数据库…"
+          icon={<FiDownload size={11} />}
+          onClick={() => {
+            props.onClose();
+            props.onBackup(node);
           }}
         />
       )}

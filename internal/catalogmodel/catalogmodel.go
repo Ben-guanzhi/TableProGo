@@ -51,7 +51,18 @@ type TableStructure struct {
 	Columns     []ColumnInfo     `json:"columns"`
 	Indexes     []IndexInfo      `json:"indexes"`
 	ForeignKeys []ForeignKeyInfo `json:"foreignKeys"`
-	CreateTable string           `json:"createTable"`
+	// Triggers lists the table's triggers; empty when the engine has none or
+	// the read failed (the error is logged, not fatal to the structure page).
+	Triggers    []TriggerInfo `json:"triggers"`
+	CreateTable string        `json:"createTable"`
+}
+
+// TriggerInfo is one catalog trigger as the structure page shows it.
+type TriggerInfo struct {
+	Name    string `json:"name"`
+	Timing  string `json:"timing"`
+	Event   string `json:"event"`
+	Enabled string `json:"enabled"`
 }
 
 // Column is the presence-only column descriptor a query result carries.

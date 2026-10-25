@@ -15,7 +15,11 @@ export type MenuItemId =
   | 'keyTtl'
   | 'keyRename'
   | 'keyDelete'
-  | 'keyRefresh';
+  | 'keyRefresh'
+  | 'backup';
+
+// backupableEngine names the two engines with an official single-file dump tool.
+const backupableEngine = (dbType: string) => dbType === 'postgresql' || dbType === 'mysql';
 
 // menuItemsFor decides the item list for one node. The three "kinds" of menu are
 // deliberately different:
@@ -33,6 +37,8 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     // The ER diagram reads every table in the schema, so it only makes sense for
     // a container node that actually owns tables.
     items.push('er');
+    // Native-tool backup (pg_dump/mysqldump) exists for exactly two engines.
+    if (backupableEngine(node.dbType)) items.push('backup');
   }
   if (node.kind === 'table' || node.kind === 'view') {
     items.push('copyDdl', 'rename');
