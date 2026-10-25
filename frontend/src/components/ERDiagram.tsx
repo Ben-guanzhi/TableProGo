@@ -250,6 +250,7 @@ const ERDiagram: React.FC<Props> = ({ connId, database, schema, title, theme }) 
           className="p-1 text-secondary hover:text-ink disabled:opacity-40"
           title="放大"
           aria-label="放大"
+          disabled={scale >= 3 - 1e-9}
           onClick={() => setScale(s => clamp(s * 1.1))}
         >
           <FiZoomIn size={14} />
@@ -258,6 +259,7 @@ const ERDiagram: React.FC<Props> = ({ connId, database, schema, title, theme }) 
           className="p-1 text-secondary hover:text-ink disabled:opacity-40"
           title="缩小"
           aria-label="缩小"
+          disabled={scale <= 0.2 + 1e-9}
           onClick={() => setScale(s => clamp(s / 1.1))}
         >
           <FiZoomOut size={14} />

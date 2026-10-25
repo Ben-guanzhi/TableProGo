@@ -21,8 +21,8 @@ const emptySSH: SSHConfig = {
 
 interface ConnectionDialogProps {
   initialConfig?: Connection | null;
-  onAdd: (config: ConnectionConfig) => void;
-  onUpdate?: (config: ConnectionConfig) => void;
+  onAdd: (config: ConnectionConfig) => void | Promise<void>;
+  onUpdate?: (config: ConnectionConfig) => void | Promise<void>;
   onClose: () => void;
   onTest: (config: ConnectionConfig) => Promise<boolean>;
 }
@@ -47,6 +47,8 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState('');
 
   useEffect(() => {
     if (initialConfig) {
@@ -105,26 +107,50 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       const success = await onTest(config);
       if (success) {
         setTestResult('success');
-        toast.success('Connection successful!');
+        toast.success('连接成功');
       } else {
         setTestResult('error');
-        toast.error('Connection failed: unknown error');
+        toast.error('连接失败：未知错误');
       }
     } catch (error: unknown) {
       setTestResult('error');
       const msg = error instanceof Error ? error.message : String(error);
-      toast.error(`Connection failed: ${msg}`, { duration: 8000 });
+      toast.error(`连接失败：${msg}`, { duration: 8000 });
     } finally {
       setTesting(false);
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isEdit && onUpdate) {
-      onUpdate(config);
-    } else {
-      onAdd(config);
+    setFormError('');
+    // Only the name is checked by the browser's `required`; a connection with
+    // no host or a zero port would only fail later, at connect time.
+    if (config.type !== 'sqlite') {
+      if (!config.host.trim()) {
+        setFormError('主机不能为空');
+        return;
+      }
+      if (!config.port || config.port <= 0) {
+        setFormError('端口必须是正整数');
+        return;
+      }
+    }
+    if (config.ssh?.enabled) {
+      if (!config.ssh.host.trim() || !config.ssh.user.trim()) {
+        setFormError('启用 SSH 隧道时，SSH 主机和用户名必填');
+        return;
+      }
+    }
+    setSaving(true);
+    try {
+      if (isEdit && onUpdate) {
+        await onUpdate(config);
+      } else {
+        await onAdd(config);
+      }
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -132,7 +158,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
     <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50">
       <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="connection-dialog-title" className="bg-panel rounded-lg w-full max-w-md shadow-xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-line">
-          <h2 id="connection-dialog-title" className="text-lg font-semibold">{isEdit ? 'Edit Connection' : 'New Connection'}</h2>
+          <h2 id="connection-dialog-title" className="text-lg font-semibold">{isEdit ? '编辑连接' : '新建连接'}</h2>
           <button className="text-secondary hover:text-ink" onClick={onClose} aria-label="关闭对话框">
             <FiX size={20} />
           </button>
@@ -140,7 +166,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
-            <label htmlFor="conn-name" className="block text-sm text-secondary mb-1">Connection Name</label>
+            <label htmlFor="conn-name" className="block text-sm text-secondary mb-1">连接名称</label>
             <input
               id="conn-name"
               autoFocus
@@ -148,13 +174,13 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
               value={config.name}
               onChange={(e) => setConfig({ ...config, name: e.target.value })}
-              placeholder="My Database"
+              placeholder="我的数据库"
               required
             />
           </div>
 
           <div>
-            <label htmlFor="conn-type" className="block text-sm text-secondary mb-1">Database Type</label>
+            <label htmlFor="conn-type" className="block text-sm text-secondary mb-1">数据库类型</label>
             <select
               id="conn-type"
               className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
@@ -173,7 +199,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
           {config.type !== 'sqlite' && (
             <div className="grid grid-cols-3 gap-4">
               <div className="col-span-2">
-                <label htmlFor="conn-host" className="block text-sm text-secondary mb-1">Host</label>
+                <label htmlFor="conn-host" className="block text-sm text-secondary mb-1">主机</label>
                 <input
                   id="conn-host"
                   type="text"
@@ -184,7 +210,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                 />
               </div>
               <div>
-                <label htmlFor="conn-port" className="block text-sm text-secondary mb-1">Port</label>
+                <label htmlFor="conn-port" className="block text-sm text-secondary mb-1">端口</label>
                 <input
                   id="conn-port"
                   type="number"
@@ -198,9 +224,9 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
 
           <div>
             <label htmlFor="conn-database" className="block text-sm text-secondary mb-1">
-              {config.type === 'sqlite' ? 'Database File Path' :
-               config.type === 'oracle' ? 'Service Name / SID' :
-               config.type === 'redis' ? 'Logical Database (0-15)' : 'Database'}
+              {config.type === 'sqlite' ? '数据库文件路径' :
+               config.type === 'oracle' ? '服务名 / SID' :
+               config.type === 'redis' ? '逻辑库（0-15）' : '数据库'}
             </label>
             <input
               id="conn-database"
@@ -212,7 +238,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                 config.type === 'sqlite' ? '/path/to/database.db' :
                 config.type === 'oracle' ? 'ORCL' :
                 config.type === 'redis' ? '0' :
-                'database name'
+                '数据库名'
               }
             />
           </div>
@@ -220,7 +246,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
           {config.type !== 'sqlite' && (
             <>
               <div>
-                <label htmlFor="conn-username" className="block text-sm text-secondary mb-1">Username</label>
+                <label htmlFor="conn-username" className="block text-sm text-secondary mb-1">用户名</label>
                 <input
                   id="conn-username"
                   type="text"
@@ -232,7 +258,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               </div>
               <div>
                 <label htmlFor="conn-password" className="block text-sm text-secondary mb-1">
-                  {isEdit ? 'Password (leave blank to keep current)' : 'Password'}
+                  {isEdit ? '密码（留空保持不变）' : '密码'}
                 </label>
                 <input
                   id="conn-password"
@@ -250,7 +276,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
           {config.type !== 'sqlite' && (
             <div>
               <label htmlFor="conn-ssl" className="block text-sm text-secondary mb-1">
-                {config.type === 'sqlserver' ? 'Encrypt' : config.type === 'redis' ? 'TLS' : 'SSL Mode'}
+                {config.type === 'sqlserver' ? '加密' : config.type === 'redis' ? 'TLS' : 'SSL 模式'}
               </label>
               <select
                 id="conn-ssl"
@@ -260,16 +286,16 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               >
                 {config.type === 'sqlserver' ? (
                   <>
-                    <option value="false">False (Default)</option>
-                    <option value="true">True</option>
-                    <option value="disable">Disable</option>
-                    <option value="strict">Strict</option>
+                    <option value="false">关（默认）</option>
+                    <option value="true">开</option>
+                    <option value="disable">禁用</option>
+                    <option value="strict">严格</option>
                   </>
                 ) : (
                   <>
-                    <option value="false">Disable</option>
-                    <option value="true">Enable</option>
-                    <option value="require">Require</option>
+                    <option value="false">禁用</option>
+                    <option value="true">启用</option>
+                    <option value="require">要求</option>
                   </>
                 )}
               </select>
@@ -289,13 +315,13 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                     })
                   }
                 />
-                Route through an SSH tunnel (bastion host)
+                经 SSH 隧道连接（跳板机）
               </label>
 
               {config.ssh?.enabled && (
                 <div className="grid grid-cols-3 gap-3">
                   <div className="col-span-2">
-                    <label htmlFor="ssh-host" className="block text-sm text-secondary mb-1">SSH Host</label>
+                    <label htmlFor="ssh-host" className="block text-sm text-secondary mb-1">SSH 主机</label>
                     <input
                       id="ssh-host"
                       type="text"
@@ -306,7 +332,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                     />
                   </div>
                   <div>
-                    <label htmlFor="ssh-port" className="block text-sm text-secondary mb-1">SSH Port</label>
+                    <label htmlFor="ssh-port" className="block text-sm text-secondary mb-1">SSH 端口</label>
                     <input
                       id="ssh-port"
                       type="number"
@@ -316,7 +342,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                     />
                   </div>
                   <div className="col-span-3">
-                    <label htmlFor="ssh-user" className="block text-sm text-secondary mb-1">SSH User</label>
+                    <label htmlFor="ssh-user" className="block text-sm text-secondary mb-1">SSH 用户名</label>
                     <input
                       id="ssh-user"
                       type="text"
@@ -328,7 +354,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                   </div>
                   <div className="col-span-3">
                     <label htmlFor="ssh-password" className="block text-sm text-secondary mb-1">
-                      {isEdit ? 'SSH Password (leave blank to keep current)' : 'SSH Password'}
+                      {isEdit ? 'SSH 密码（留空保持不变）' : 'SSH 密码'}
                     </label>
                     <input
                       id="ssh-password"
@@ -342,7 +368,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                   </div>
                   <div className="col-span-3">
                     <label htmlFor="ssh-key" className="block text-sm text-secondary mb-1">
-                      Private Key File (alternative to password)
+                      私钥文件（可用作密码替代）
                     </label>
                     <input
                       id="ssh-key"
@@ -355,7 +381,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                   </div>
                   {config.ssh.keyFile !== '' && (
                     <div className="col-span-3">
-                      <label htmlFor="ssh-passphrase" className="block text-sm text-secondary mb-1">Key Passphrase</label>
+                      <label htmlFor="ssh-passphrase" className="block text-sm text-secondary mb-1">私钥口令</label>
                       <input
                         id="ssh-passphrase"
                         type="password"
@@ -387,34 +413,40 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               disabled={testing}
             >
               {testing ? (
-                'Testing...'
+                '测试中…'
               ) : testResult === 'success' ? (
                 <>
                   <FiCheck className="mr-2" />
-                  Connected
+                  已连接
                 </>
               ) : (
                 <>
                   <FiDatabase className="mr-2" />
-                  Test Connection
+                  测试连接
                 </>
               )}
             </button>
           </div>
+
+          {formError && (
+            <p className="text-xs text-danger" role="alert">{formError}</p>
+          )}
 
           <div className="flex justify-end space-x-3 pt-4 border-t border-line">
             <button
               type="button"
               className="px-4 py-2 rounded text-sm bg-raised hover:bg-emphasis text-ink"
               onClick={onClose}
+              disabled={saving}
             >
-              Cancel
+              取消
             </button>
             <button
               type="submit"
-              className="px-4 py-2 rounded text-sm bg-accent hover:bg-accent-hover text-on-accent"
+              className="px-4 py-2 rounded text-sm bg-accent hover:bg-accent-hover text-on-accent disabled:opacity-40"
+              disabled={saving}
             >
-              {isEdit ? 'Update Connection' : 'Save Connection'}
+              {saving ? '保存中…' : isEdit ? '保存修改' : '保存连接'}
             </button>
           </div>
         </form>

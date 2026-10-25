@@ -29,7 +29,9 @@ func (c mcpCatalog) Connections() []mcp.ConnectionInfo {
 	defer c.app.connectionsMu.RUnlock()
 	out := make([]mcp.ConnectionInfo, 0, len(c.app.connections))
 	for _, conn := range c.app.connections {
-		if conn.DB == nil && conn.KV == nil {
+		// A plugin-backed connection holds no DB/KV handle yet is live; the
+		// same three shapes isConnected() accepts count here too.
+		if !conn.isConnected() {
 			continue
 		}
 		out = append(out, mcp.ConnectionInfo{

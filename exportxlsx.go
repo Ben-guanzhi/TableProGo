@@ -21,6 +21,13 @@ func (a *App) WorkbookBase64(columns []tableproxlsx.Column, rows [][]interface{}
 	if len(rows) == 0 {
 		return "", fmt.Errorf("当前结果为空，没有可导出的行")
 	}
+	// A workbook is a compressed archive and every row is built in memory
+	// before it goes over the JSON API, so unlike the SQL export this needs a
+	// hard cap: ten times the INSERT-script limit, the ratio the two formats
+	// always had.
+	if max := a.effectiveExportMaxRows() * 10; len(rows) > max {
+		return "", fmt.Errorf("一次最多导出 %d 行（XLSX）：可在「设置」调整导出行数上限，或翻页/缩小范围", max)
+	}
 	data, err := tableproxlsx.BuildWorkbook(columns, rows)
 	if err != nil {
 		return "", err

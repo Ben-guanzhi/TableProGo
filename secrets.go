@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 
 	"github.com/zalando/go-keyring"
 )
@@ -58,6 +59,13 @@ func openViaKeyring(id string) (string, error) {
 	return plaintext, nil
 }
 
+// keyringFallback records the most recent keyring failure, so the UI can tell
+// the user about the plain-text fallback instead of only the log knowing.
+var keyringFallback struct {
+	sync.Mutex
+	reason string
+}
+
 // protectViaKeyringOrPlain seals into the OS keyring, falling back to the
 // legacy plain-text store when the machine has no usable keyring (no Secret
 // Service on Linux, keychain denied, ...). Refusing to save would lose the
@@ -66,9 +74,41 @@ func protectViaKeyringOrPlain(plaintext string) (string, error) {
 	sealed, err := sealViaKeyring(plaintext)
 	if err != nil {
 		log.Printf("keyring unavailable, storing password in plain text: %v", err)
+		keyringFallback.Lock()
+		keyringFallback.reason = err.Error()
+		keyringFallback.Unlock()
 		return plaintext, nil
 	}
 	return sealed, nil
+}
+
+// SecurityNotice explains a silent security fallback the user should see once.
+// A recorded keyring failure names the just-saved plain text; a stored
+// plain-text password means the keyring was unavailable when it was saved.
+// Empty means nothing to report.
+func (a *App) SecurityNotice() string {
+	keyringFallback.Lock()
+	reason := keyringFallback.reason
+	keyringFallback.Unlock()
+	if reason != "" {
+		keyringFallback.Lock()
+		keyringFallback.reason = ""
+		keyringFallback.Unlock()
+		return "系统钥匙串不可用（" + reason + "）：本次保存的密码以明文存储在本机。"
+	}
+	a.connectionsMu.RLock()
+	plain := false
+	for i := range a.savedConnections {
+		if c := &a.savedConnections[i]; !plain {
+			plain = (c.Password != "" && !isSealedValue(c.Password)) ||
+				(c.SSH.Password != "" && !isSealedValue(c.SSH.Password))
+		}
+	}
+	a.connectionsMu.RUnlock()
+	if plain {
+		return "系统钥匙串不可用：已有连接的密码以明文保存在本机。修好钥匙串后重新保存连接即可封存。"
+	}
+	return ""
 }
 
 // unprotectSecret opens a saved password by its file-form prefix: keyring

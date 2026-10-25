@@ -220,5 +220,10 @@ func (a *App) ApplyChanges(set ChangeSet) (int64, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
+	// The edit lands as one history entry: the statements the user reviewed in
+	// the dialog are the audit trail, and without this the grid path would be
+	// invisible next to typed statements.
+	a.recordStatement(set.ConnID, set.Database, strings.Join(statements, ";\n"),
+		QueryResult{AffectedRows: applied})
 	return applied, nil
 }

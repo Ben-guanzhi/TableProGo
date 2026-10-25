@@ -145,7 +145,9 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
           </button>
           <button
             className="text-secondary hover:text-ink p-1"
-            onClick={clear}
+            onClick={() => {
+              if (window.confirm('确定清空全部对话记录吗？此操作不可恢复。')) clear();
+            }}
             title="清空对话"
             aria-label="清空对话"
           >

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FiAlertTriangle, FiCheck, FiCopy, FiX } from 'react-icons/fi';
+import { copyText } from '../clipboard';
 
 interface ErrorBannerProps {
   message: string;
@@ -10,7 +11,8 @@ const ErrorBanner: React.FC<ErrorBannerProps> = ({ message, onDismiss }) => {
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
-    navigator.clipboard.writeText(message).then(() => {
+    void copyText(message).then(ok => {
+      if (!ok) return;
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });

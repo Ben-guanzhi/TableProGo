@@ -41,6 +41,7 @@ import {
   Connect,
   Disconnect,
   CancelQuery,
+  SecurityNotice,
   GetDatabases,
   AddConnection,
   UpdateConnection,
@@ -112,7 +113,21 @@ function App() {
   const [importTarget, setImportTarget] = useState<TableRef | null>(null);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const [editorHeight, setEditorHeight] = useState(200);
+  // The pane height is a workspace preference: it survives restarts instead
+  // of snapping back to 200 on every launch.
+  const [editorHeight, setEditorHeightState] = useState(() => {
+    try {
+      const n = Number(localStorage.getItem('tablepro.editorHeight'));
+      if (n >= EDITOR_MIN_HEIGHT && n <= 800) return n;
+    } catch { /* fall through to the default */ }
+    return 200;
+  });
+  const setEditorHeight = (h: number) => {
+    setEditorHeightState(h);
+    try {
+      localStorage.setItem('tablepro.editorHeight', String(h));
+    } catch { /* private mode: the choice just does not survive */ }
+  };
   const [databases, setDatabases] = useState<string[]>([]);
   const [quickOpen, setQuickOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
@@ -154,7 +169,9 @@ function App() {
         loadedDatabases.current.set(conn.id, dbs);
         if (!cancelled) setDatabases(dbs);
       })
-      .catch(() => {});
+      .catch(error => {
+        if (!cancelled) toast.error(`数据库列表加载失败：${(error as Error).message}`);
+      });
     return () => {
       cancelled = true;
     };
@@ -210,11 +227,19 @@ function App() {
       setConnections(conns as unknown as Connection[]);
     } catch (error) {
       console.error('Failed to load connections:', error);
+      toast.error('连接列表加载失败：' + (error as Error).message);
     }
   };
 
   const handleConnect = async (connection: Connection) => {
-    await Connect(connection.id);
+    try {
+      await Connect(connection.id);
+    } catch (error) {
+      // Without this the tree just fails to expand; the user never learns why.
+      toast.error(`连接失败：${(error as Error).message}`, { duration: 8000 });
+      return;
+    }
+    toast.success(`已连接 ${connection.name}`);
     setActiveConnection(connection);
     setConnectedIds(ids => (ids.includes(connection.id) ? ids : [...ids, connection.id]));
   };
@@ -240,6 +265,7 @@ function App() {
       }
     } catch (error) {
       console.error('Failed to disconnect:', error);
+      toast.error(`断开失败：${(error as Error).message}`);
     }
   };
 
@@ -334,6 +360,33 @@ function App() {
       }
     },
   });
+
+  // Every switch away from a tab goes through here: the grid's edit queue
+  // dies with the component, so edits the user has not applied yet are lost.
+  // The close path warns too; switching must not be the silent loophole.
+  const switchToTab = (tabId: string) => {
+    if (tabId === activeTab) return;
+    const waiting = activeTab ? (pendingEdits.current.get(activeTab) ?? 0) : 0;
+    if (waiting > 0) {
+      setConfirmReq({
+        title: '切换未保存的改动',
+        message: `当前网格还有 ${waiting} 处改动没有写入数据库，切换标签后它们会直接丢掉。`,
+        confirmLabel: '丢弃并切换',
+        destructive: true,
+        onConfirm: () => setActiveTab(tabId),
+      });
+      return;
+    }
+    setActiveTab(tabId);
+  };
+
+  // The keyring fallback is silent on the backend side by design; surface it
+  // once per session so plain-text storage never stays invisible.
+  useEffect(() => {
+    SecurityNotice().then(notice => {
+      if (notice) toast.error(notice, { duration: 12000 });
+    }).catch(() => {});
+  }, []);
 
   const cancelQuery = (tabId: string) => {
     runSeq.current.set(tabId, (runSeq.current.get(tabId) ?? 0) + 1);
@@ -559,7 +612,7 @@ function App() {
       t => t.kind === 'table' && t.tableRef && objectKey(t.tableRef) === objectKey(table),
     );
     if (existing) {
-      setActiveTab(existing.id);
+      switchToTab(existing.id);
       return;
     }
     const tab: Tab = {
@@ -608,7 +661,7 @@ function App() {
       t => t.kind === 'kv' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
     );
     if (existing) {
-      setActiveTab(existing.id);
+      switchToTab(existing.id);
       return;
     }
     const tab: Tab = {
@@ -634,7 +687,7 @@ function App() {
       t => t.kind === 'er' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
     );
     if (existing) {
-      setActiveTab(existing.id);
+      switchToTab(existing.id);
       return;
     }
     const qualifier = ref.schema ? `${ref.database}.${ref.schema}` : ref.database;
@@ -798,7 +851,13 @@ function App() {
   };
 
   const nudgeEditorHeight = (delta: number) =>
-    setEditorHeight(current => clampEditorHeight(current + delta));
+    setEditorHeightState(current => {
+      const next = clampEditorHeight(current + delta);
+      try {
+        localStorage.setItem('tablepro.editorHeight', String(next));
+      } catch { /* private mode: the choice just does not survive */ }
+      return next;
+    });
 
 
   const handleInsertText = async (table: TableRef) => {
@@ -958,8 +1017,10 @@ function App() {
       await AddConnection(config);
       await loadConnections();
       setShowConnectionDialog(false);
+      toast.success(`已添加连接 ${config.name}`);
     } catch (error) {
       console.error('Failed to add connection:', error);
+      toast.error(`保存连接失败：${(error as Error).message}`, { duration: 8000 });
     }
   };
 
@@ -969,8 +1030,10 @@ function App() {
       await loadConnections();
       setShowConnectionDialog(false);
       setEditingConnection(null);
+      toast.success(`已保存 ${config.name}`);
     } catch (error) {
       console.error('Failed to update connection:', error);
+      toast.error(`保存连接失败：${(error as Error).message}`, { duration: 8000 });
     }
   };
 
@@ -1123,7 +1186,7 @@ function App() {
                 className={`flex items-center shrink-0 px-4 py-2 cursor-pointer border-r border-line ${
                   activeTab === tab.id ? 'bg-raised' : 'hover:bg-raised/60'
                 }`}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => switchToTab(tab.id)}
                 title={fullName}
               >
                 {ref &&

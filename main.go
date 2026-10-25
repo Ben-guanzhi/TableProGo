@@ -20,14 +20,28 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-// mcpMode reports whether the process was started as an MCP server.
+const usage = `TablePro Go
+
+用法:
+  tablepro-go          打开图形界面
+  tablepro-go --mcp    以 MCP 服务器运行（stdio JSON-RPC，只读）
+  tablepro-go --help   显示本帮助
+`
+
+// mcpMode reports whether the process was started as an MCP server, accepting
+// the spellings a shell or an MCP client config may actually produce.
 func mcpMode() bool {
+	mcp := false
 	for _, arg := range os.Args[1:] {
-		if arg == "--mcp" || arg == "-mcp" {
-			return true
+		switch arg {
+		case "--mcp", "-mcp", "--mcp=true", "--mcp=1", "-mcp=true", "-mcp=1":
+			mcp = true
+		case "-h", "--help", "-help":
+			fmt.Print(usage)
+			os.Exit(0)
 		}
 	}
-	return false
+	return mcp
 }
 
 // randomToken returns 32 random bytes, hex encoded. Hex keeps the value safe to

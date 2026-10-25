@@ -22,6 +22,10 @@ export interface EditingCell {
 
 export interface EditState {
   queue: ChangeQueue;
+  // One snapshot per mutating gesture, popped by undo. Queues are immutable in
+  // this reducer, so the snapshot is just the previous reference; the cap keeps
+  // a long editing session from pinning hundreds of queues.
+  undoStack: ChangeQueue[];
   selected: number | null;
   editing: EditingCell | null;
   // What the open editor holds. It is state, not a prop, because the FK list
@@ -36,6 +40,7 @@ export interface EditState {
 
 export const emptyEditState = (): EditState => ({
   queue: emptyQueue(),
+  undoStack: [],
   selected: null,
   editing: null,
   draft: '',
@@ -58,12 +63,24 @@ export type EditAction =
   | { type: 'rowDrop'; id: number }
   | { type: 'deleteToggle'; index: number }
   | { type: 'queueClear' }
+  | { type: 'undo' }
   | { type: 'applyStart' }
   | { type: 'applyResult'; ok: boolean; error: string }
   | { type: 'preview'; statements: string[]; error: string }
   | { type: 'reviewOpen' }
   | { type: 'reviewClose' }
   | { type: 'editReset' };
+
+// withUndo threads every queue mutation through the undo stack: a gesture
+// that actually changed the queue pushes the previous one.
+const withUndo = (state: EditState, next: Partial<EditState>): EditState => {
+  const changed = next.queue !== undefined && next.queue !== state.queue;
+  return {
+    ...state,
+    ...next,
+    undoStack: changed ? [...state.undoStack.slice(-49), state.queue] : state.undoStack,
+  };
+};
 
 export const editReducer = (state: EditState, action: EditAction): EditState => {
   switch (action.type) {
@@ -83,47 +100,50 @@ export const editReducer = (state: EditState, action: EditAction): EditState => 
     // The editor closes and the queue takes the value in the same step, so a
     // keystroke that blurs the cell can never be dropped between them.
     case 'editCommitFetched':
-      return {
-        ...state,
+      return withUndo(state, {
         editing: null,
         queue: {
           ...state.queue,
           updates: withEdit(state.queue.updates, action.index, action.column, action.original, action.value),
         },
-      };
+      });
 
     case 'editCommitFresh':
-      return {
-        ...state,
+      return withUndo(state, {
         editing: null,
         queue: setRowValue(state.queue, action.id, action.column, action.value),
-      };
+      });
 
     case 'rowAppend':
-      return {
-        ...state,
+      return withUndo(state, {
         queue: addRow(state.queue, action.id),
         editing: { key: `n${action.id}`, column: action.column },
         draft: '',
-      };
+      });
 
     case 'rowDuplicate':
-      return { ...state, queue: addRow(state.queue, action.id, action.values) };
+      return withUndo(state, { queue: addRow(state.queue, action.id, action.values) });
 
     // Cancelling an added row drops it, and the editor with it if that row was
     // the one open - a closed cell must not keep a stale draft behind it.
     case 'rowDrop':
-      return {
-        ...state,
+      return withUndo(state, {
         queue: dropRow(state.queue, action.id),
         editing: state.editing?.key === `n${action.id}` ? null : state.editing,
-      };
+      });
 
     case 'deleteToggle':
-      return { ...state, queue: toggleDelete(state.queue, action.index), editing: null };
+      return withUndo(state, { queue: toggleDelete(state.queue, action.index), editing: null });
 
     case 'queueClear':
-      return { ...state, queue: emptyQueue() };
+      return withUndo(state, { queue: emptyQueue() });
+
+    case 'undo': {
+      const prev = state.undoStack[state.undoStack.length - 1];
+      if (!prev) return state;
+      // A closed editor must not survive the gesture it belonged to.
+      return { ...state, queue: prev, undoStack: state.undoStack.slice(0, -1), editing: null };
+    }
 
     case 'applyStart':
       return { ...state, applying: true, applyError: '' };

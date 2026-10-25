@@ -603,7 +603,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         )}
 
         {node.kind === 'connection' && filterActive(node.connection) && (
-          <FiFilter size={10} className="ml-1.5 shrink-0 text-accent" title="Database filter is on" />
+          <FiFilter size={10} className="ml-1.5 shrink-0 text-accent" title="数据库过滤已启用" />
         )}
 
         {isLoading && <FiLoader size={11} className="ml-auto animate-spin text-secondary shrink-0" />}
@@ -612,7 +612,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <span className={ROW_ACTIONS}>
             <button
               className={`${ROW_ACTION} text-secondary hover:text-accent`}
-              title="Filter databases"
+              title="过滤数据库"
               aria-label="筛选这个连接的数据库"
               onClick={e => {
                 e.stopPropagation();
@@ -623,7 +623,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               className={`${ROW_ACTION} text-secondary hover:text-ink`}
-              title="Refresh"
+              title="刷新"
               aria-label="重新载入这个连接的对象"
               onClick={e => {
                 e.stopPropagation();
@@ -635,7 +635,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             {connectedIds.includes(node.connId) && (
               <button
                 className={`${ROW_ACTION} text-secondary hover:text-warning`}
-                title="Disconnect"
+                title="断开连接"
                 aria-label="断开这个连接"
                 onClick={e => {
                   e.stopPropagation();
@@ -648,7 +648,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             )}
             <button
               className={`${ROW_ACTION} text-secondary hover:text-accent`}
-              title="Edit"
+              title="编辑"
               aria-label="编辑这个连接"
               onClick={e => {
                 e.stopPropagation();
@@ -659,7 +659,7 @@ const Sidebar: React.FC<SidebarProps> = ({
             </button>
             <button
               className={`${ROW_ACTION} text-secondary hover:text-danger`}
-              title="Delete"
+              title="删除"
               aria-label="删除这个连接"
               onClick={e => {
                 e.stopPropagation();
@@ -683,7 +683,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         {node.kind !== 'connection' && node.kind !== 'key' && node.kind !== 'more' && (
           <button
             className={`ml-auto ${ROW_ACTION} text-secondary hover:text-ink opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-aria-selected:opacity-100`}
-            title="Refresh"
+            title="刷新"
             aria-label="重新载入这个节点"
             onClick={e => {
               e.stopPropagation();
@@ -725,7 +725,7 @@ const Sidebar: React.FC<SidebarProps> = ({
               className="text-2xs text-muted py-0.5"
               style={{ paddingLeft: 6 + (depth + 1) * 13 }}
             >
-              empty
+              空
             </div>
           )}
         </React.Fragment>
@@ -771,8 +771,8 @@ const Sidebar: React.FC<SidebarProps> = ({
     <>
     <div className="w-72 bg-panel border-r border-line flex flex-col min-h-0">
       <div className="p-2.5 border-b border-line flex items-center justify-between">
-        <span className="text-xs font-semibold uppercase tracking-wide text-secondary">Navigator</span>
-        <button className="text-secondary hover:text-ink p-1" onClick={onNewConnection} title="New connection" aria-label="新建连接">
+        <span className="text-xs font-semibold uppercase tracking-wide text-secondary">导航</span>
+        <button className="text-secondary hover:text-ink p-1" onClick={onNewConnection} title="新建连接" aria-label="新建连接">
           <FiPlus size={14} />
         </button>
       </div>
@@ -783,7 +783,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           <input
             type="text"
             className="w-full pl-7 pr-2 py-1.5 text-xs bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
-            placeholder="Filter loaded objects"
+            placeholder="筛选已加载的对象"
             aria-label="筛选已加载的对象"
             value={filter}
             onChange={e => setFilter(e.target.value)}
@@ -795,7 +795,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         {renderNodes(roots, 0)}
 
         {roots.length === 0 && (
-          <div className="text-center text-muted text-xs py-3">No connections yet</div>
+          <div className="text-center text-muted text-xs py-3">还没有连接，点击右上角 + 新建</div>
         )}
       </div>
     </div>

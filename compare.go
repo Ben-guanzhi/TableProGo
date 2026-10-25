@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/dbcore/dbcore/schemadiff"
@@ -232,6 +233,7 @@ func (a *App) ApplySync(req ApplySyncRequest) (ApplySyncResult, error) {
 
 	ctx, done := a.beginRun(plan.target.ConnID)
 	defer done()
+	var executed []string
 	for _, s := range statements {
 		if verdict := guardWrite(a.GetSettings().SafeMode, s.SQL); verdict.Blocked {
 			result.Failures = append(result.Failures, ApplyFailure{
@@ -246,7 +248,15 @@ func (a *App) ApplySync(req ApplySyncRequest) (ApplySyncResult, error) {
 			})
 			break
 		}
+		executed = append(executed, s.SQL)
 		result.Applied++
+	}
+	// A sync that changed anything lands in the history too: DDL against the
+	// target is exactly what an audit wants to find later.
+	if len(executed) > 0 {
+		joined := strings.Join(executed, ";\n")
+		a.recordStatement(plan.target.ConnID, plan.target.Database, joined,
+			QueryResult{AffectedRows: int64(result.Applied)})
 	}
 	return result, nil
 }

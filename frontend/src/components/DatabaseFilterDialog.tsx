@@ -71,7 +71,7 @@ const PatternList: React.FC<PatternListProps> = ({ label, placeholder, patterns,
             </div>
           ))}
           {patterns.length === 0 && (
-            <div className="px-3 py-1 text-xs text-muted italic">No patterns</div>
+            <div className="px-3 py-1 text-xs text-muted italic">暂无规则</div>
           )}
         </div>
         <div className="flex flex-col space-y-1.5 ml-2 w-20">
@@ -80,7 +80,7 @@ const PatternList: React.FC<PatternListProps> = ({ label, placeholder, patterns,
             className="px-2 py-1 text-xs bg-raised hover:bg-emphasis rounded"
             onClick={add}
           >
-            Add
+            添加
           </button>
           <button
             type="button"
@@ -88,7 +88,7 @@ const PatternList: React.FC<PatternListProps> = ({ label, placeholder, patterns,
             onClick={removeSelected}
             disabled={selected === null}
           >
-            Remove
+            移除
           </button>
           <button
             type="button"
@@ -99,7 +99,7 @@ const PatternList: React.FC<PatternListProps> = ({ label, placeholder, patterns,
             }}
             disabled={patterns.length === 0}
           >
-            Clear
+            清空
           </button>
         </div>
       </div>
@@ -131,15 +131,15 @@ const DatabaseFilterDialog: React.FC<DatabaseFilterDialogProps> = ({
 
         <div className="p-5 space-y-4">
           <PatternList
-            label="Include"
-            placeholder="e.g. APP* or *_Env"
+            label="包含"
+            placeholder="例如 APP* 或 *_Env"
             patterns={filter.include}
             onChange={include => setFilter({ ...filter, include })}
           />
 
           <PatternList
-            label="Exclude"
-            placeholder="e.g. tempdb or *"
+            label="排除"
+            placeholder="例如 tempdb 或 *"
             patterns={filter.exclude}
             onChange={exclude => setFilter({ ...filter, exclude })}
           />
@@ -147,19 +147,19 @@ const DatabaseFilterDialog: React.FC<DatabaseFilterDialogProps> = ({
           <div className="space-y-1.5 text-xs text-secondary">
             <p className="flex items-start">
               <FiAlertCircle size={12} className="mr-1.5 mt-0.5 shrink-0 text-accent" />
-              Patterns apply as soon as you save; clear both lists to show every database
+              规则保存后立即生效；清空两个列表则显示全部数据库
             </p>
             <p className="flex items-start">
               <FiAlertCircle size={12} className="mr-1.5 mt-0.5 shrink-0 text-accent" />
-              You can use masks (%, _ and *) in filters
+              过滤规则支持通配符（%、_ 和 *）
             </p>
             <p className="flex items-start">
               <FiAlertCircle size={12} className="mr-1.5 mt-0.5 shrink-0 text-accent" />
-              Exclude wins over Include; an empty Include list keeps everything not excluded
+              排除规则优先于包含；包含列表为空时保留所有未被排除的数据库
             </p>
             <p className="flex items-start">
               <FiAlertCircle size={12} className="mr-1.5 mt-0.5 shrink-0 text-accent" />
-              Filtered databases are hidden in the Navigator, SQL still runs against the server
+              被过滤的数据库只在导航树里隐藏，SQL 仍可直接对服务端执行
             </p>
           </div>
         </div>

@@ -17,7 +17,11 @@ interface ImportDialogProps {
 // sandboxed name, not a path the backend could open.
 const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported }) => {
   const panelRef = useRef<HTMLDivElement>(null);
-  useDialog(panelRef, onClose);
+  // An import in flight must not be closed into a void: the guard keeps
+  // Escape and the close button inert until the run answers.
+  useDialog(panelRef, () => {
+    if (!running) onClose();
+  });
   const [path, setPath] = useState('');
   const [options, setOptions] = useState<ImportOptions>({
     format: '',
@@ -179,7 +183,12 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
           )}
 
           <div className="flex justify-end gap-3 pt-4 border-t border-line">
-            <button type="button" className="px-4 py-2 rounded text-sm bg-raised hover:bg-emphasis text-ink" onClick={onClose}>
+            <button
+              type="button"
+              className="px-4 py-2 rounded text-sm bg-raised hover:bg-emphasis text-ink disabled:opacity-40"
+              onClick={onClose}
+              disabled={running}
+            >
               关闭
             </button>
             <button

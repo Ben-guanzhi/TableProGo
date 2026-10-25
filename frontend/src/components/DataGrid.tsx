@@ -585,6 +585,40 @@ const DataGrid: React.FC<DataGridProps> = ({
     }
   };
 
+  // Keyboard: the grid is row-selectable by click; arrows move the selection
+  // and Ctrl/Cmd+C copies the selected row as TSV, so a value reaches Excel or
+  // the editor without a context menu.
+  const onGridKeyDown = (e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+      if (selected === null || !view.includes(selected)) return;
+      e.preventDefault();
+      const line = columns
+        .map((c, i) => cellText(rows[selected]?.[i]) ?? '')
+        .join('	');
+      void copyText(line).then(ok =>
+        ok ? toast.success('已复制该行（Tab 分隔）') : toast.error('复制失败'),
+      );
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      if (editing) return; // the open cell editor has its own history
+      e.preventDefault();
+      dispatchEditor({ type: 'undo' });
+      return;
+    }
+    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+    if (editing || fk.picker || menu) return; // an open editor or menu owns the arrows
+    e.preventDefault();
+    const pos = selected === null ? -1 : view.indexOf(selected);
+    const next = e.key === 'ArrowDown' ? Math.min(pos + 1, view.length - 1) : Math.max(pos - 1, 0);
+    if (next < 0 || view[next] === selected) return;
+    dispatchEditor({ type: 'editSelect', index: view[next] });
+    // Keep the row in sight: the scroller scrolls just enough for one row.
+    const scroller = scrollerRef.current;
+    const rowEl = scroller?.querySelector(`tr[data-row-index="${view[next]}"]`);
+    rowEl?.scrollIntoView({ block: 'nearest' });
+  };
+
   const openMenu = (e: React.MouseEvent, column: string) => {
     e.preventDefault();
     dispatchColumns({ type: 'menuOpen', x: e.clientX, y: e.clientY, column });
@@ -653,7 +687,12 @@ const DataGrid: React.FC<DataGridProps> = ({
         onExport={exportAs}
         onCopyInserts={copyInserts}
       />
-      <div ref={scrollerRef} className="flex-1 min-h-0 overflow-auto">
+      <div
+        ref={scrollerRef}
+        className="flex-1 min-h-0 overflow-auto focus:outline-none"
+        tabIndex={0}
+        onKeyDown={onGridKeyDown}
+      >
         <table className="border-separate border-spacing-0 text-[0.8125rem]">
           <thead>
             <tr>
@@ -754,6 +793,7 @@ const DataGrid: React.FC<DataGridProps> = ({
               return (
                 <tr
                   key={target.key}
+                  data-row-index={index}
                   className={`${rowBg} hover:bg-raised/40 cursor-default ${
                     deleting ? 'line-through opacity-70' : ''
                   }`}
@@ -1026,6 +1066,14 @@ const DataGrid: React.FC<DataGridProps> = ({
           )}
           <div className="ml-auto flex items-center gap-1">
             <button
+              className="px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised disabled:opacity-40 disabled:hover:bg-transparent"
+              onClick={() => dispatchEditor({ type: 'undo' })}
+              disabled={editor.undoStack.length === 0}
+              title="撤销最近一次改动（Ctrl+Z）"
+            >
+              撤销
+            </button>
+            <button
               className="px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
               onClick={() => dispatchEditor({ type: 'queueClear' })}
               title="丢弃全部改动，不写回数据库"
@@ -1075,6 +1123,8 @@ const DataGrid: React.FC<DataGridProps> = ({
             <span title={`改动会写回 ${targetName}`}>
               可编辑 · 双击改单元格，工具条可新增 / 复制 / 删除行
             </span>
+          ) : onCellDoubleClick ? (
+            <span title="改动立即写回 Redis，没有审查队列">可编辑 · 双击改值，改动立即生效</span>
           ) : (
             <span title="只有 select * 取自单个表的结果能改回数据库">只读</span>
           ))}

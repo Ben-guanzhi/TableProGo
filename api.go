@@ -420,6 +420,13 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"base64": workbook}, nil
 	})
+	mux.HandleFunc("/api/security-notice", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(405)
+			return
+		}
+		writeJSON(w, map[string]string{"notice": a.SecurityNotice()})
+	})
 	post(a, mux, "/api/table-action", 400, func(a *App, body tableActionRequest) (any, error) {
 		statement, err := a.TableAction(body.ConnID, body.Database, body.Schema, body.Table, body.Action, body.NewName)
 		if err != nil {

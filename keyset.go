@@ -4,7 +4,6 @@ package main
 // query.go (and the surface the tests exercise) unchanged.
 
 import (
-	"tablepro-go/internal/catalogmodel"
 	"tablepro-go/internal/paging"
 )
 
@@ -35,5 +34,3 @@ func pageCursors(rows [][]interface{}, keys []keyColumn, columns []Column) (star
 }
 
 func reversePage(rows [][]interface{}) { paging.ReversePage(rows) }
-
-var _ = catalogmodel.Column{}

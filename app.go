@@ -91,6 +91,9 @@ type AppSettings struct {
 	MCPAllowWrites bool `json:"mcpAllowWrites"`
 	// MCPMaxRows caps how many rows one MCP query returns; 0 uses the default.
 	MCPMaxRows int `json:"mcpMaxRows"`
+	// ExportMaxRows caps how many rows one export (INSERT script / XLSX)
+	// renders; 0 uses the built-in default.
+	ExportMaxRows int `json:"exportMaxRows"`
 }
 
 // defaultResultLimit matches what GUI clients hand out before the user says
@@ -195,6 +198,7 @@ func (a *App) loadSettings() {
 		SafeMode           *string `json:"safeMode"`
 		MCPAllowWrites     *bool   `json:"mcpAllowWrites"`
 		MCPMaxRows         *int    `json:"mcpMaxRows"`
+		ExportMaxRows      *int    `json:"exportMaxRows"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		log.Printf("Failed to load settings: %v", err)
@@ -218,6 +222,19 @@ func (a *App) loadSettings() {
 	if stored.MCPMaxRows != nil {
 		a.settings.MCPMaxRows = *stored.MCPMaxRows
 	}
+	if stored.ExportMaxRows != nil {
+		a.settings.ExportMaxRows = *stored.ExportMaxRows
+	}
+}
+
+// effectiveExportMaxRows is the user's export cap; 0 keeps the built-in
+// default. The XLSX cap rides on it at ten times, matching the original
+// ratio between the two formats.
+func (a *App) effectiveExportMaxRows() int {
+	if n := a.GetSettings().ExportMaxRows; n > 0 {
+		return n
+	}
+	return insertExportMaxRows
 }
 
 func (a *App) GetSettings() AppSettings {

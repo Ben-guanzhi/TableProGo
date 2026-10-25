@@ -260,6 +260,16 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   const completionCompartment = useMemo(() => new Compartment(), []);
   const completerRef = useRef<ReturnType<typeof makeCompleter> | null>(null);
 
+  // The editor font size is a per-user preference, not per-tab state: every
+  // tab reads the same saved value, and +/- persists the new one.
+  const savedFontSize = (): number => {
+    try {
+      const n = Number(localStorage.getItem('tablepro.editorFontSize'));
+      if (n >= 10 && n <= 22) return n;
+    } catch { /* unavailable storage falls back to the default */ }
+    return 13;
+  };
+
   const fontSizeTheme = (size: number) =>
     EditorView.theme({ '&': { fontSize: `${size}px` }, '.cm-scroller': { lineHeight: '1.5' } });
 
@@ -316,7 +326,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
           ]),
           EditorView.lineWrapping,
           editorTheme,
-          fontCompartment.of(fontSizeTheme(13)),
+          fontCompartment.of(fontSizeTheme(savedFontSize())),
           dialectCompartment.of(sql({ dialect: MySQL, upperCaseKeywords: true })),
           EditorView.updateListener.of(update => {
             if (!update.docChanged) return;
@@ -382,6 +392,9 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     const current = parseFloat(getComputedStyle(view.dom).fontSize) || 13;
     const next = Math.min(22, Math.max(10, current + delta));
     view.dispatch({ effects: fontCompartment.reconfigure(fontSizeTheme(next)) });
+    try {
+      localStorage.setItem('tablepro.editorFontSize', String(next));
+    } catch { /* private mode: the choice just does not survive */ }
   };
 
   // A tab may target a database other than the connection's own so table names
@@ -558,6 +571,26 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                         onSettingsChange({
                           ...settings,
                           resultLimit: Math.max(0, Number(e.target.value) || 0),
+                        })
+                      }
+                      className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"
+                    />
+                  </label>
+
+                  <label className="block p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">
+                    <span>导出行数上限</span>
+                    <span className="block text-2xs text-muted mb-1">
+                      INSERT 脚本导出的上限，XLSX 为其十倍；0 使用默认值
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={settings.exportMaxRows}
+                      onChange={e =>
+                        onSettingsChange({
+                          ...settings,
+                          exportMaxRows: Math.max(0, Number(e.target.value) || 0),
                         })
                       }
                       className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"

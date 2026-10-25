@@ -83,6 +83,7 @@ func insertScript(
 // reads the catalog for the same table a save would write to, so a result that
 // is not backed by one table is refused rather than guessed at.
 func (a *App) InsertScript(connID, database, schema, table string, columns []string, rows [][]interface{}) (string, error) {
+	maxRows := a.effectiveExportMaxRows()
 	conn, err := a.connection(connID)
 	if err != nil {
 		return "", err
@@ -96,8 +97,8 @@ func (a *App) InsertScript(connID, database, schema, table string, columns []str
 	if len(rows) == 0 {
 		return "", fmt.Errorf("当前结果为空，没有可导出的行")
 	}
-	if len(rows) > insertExportMaxRows {
-		return "", fmt.Errorf("一次最多导出 %d 行（INSERT 脚本），请翻页或缩小范围", insertExportMaxRows)
+	if len(rows) > maxRows {
+		return "", fmt.Errorf("一次最多导出 %d 行（INSERT 脚本）：可在「设置」调整导出行数上限，或翻页/缩小范围", maxRows)
 	}
 	schema = defaultSchema(conn.Type, schema)
 

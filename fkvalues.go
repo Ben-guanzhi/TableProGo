@@ -207,6 +207,9 @@ func (a *App) ForeignKeyValues(connID, database, schema, table, column string, l
 		RefColumn:   refColumn,
 		LabelColumn: labelColumn,
 		Values:      values,
-		Truncated:   result.RowCount >= limit,
+		// The query stopped at `limit` raw rows; after de-duplication fewer
+		// distinct values may remain, so truncation is judged on what the
+		// user actually sees.
+		Truncated: len(values) >= limit,
 	}, nil
 }

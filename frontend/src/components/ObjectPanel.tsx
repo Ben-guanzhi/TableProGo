@@ -21,6 +21,8 @@ import {
   TableStructure,
   TableRef,
 } from '../types';
+import toast from 'react-hot-toast';
+import { copyText } from '../clipboard';
 import DataGrid from './DataGrid';
 import ErrorBanner from './ErrorBanner';
 import FilterBar from './FilterBar';
@@ -184,9 +186,13 @@ const DdlCard: React.FC<{ ddl: string; label: string }> = ({ ddl, label }) => {
   const [copied, setCopied] = useState(false);
 
   const copy = () => {
-    navigator.clipboard.writeText(ddl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+    void copyText(ddl).then(ok => {
+      if (ok) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      } else {
+        toast.error('复制失败');
+      }
     });
   };
 
@@ -251,7 +257,7 @@ const HistoryList: React.FC<{
         key={entry.id}
         className="bg-panel border border-line rounded shrink-0"
         onClick={onUse ? () => onUse(entry.sql) : undefined}
-        title={onUse ? '点击复制到查询页' : undefined}
+        title={onUse ? '点击移到查询页' : undefined}
       >
         <header className="flex items-center gap-2 px-2.5 h-7 border-b border-line-soft text-2xs text-muted">
           <span className={entry.error ? 'text-danger' : 'text-success'}>
@@ -413,11 +419,13 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
             <div className="flex-1 min-h-0 overflow-y-auto p-3 flex flex-col gap-2">
               <div className="flex items-center gap-2 text-2xs text-muted shrink-0">
                 <span>共 {history.data.length} 条</span>
-                <span className="truncate">只记录本应用执行过的语句，点击语句可复制到查询页</span>
+                <span className="truncate">只记录本应用执行过的语句，点击语句可移到查询页</span>
                 {history.data.length > 0 && onClearHistory && (
                   <button
                     className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-danger hover:bg-raised shrink-0"
-                    onClick={onClearHistory}
+                    onClick={() => {
+                      if (window.confirm('确定清空该表相关的全部执行历史吗？此操作不可恢复。')) onClearHistory();
+                    }}
                     title="清空该表相关的执行历史"
                   >
                     <FiTrash2 size={11} />

@@ -12,6 +12,9 @@ import { applyTheme } from '../theme';
 export const defaultSettings: AppSettings = {
   showColumnComments: false,
   resultLimit: 1000,
+  mcpAllowWrites: false,
+  mcpMaxRows: 0,
+  exportMaxRows: 0,
   theme: 'system',
   safeMode: 'off',
 };

@@ -257,3 +257,49 @@ test('unknown actions leave the state alone', () => {
   const state = emptyEditState();
   assert.equal(editReducer(state, { type: 'nope' } as any), state);
 });
+
+// Undo pops one gesture at a time: a commit, a delete toggle and a clear are
+// each reversible, and an empty stack is a no-op.
+test('undo reverses queue gestures one at a time', () => {
+  const committed = run([
+    { type: 'editCommitFresh', id: 1, column: 'name', value: 'first' },
+  ]);
+  assert.equal(committed.undoStack.length, 1);
+
+  const toggled = editReducer(committed, { type: 'deleteToggle', index: 0 });
+  assert.equal(toggled.undoStack.length, 2);
+
+  const undone = editReducer(toggled, { type: 'undo' });
+  assert.equal(undone.undoStack.length, 1);
+  assert.deepEqual(undone.queue, committed.queue);
+
+  const undoneTwice = editReducer(undone, { type: 'undo' });
+  assert.deepEqual(undoneTwice.queue, emptyQueue());
+  assert.equal(undoneTwice.undoStack.length, 0);
+
+  // Undo on an empty stack is a no-op, not a crash.
+  const exhausted = editReducer(undoneTwice, { type: 'undo' });
+  assert.deepEqual(exhausted.queue, emptyQueue());
+});
+
+// Clearing the whole queue is a gesture like any other, so it undoes too.
+test('undo restores a cleared queue', () => {
+  const cleared = run([
+    { type: 'rowAppend', id: 1, column: 'name' },
+    { type: 'queueClear' },
+  ]);
+  assert.equal(cleared.queue.inserts.length, 0);
+  const restored = editReducer(cleared, { type: 'undo' });
+  assert.equal(restored.queue.inserts.length, 1);
+});
+
+// A non-mutating gesture (selection, draft typing) must not grow the stack.
+test('selection and drafts do not enter the undo stack', () => {
+  const state = run([
+    { type: 'editSelect', index: 2 },
+    { type: 'editBegin', key: 'u2', column: 'name', value: 'v' },
+    { type: 'editDraft', value: 'vv' },
+    { type: 'editClose' },
+  ]);
+  assert.equal(state.undoStack.length, 0);
+});

@@ -82,6 +82,13 @@ func (a *App) Preview(connID string, database string, schema string, table strin
 // previewPage reads one page of an object. A cursor - the key of a page already
 // on screen, sent back by whoever asked for the next one - replaces OFFSET for
 // keyed objects, because counting rows off is what makes deep pages slow.
+// Preview page size bounds: an unset request gets defaultPreviewRows; a
+// request is honored up to maxPreviewRows, the same cap table paging uses.
+const (
+	defaultPreviewRows = 100
+	maxPreviewRows     = 5000
+)
+
 // Without a usable cursor the page is read exactly as it always was.
 func (a *App) previewPage(connID string, database string, schema string, table string, limit int, offset int, filters []TableFilter, after []string, before []string) QueryResult {
 	conn, err := a.connection(connID)
@@ -94,8 +101,14 @@ func (a *App) previewPage(connID string, database string, schema string, table s
 	if pluginConnection(conn) {
 		return a.previewViaPlugin(conn, database, schema, table, limit, offset, filters)
 	}
-	if limit <= 0 || limit > 1000 {
-		limit = 100
+	// No explicit request falls back to a sane default page; a real request is
+	// honored up to the paging cap, so asking for 5000 rows gets 5000 instead
+	// of a silent downgrade to 100.
+	if limit <= 0 {
+		limit = defaultPreviewRows
+	}
+	if limit > maxPreviewRows {
+		limit = maxPreviewRows
 	}
 	if offset < 0 {
 		offset = 0
@@ -560,15 +573,11 @@ func cellValue(v dbcore.Value) interface{} {
 	}
 }
 
-// isSelectQuery reports whether a statement returns rows (SELECT and its
-// row-returning cousins, including a WITH ... SELECT CTE).
+// isSelectQuery reports whether a statement returns rows. The kernel decides
+// (SELECT, WITH, SHOW, EXPLAIN, DESC, PRAGMA, VALUES, TABLE, RETURNING), so the
+// row-limit path and the grid's source-parse path can never disagree.
 func isSelectQuery(query string) bool {
-	query = strings.ToUpper(strings.TrimSpace(query))
-	return strings.HasPrefix(query, "SELECT") ||
-		strings.HasPrefix(query, "WITH") ||
-		strings.HasPrefix(query, "SHOW") ||
-		strings.HasPrefix(query, "DESCRIBE") ||
-		strings.HasPrefix(query, "EXPLAIN")
+	return dbcore.IsReadQuery(query)
 }
 
 // withRowLimit caps a plain SELECT — or a WITH ... SELECT CTE — the way GUI

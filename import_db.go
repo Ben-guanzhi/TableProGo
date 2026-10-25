@@ -141,8 +141,15 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 	}
 	if err != nil {
 		res.Error = err.Error()
+		return res, err
 	}
-	return res, err
+	// One summary entry per run: import statements are generated, so the
+	// counts are the auditable part, not the SQL text.
+	summary := fmt.Sprintf("-- 导入 %s：%d 行%s", req.Table, res.Rows,
+		map[bool]string{true: fmt.Sprintf("（跳过 %d，首错：%s）", res.Skipped, res.FirstError), false: ""}[res.Skipped > 0])
+	a.recordStatement(req.ConnID, req.Database, summary,
+		QueryResult{AffectedRows: int64(res.Rows)})
+	return res, nil
 }
 
 // importWriter owns the execution side of one import run. Everything goes

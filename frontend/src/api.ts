@@ -102,6 +102,13 @@ export async function GetColumns(connId: string, database: string, schema: strin
 
 // One Redis key read whole. The type and remaining lifetime sit beside the
 // rows so the panel can name what it is showing.
+// One-shot security notice (e.g. the OS keyring fell back to plain text).
+// Empty string means nothing to tell the user.
+export async function SecurityNotice(): Promise<string> {
+  const data = await get('/api/security-notice');
+  return (data as { notice?: string }).notice ?? '';
+}
+
 export async function GetKVValue(connId: string, database: string, key: string): Promise<KVValue> {
   return post('/api/kv-value', { connId, database, key });
 }
@@ -540,6 +547,11 @@ export interface AppSettings {
   resultLimit: number;
   theme: Theme;
   safeMode: SafeMode;
+  // MCP write gate and per-query row cap; mirror of the backend AppSettings.
+  mcpAllowWrites: boolean;
+  mcpMaxRows: number;
+  // Cap for one INSERT-script export (XLSX gets ten times); 0 uses the default.
+  exportMaxRows: number;
 }
 
 export async function GetSettings(): Promise<AppSettings> {

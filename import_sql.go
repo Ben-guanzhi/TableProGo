@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/dbcore/dbcore"
 
@@ -84,5 +85,9 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
+	// The script's statements are the audit trail; the entry is capped by the
+	// history writer, so a big dump still lands as one line.
+	a.recordStatement(req.ConnID, req.Database, strings.Join(statements, ";\n"),
+		QueryResult{AffectedRows: int64(res.Statements)})
 	return res, nil
 }
