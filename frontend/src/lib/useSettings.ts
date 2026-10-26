@@ -17,6 +17,11 @@ export const defaultSettings: AppSettings = {
   exportMaxRows: 0,
   theme: 'system',
   safeMode: 'off',
+  // Auto-lock stays off until the user sets a passcode and asks for a timer;
+  // LockOnSleep matches the backend default (a frozen process locks).
+  idleLockMinutes: 0,
+  lockOnHide: false,
+  lockOnSleep: true,
 };
 
 // useSettingsEffect paints the theme and follows the OS preference while the

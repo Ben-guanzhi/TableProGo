@@ -411,6 +411,21 @@ func (a *App) Disconnect(connID string) error {
 	return nil
 }
 
+// DisconnectAll closes every open connection. The idle lock calls it (P2-9):
+// a locked app must not keep live database sessions behind the lock screen,
+// otherwise the credential-free window is still a doorway into the data.
+func (a *App) DisconnectAll() {
+	a.connectionsMu.RLock()
+	ids := make([]string, 0, len(a.connections))
+	for id := range a.connections {
+		ids = append(ids, id)
+	}
+	a.connectionsMu.RUnlock()
+	for _, id := range ids {
+		_ = a.Disconnect(id)
+	}
+}
+
 // isConnected reports whether this connection can answer a call. Three shapes count:
 // a database pool, a key/value driver, or an engine served by a registered plugin
 // (plugins.go). The plugin case deliberately checks the registration rather than the

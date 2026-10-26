@@ -48,6 +48,7 @@ import {
   FiDatabase,
   FiGitCommit,
   FiLoader,
+  FiLock,
   FiMinus,
   FiPlay,
   FiPlus,
@@ -90,6 +91,11 @@ interface QueryEditorProps {
   onDatabaseChange: (database: string) => void;
   settings: AppSettings;
   onSettingsChange: (settings: AppSettings) => void;
+  // P2-9: whether a local passcode is stored, and how to open its manager.
+  // Optional: the object-query editor shares this component but is not the
+  // settings surface, so it simply does not pass them.
+  passcodeSet?: boolean;
+  onManagePasscode?: () => void;
   getTables: (database?: string) => Promise<string[]>;
   getColumns: (table: string, database?: string) => Promise<ColumnInfo[]>;
 }
@@ -245,6 +251,8 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     onDatabaseChange,
     settings,
     onSettingsChange,
+    passcodeSet,
+    onManagePasscode,
     getTables,
     getColumns,
   },
@@ -784,6 +792,64 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                       <option value="blockNoWhere">禁止无 WHERE 的 UPDATE/DELETE</option>
                     </select>
                   </label>
+
+                  <label className="block p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">
+                    <span>空闲自动锁定（分钟）</span>
+                    <span className="block text-2xs text-muted mb-1">
+                      0 表示不按空闲锁定；需先设置本地口令。锁定时会断开全部连接
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={settings.idleLockMinutes}
+                      onChange={e =>
+                        onSettingsChange({
+                          ...settings,
+                          idleLockMinutes: Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                        })
+                      }
+                      className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"
+                    />
+                  </label>
+
+                  <label className="flex items-start gap-2 p-1.5 text-xs text-ink hover:bg-raised rounded cursor-pointer border-t border-line mt-1 pt-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={settings.lockOnHide}
+                      onChange={e => onSettingsChange({ ...settings, lockOnHide: e.target.checked })}
+                    />
+                    <span>
+                      窗口隐藏即锁定
+                      <span className="block text-2xs text-muted">切到其他窗口或最小化时立刻锁定</span>
+                    </span>
+                  </label>
+
+                  <label className="flex items-start gap-2 p-1.5 text-xs text-ink hover:bg-raised rounded cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={settings.lockOnSleep}
+                      onChange={e => onSettingsChange({ ...settings, lockOnSleep: e.target.checked })}
+                    />
+                    <span>
+                      休眠唤醒后锁定
+                      <span className="block text-2xs text-muted">进程被冻结（挂起/合盖）即视为离开</span>
+                    </span>
+                  </label>
+
+                  <div className="border-t border-line mt-1 pt-2 px-1.5">
+                    {onManagePasscode && (
+                      <button
+                        className="w-full flex items-center gap-1.5 px-2 py-1 rounded text-2xs border border-line text-secondary hover:text-ink hover:bg-raised"
+                        onClick={() => onManagePasscode()}
+                      >
+                        <FiLock size={11} aria-hidden />
+                        {passcodeSet ? '修改或移除本地口令…' : '设置本地口令…'}
+                      </button>
+                    )}
+                  </div>
                 </div>
               </>
             )}

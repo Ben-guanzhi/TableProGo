@@ -27,14 +27,17 @@ type App struct {
 	filePath         string
 	settings         AppSettings
 	settingsPath     string
-	settingsMu       sync.RWMutex
-	history          []HistoryEntry
-	historyPath      string
-	favoritesPath    string
-	favoritesMu      sync.Mutex
-	favorites        []FavoriteEntry
-	historySeq       int64
-	historyMu        sync.Mutex
+	// passcodePath is the argon2id store's location (P2-9); a field rather
+	// than a computed constant so tests point it at a temp dir.
+	passcodePath  string
+	settingsMu    sync.RWMutex
+	history       []HistoryEntry
+	historyPath   string
+	favoritesPath string
+	favoritesMu   sync.Mutex
+	favorites     []FavoriteEntry
+	historySeq    int64
+	historyMu     sync.Mutex
 	// histObserved is the history file as this process last read or wrote it;
 	// mergeHistory folds in only what other clients added since then.
 	histObserved []HistoryEntry
@@ -97,6 +100,17 @@ type AppSettings struct {
 	// ExportMaxRows caps how many rows one export (INSERT script / XLSX)
 	// renders; 0 uses the built-in default.
 	ExportMaxRows int `json:"exportMaxRows"`
+	// IdleLockMinutes auto-locks the app (and disconnects everything) after
+	// this many minutes without keyboard/mouse input; 0 turns the idle lock off.
+	// Only meaningful once a passcode is set — a lock nothing can unlock is a
+	// dead end, so the UI and the frontend watcher both gate on HasPasscode.
+	IdleLockMinutes int `json:"idleLockMinutes"`
+	// LockOnHide locks immediately when the window is hidden or backgrounded.
+	LockOnHide bool `json:"lockOnHide"`
+	// LockOnSleep locks when the wall clock jumps far past the watcher's tick,
+	// which means the machine slept (timers freeze) rather than the user
+	// idled — the one case in-page activity tracking gets wrong on its own.
+	LockOnSleep bool `json:"lockOnSleep"`
 }
 
 // defaultResultLimit matches what GUI clients hand out before the user says
@@ -167,6 +181,8 @@ func connectionsFilePath() string { return userDataFilePath("connections.json") 
 
 func settingsFilePath() string { return userDataFilePath("settings.json") }
 
+func passcodeFilePath() string { return userDataFilePath("passcode.json") }
+
 func historyFilePath() string { return userDataFilePath("history.json") }
 
 func NewApp() *App {
@@ -174,6 +190,7 @@ func NewApp() *App {
 		connections:   make(map[string]*Connection),
 		filePath:      connectionsFilePath(),
 		settingsPath:  settingsFilePath(),
+		passcodePath:  passcodeFilePath(),
 		historyPath:   historyFilePath(),
 		favoritesPath: favoritesFilePath(),
 	}
@@ -188,6 +205,7 @@ func (a *App) loadSettings() {
 	a.settings.ResultLimit = defaultResultLimit
 	a.settings.Theme = defaultTheme
 	a.settings.SafeMode = safeModeOff
+	a.settings.LockOnSleep = true // db-dev's default: a sleep jump locks unless told not to
 
 	data, err := os.ReadFile(a.settingsPath)
 	if err != nil {
@@ -204,6 +222,9 @@ func (a *App) loadSettings() {
 		MCPAllowWrites     *bool   `json:"mcpAllowWrites"`
 		MCPMaxRows         *int    `json:"mcpMaxRows"`
 		ExportMaxRows      *int    `json:"exportMaxRows"`
+		IdleLockMinutes    *int    `json:"idleLockMinutes"`
+		LockOnHide         *bool   `json:"lockOnHide"`
+		LockOnSleep        *bool   `json:"lockOnSleep"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		log.Printf("Failed to load settings: %v", err)
@@ -229,6 +250,15 @@ func (a *App) loadSettings() {
 	}
 	if stored.ExportMaxRows != nil {
 		a.settings.ExportMaxRows = *stored.ExportMaxRows
+	}
+	if stored.IdleLockMinutes != nil && *stored.IdleLockMinutes >= 0 {
+		a.settings.IdleLockMinutes = *stored.IdleLockMinutes
+	}
+	if stored.LockOnHide != nil {
+		a.settings.LockOnHide = *stored.LockOnHide
+	}
+	if stored.LockOnSleep != nil {
+		a.settings.LockOnSleep = *stored.LockOnSleep
 	}
 }
 

@@ -127,6 +127,18 @@ type idRequest struct {
 	ID string `json:"id"`
 }
 
+// emptyRequest is the body of a POST that needs no parameters (has-passcode,
+// clear-passcode, disconnect-all): decoding {} into it always succeeds, and a
+// client sending a body anyway stays harmless.
+type emptyRequest struct{}
+
+// passcodeRequest carries a local passcode for set/verify (P2-9). It crosses
+// the token-guarded localhost API exactly like a connection password does, and
+// is never logged.
+type passcodeRequest struct {
+	Passcode string `json:"passcode"`
+}
+
 type connIDRequest struct {
 	ConnID string `json:"connId"`
 }
@@ -399,6 +411,41 @@ func (a *App) routes() *http.ServeMux {
 		if err := a.UpdateConnection(config); err != nil {
 			return nil, err
 		}
+		return statusOK, nil
+	})
+	// Local passcode (P2-9): the UI caches only "has one"; hashing, storage and
+	// verification live here (passcode.go), never in localStorage.
+	post(a, mux, "/api/passcode/has", 500, func(a *App, _ emptyRequest) (any, error) {
+		return map[string]bool{"has": a.HasPasscode()}, nil
+	})
+	post(a, mux, "/api/passcode/set", 400, func(a *App, body passcodeRequest) (any, error) {
+		if err := a.SetPasscode(body.Passcode); err != nil {
+			return nil, err
+		}
+		return statusOK, nil
+	})
+	post(a, mux, "/api/passcode/verify", 200, func(a *App, body passcodeRequest) (any, error) {
+		return map[string]bool{"ok": a.VerifyPasscode(body.Passcode)}, nil
+	})
+	post(a, mux, "/api/passcode/clear", 500, func(a *App, _ emptyRequest) (any, error) {
+		if err := a.ClearPasscode(); err != nil {
+			return nil, err
+		}
+		return statusOK, nil
+	})
+	// System idle seconds for the frontend's lock watcher (-1 = the platform
+	// does not report it, so the watcher falls back to in-page activity).
+	post(a, mux, "/api/system-idle", 500, func(a *App, _ emptyRequest) (any, error) {
+		seconds, err := systemIdleSeconds()
+		if err != nil || seconds < 0 {
+			seconds = -1
+		}
+		return map[string]int{"seconds": seconds}, nil
+	})
+	// The lock disconnects everything behind it: no live session may outlive
+	// the lock screen.
+	post(a, mux, "/api/disconnect-all", 500, func(a *App, _ emptyRequest) (any, error) {
+		a.DisconnectAll()
 		return statusOK, nil
 	})
 	post(a, mux, "/api/connections/delete", 500, func(a *App, body idRequest) (any, error) {

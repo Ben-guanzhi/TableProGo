@@ -87,6 +87,40 @@ export async function Disconnect(id: string): Promise<void> {
   await post('/api/disconnect', { id });
 }
 
+// Local passcode (P2-9). The frontend never stores a hash or the passcode
+// itself — verification is a backend call (passcode.go), so the lock lives
+// with the argon2id store, not in localStorage.
+export async function HasPasscode(): Promise<boolean> {
+  const data = await post('/api/passcode/has');
+  return !!data.has;
+}
+
+export async function SetPasscode(passcode: string): Promise<void> {
+  await post('/api/passcode/set', { passcode });
+}
+
+export async function VerifyPasscode(passcode: string): Promise<boolean> {
+  const data = await post('/api/passcode/verify', { passcode });
+  return !!data.ok;
+}
+
+export async function ClearPasscode(): Promise<void> {
+  await post('/api/passcode/clear');
+}
+
+// OS-reported idle seconds, or -1 when the platform does not report it; the
+// watcher then falls back to in-page activity.
+export async function SystemIdleSeconds(): Promise<number> {
+  const data = await post('/api/system-idle');
+  return data.seconds;
+}
+
+// The lock disconnects everything behind it so no live session outlives the
+// lock screen.
+export async function DisconnectAll(): Promise<void> {
+  await post('/api/disconnect-all');
+}
+
 export async function GetDatabases(connId: string): Promise<string[]> {
   return post('/api/databases', { connId });
 }
@@ -760,6 +794,11 @@ export interface AppSettings {
   mcpMaxRows: number;
   // Cap for one INSERT-script export (XLSX gets ten times); 0 uses the default.
   exportMaxRows: number;
+  // Idle auto-lock (P2-9): 0 turns the idle rules off; the lock itself needs a
+  // stored passcode, which the backend owns (passcode.go).
+  idleLockMinutes: number;
+  lockOnHide: boolean;
+  lockOnSleep: boolean;
 }
 
 export async function GetSettings(): Promise<AppSettings> {

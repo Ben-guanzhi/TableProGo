@@ -6,6 +6,8 @@ import BackupDialog from './components/BackupDialog';
 import RoutinesDialog from './components/RoutinesDialog';
 import EnumsDialog from './components/EnumsDialog';
 import DataSearchDialog from './components/DataSearchDialog';
+import LockScreen from './components/LockScreen';
+import PasscodeDialog from './components/PasscodeDialog';
 import StructureEditorDialog from './components/StructureEditorDialog';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
 import DataGrid from './components/DataGrid';
@@ -45,6 +47,7 @@ import {
   GetConnections,
   Connect,
   Disconnect,
+  DisconnectAll,
   CancelQuery,
   SecurityNotice,
   GetDatabases,
@@ -86,6 +89,7 @@ import {
   RollbackTransaction,
 } from './api';
 import { defaultSettings, saveSettings, useLoadSettings, useSettingsEffect } from './lib/useSettings';
+import { useIdleLock } from './lib/useIdleLock';
 
 // Result columns are matched to table metadata by name, which is all a
 // projection tells us once aliases and expressions get involved.
@@ -120,6 +124,14 @@ function App() {
   const [importTarget, setImportTarget] = useState<TableRef | null>(null);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [passcodeDialogOpen, setPasscodeDialogOpen] = useState(false);
+  // The idle lock (P2-9) watches the OS and the page; on lock it disconnects
+  // everything behind the lock screen, because a live session must not outlive
+  // the lock.
+  const idleLock = useIdleLock(settings, () => {
+    void DisconnectAll().catch(() => {});
+    toast('已锁定并断开连接');
+  });
   // The pane height is a workspace preference: it survives restarts instead
   // of snapping back to 200 on every launch.
   const [editorHeight, setEditorHeightState] = useState(() => {
@@ -1522,6 +1534,8 @@ function App() {
                   onDatabaseChange={db => handleTabDatabaseChange(activeTabData.id, db)}
                   settings={settings}
                   onSettingsChange={changeSettings}
+                  passcodeSet={idleLock.passcodeSet}
+                  onManagePasscode={() => setPasscodeDialogOpen(true)}
                   getTables={completionTables}
                   getColumns={completionColumns}
                   {...txHandlers(activeTabData)}
@@ -1640,6 +1654,24 @@ function App() {
           onImported={() => {
             if (activeTabData) handleObjectRefresh(activeTabData);
           }}
+        />
+      )}
+
+      {passcodeDialogOpen && (
+        <PasscodeDialog
+          passcodeSet={idleLock.passcodeSet}
+          onClose={() => setPasscodeDialogOpen(false)}
+          onChanged={() => {
+            void idleLock.refreshPasscode();
+          }}
+        />
+      )}
+
+      {idleLock.locked && (
+        <LockScreen
+          reason={idleLock.reason}
+          idleLockMinutes={settings.idleLockMinutes}
+          onUnlock={idleLock.unlock}
         />
       )}
 
