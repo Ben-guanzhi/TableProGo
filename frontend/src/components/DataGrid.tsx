@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { FiArrowDown, FiArrowUp, FiChevronDown, FiFilter, FiX } from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiExternalLink, FiFilter, FiX } from 'react-icons/fi';
 import {
   ApplyChanges,
   BuildChanges,
@@ -10,7 +10,9 @@ import {
   GetForeignKeyValues,
   GetTableForeignKeys,
 } from '../api';
+import { cellMagic } from '../cellMagic';
 import { copyText } from '../clipboard';
+import { openExternal } from '../externalLink';
 import { scrollBehavior } from '../motion';
 import { ChangeSet, QueryResult, TableRef } from '../types';
 import {
@@ -840,6 +842,10 @@ const DataGrid: React.FC<DataGridProps> = ({
                     // A cell with an unapplied edit shows the new value, highlighted;
                     // the original stays in the tooltip so nothing is hidden.
                     const { text: shown, isNull: shownNull } = displayCell(value, pending);
+                    // P2-8 display magics: only for stored text — a pending edit
+                    // or an open editor shows exactly what the user typed, and
+                    // copy/edit always work on the raw cell text, never a magic.
+                    const magic = pending === undefined ? cellMagic(col.name, text, value) : null;
                     // A queued row sends only the columns it holds, so an empty cell
                     // there means "say nothing" - not NULL.
                     const omitted = fresh && isNull;
@@ -848,6 +854,9 @@ const DataGrid: React.FC<DataGridProps> = ({
                     // A cell that holds a reference gets an arrow next to its value:
                     // the text box stays, so a value outside the list can be typed.
                     const hasFk = editable && referencedColumns[col.name.toLowerCase()] === true;
+                    // A whole-cell URL gets an open-in-browser arrow, but only
+                    // when the reference arrow has no claim on the slot.
+                    const linkable = !!magic && magic.kind === 'link' && !hasFk;
                     const listIsHere =
                       !!pickerNow && picker!.rowKey === target.key && picker!.column === col.name;
                     return (
@@ -880,7 +889,9 @@ const DataGrid: React.FC<DataGridProps> = ({
                                 ? `改动未应用 · 原值：${isNull ? 'NULL' : text || '（空）'}`
                                 : editSource
                                   ? `双击编辑${hasFk ? ' · 右侧箭头列出引用表的值' : ''} · ${text || '（空）'}`
-                                  : text
+                                  : magic?.kind === 'json'
+                                    ? magic.pretty
+                                    : text
                         }
                       >
                         {pending !== undefined && (
@@ -962,12 +973,32 @@ const DataGrid: React.FC<DataGridProps> = ({
                           <div
                             className={`truncate whitespace-pre ${
                               shownNull && !omitted ? 'italic text-muted' : ''
-                            } ${typeof value === 'number' ? 'tabular-nums' : ''} ${
-                              hasFk ? 'pr-4' : ''
+                            } ${typeof value === 'number' || magic?.kind === 'number' ? 'tabular-nums' : ''} ${
+                              hasFk || linkable ? 'pr-4' : ''
                             }`}
                           >
-                            {omitted ? '' : shownNull ? 'NULL' : shown}
+                            {omitted
+                              ? ''
+                              : shownNull
+                                ? 'NULL'
+                                : magic && (magic.kind === 'number' || magic.kind === 'date')
+                                  ? magic.display
+                                  : shown}
                           </div>
+                        )}
+                        {linkable && (
+                          <button
+                            aria-label={`在浏览器中打开 ${text}`}
+                            title="在浏览器中打开"
+                            className={`absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-muted hover:text-ink hover:bg-raised focus-visible:text-ink focus-visible:bg-raised opacity-0 group-hover/cell:opacity-100 focus-visible:opacity-100`}
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={e => {
+                              e.stopPropagation();
+                              void openExternal(magic.url);
+                            }}
+                          >
+                            <FiExternalLink size={11} aria-hidden />
+                          </button>
                         )}
                         {hasFk && (
                           <button
