@@ -133,6 +133,13 @@ export interface IndexInfo {
   unique: boolean;
   primary: boolean;
   columns: string[];
+  // method is the engine's access method (btree / BTREE / NONCLUSTERED / …).
+  method?: string;
+  // parts is the ordered key list for display: a column name or an expression
+  // text, with " DESC" for a descending part. columns keeps plain names only.
+  parts?: string[];
+  // predicate is a partial/filtered index's WHERE clause.
+  predicate?: string;
 }
 
 export interface ForeignKeyInfo {
@@ -191,7 +198,23 @@ export interface TableStructure {
   indexes: IndexInfo[];
   foreignKeys: ForeignKeyInfo[];
   triggers?: TriggerInfo[];
+  // checks lists CHECK constraints; empty when the engine has none or the read
+  // is unsupported (SQLite has no constraint catalog).
+  checks?: CheckInfo[];
+  // viewDefinition is the view's CREATE DDL (view tabs only).
+  viewDefinition?: string;
   createTable: string;
+}
+
+export interface CheckInfo {
+  name: string;
+  expression: string;
+}
+
+// One stored function or procedure in the schema-level list.
+export interface RoutineInfo {
+  name: string;
+  kind: string; // FUNCTION | PROCEDURE
 }
 
 export interface TableRef {

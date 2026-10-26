@@ -3,6 +3,7 @@ import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiS
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
+import RoutinesDialog from './components/RoutinesDialog';
 import StructureEditorDialog from './components/StructureEditorDialog';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
 import DataGrid from './components/DataGrid';
@@ -531,6 +532,7 @@ function App() {
           ref.database,
           ref.schema,
           ref.table,
+          tab.objectType === 'view' ? 'view' : 'table',
         )) as unknown as TableStructure;
         if (stillCurrent()) patch({ structure: { loading: false, data: structure } });
       } catch (error) {
@@ -696,6 +698,14 @@ function App() {
     dbType: string;
     database: string;
     schema?: string;
+  } | null>(null);
+
+  // The schema whose "函数与过程" dialog is open (list + definition viewer).
+  const [routinesTarget, setRoutinesTarget] = useState<{
+    connId: string;
+    database: string;
+    schema?: string;
+    title: string;
   } | null>(null);
 
   const openERTab = (ref: TableRef) => {
@@ -1183,6 +1193,14 @@ function App() {
             schema: node.schema ?? '',
           })
         }
+        onRoutines={node =>
+          setRoutinesTarget({
+            connId: node.connId,
+            database: (node.database as string) ?? '',
+            schema: node.schema ?? '',
+            title: [node.database, node.schema].filter(Boolean).join('.') || node.label,
+          })
+        }
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
@@ -1501,6 +1519,10 @@ function App() {
 
       {backupTarget && (
         <BackupDialog target={backupTarget} onClose={() => setBackupTarget(null)} />
+      )}
+
+      {routinesTarget && (
+        <RoutinesDialog target={routinesTarget} onClose={() => setRoutinesTarget(null)} />
       )}
 
       {structureEditTarget && (

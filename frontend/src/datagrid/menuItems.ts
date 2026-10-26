@@ -7,6 +7,7 @@ import type { TreeNode } from './sidebarTree';
 export type MenuItemId =
   | 'newTable'
   | 'er'
+  | 'routines'
   | 'copyDdl'
   | 'rename'
   | 'truncate'
@@ -20,6 +21,10 @@ export type MenuItemId =
 
 // backupableEngine names the two engines with an official single-file dump tool.
 const backupableEngine = (dbType: string) => dbType === 'postgresql' || dbType === 'mysql';
+
+// routineEngine: every SQL engine but SQLite stores functions/procedures; the
+// dialog itself explains when a plugin connection cannot read them.
+const routineEngine = (dbType: string) => dbType !== 'sqlite' && dbType !== 'redis';
 
 // menuItemsFor decides the item list for one node. The three "kinds" of menu are
 // deliberately different:
@@ -37,6 +42,8 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     // The ER diagram reads every table in the schema, so it only makes sense for
     // a container node that actually owns tables.
     items.push('er');
+    // Functions/procedures are schema-level objects: list + definition.
+    if (routineEngine(node.dbType)) items.push('routines');
     // Native-tool backup (pg_dump/mysqldump) exists for exactly two engines.
     if (backupableEngine(node.dbType)) items.push('backup');
   }

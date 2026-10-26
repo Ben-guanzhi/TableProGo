@@ -86,6 +86,8 @@ interface SidebarProps {
   onOpenER: (ref: TableRef) => void;
   // 备份数据库（pg_dump/mysqldump），从 database/schema 节点的菜单进入。
   onBackup: (node: TreeNode) => void;
+  // 函数与过程：schema 级对象，从 database/schema 节点的菜单打开。
+  onRoutines: (node: TreeNode) => void;
   onRenameObject: (table: TableRef, newName: string) => Promise<void>;
   onDropObject: (table: TableRef) => Promise<void>;
   onTruncateObject: (table: TableRef) => Promise<void>;
@@ -179,6 +181,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDeleteKey,
   onSetKeyTTL,
   onBackup,
+  onRoutines,
   onOpenER,
   onConfirm,
 }) => {
@@ -409,6 +412,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         node.database as string,
         node.schema ?? '',
         node.table as string,
+        node.kind === 'view' ? 'view' : 'table',
       );
       const ddl = structure?.createTable;
       if (!ddl) {
@@ -759,6 +763,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       onNewTable={onNewTable}
       onOpenER={n => onOpenER(tableRefOf(n))}
       onBackup={onBackup}
+      onRoutines={onRoutines}
       onConfirm={onConfirm}
     />
   );

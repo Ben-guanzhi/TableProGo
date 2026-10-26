@@ -427,6 +427,7 @@ type (
 	IndexInfo      = catalogmodel.IndexInfo
 	ForeignKeyInfo = catalogmodel.ForeignKeyInfo
 	TableStructure = catalogmodel.TableStructure
+	CheckInfo      = catalogmodel.CheckInfo
 )
 
 func resolveSchema(conn *Connection, database, schema string) string {

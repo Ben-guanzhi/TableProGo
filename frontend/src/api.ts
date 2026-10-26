@@ -17,8 +17,10 @@ import type {
   KVValue,
   PreviewCursor,
   QueryResult,
+  RoutineInfo,
   SqlFilter,
   TableInfo,
+  TableStructure,
 } from './types/index.ts';
 
 // Injected by the Go asset handler; the ?apiPort=/?apiToken= fallbacks keep the
@@ -280,6 +282,26 @@ export async function GetTriggerDefinition(
   return data.definition ?? '';
 }
 
+// The schema's stored functions and procedures (P3-4 ExtraMetadataReader).
+// Engines without the concept answer an error with the reason, not an empty list.
+export async function GetRoutines(
+  connId: string,
+  database: string,
+  schema: string,
+): Promise<RoutineInfo[]> {
+  return post('/api/routines', { connId, database, schema });
+}
+
+export async function GetRoutineDefinition(
+  connId: string,
+  database: string,
+  schema: string,
+  name: string,
+): Promise<string> {
+  const data = await post('/api/routine-definition', { connId, database, schema, name });
+  return data.definition ?? '';
+}
+
 export interface ColumnEdit {
   name: string;
   type: string;
@@ -313,8 +335,16 @@ export async function ApplyStructureEdit(req: {
   return post('/api/structure-edit', req);
 }
 
-export async function GetTableStructure(connId: string, database: string, schema: string, table: string): Promise<any> {
-  return post('/api/structure', { connId, database, schema, table });
+// objectType tells the backend whether to read a view definition or the
+// table-only extras (CHECK constraints), so one structure endpoint serves both.
+export async function GetTableStructure(
+  connId: string,
+  database: string,
+  schema: string,
+  table: string,
+  objectType?: 'table' | 'view',
+): Promise<TableStructure> {
+  return post('/api/structure', { connId, database, schema, table, type: objectType });
 }
 
 // One schema's relationship diagram: every base table with its columns and

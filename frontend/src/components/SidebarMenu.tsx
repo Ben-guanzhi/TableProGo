@@ -1,5 +1,6 @@
 import {
   FiClock,
+  FiCode,
   FiCopy,
   FiDownload,
   FiEdit2,
@@ -54,6 +55,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onCopyDdl: (node: TNode) => void;
   onNewTable: (target: NewTableTarget) => void;
   onOpenER: (node: TNode) => void;
+  onRoutines: (node: TNode) => void;
   onBackup: (node: TNode) => void;
   onConfirm: (request: ConfirmRequest) => void;
 }
@@ -181,6 +183,16 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
           onClick={() => {
             props.onClose();
             props.onOpenER(node);
+          }}
+        />
+      )}
+      {items.has('routines') && (
+        <MenuItem
+          label="函数与过程…"
+          icon={<FiCode size={11} />}
+          onClick={() => {
+            props.onClose();
+            props.onRoutines(node);
           }}
         />
       )}

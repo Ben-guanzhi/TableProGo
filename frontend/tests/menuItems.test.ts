@@ -28,18 +28,30 @@ test('a view has no truncate (it holds no rows of its own)', () => {
   assert.deepEqual(menuItemsFor(node({ kind: 'view' })), ['copyDdl', 'rename', 'drop', 'refresh']);
 });
 
-test('a schema is a container: it gains a table, an ER diagram and backup', () => {
+test('a schema is a container: it gains a table, an ER diagram, routines and backup', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'schema', key: 's|1', label: 'public', table: undefined })),
-    ['newTable', 'er', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'backup', 'refresh'],
   );
 });
 
 test('a database is a container too', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'database', key: 'd|1', label: 'app', schema: undefined, table: undefined })),
-    ['newTable', 'er', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'backup', 'refresh'],
   );
+});
+
+// Functions/procedures exist on every SQL engine but SQLite; Redis has none.
+test('routines appear exactly where stored routines exist', () => {
+  for (const dbType of ['postgresql', 'mysql', 'sqlserver', 'oracle']) {
+    const items = menuItemsFor(node({ kind: 'database', key: 'd|4', label: 'app', schema: undefined, table: undefined, dbType }));
+    assert.equal(items.includes('routines'), true, `${dbType} should offer routines`);
+  }
+  for (const dbType of ['sqlite', 'redis']) {
+    const items = menuItemsFor(node({ kind: 'database', key: 'd|5', label: 'app', schema: undefined, table: undefined, dbType }));
+    assert.equal(items.includes('routines'), false, `${dbType} must not offer routines`);
+  }
 });
 
 // Only the two engines with an official single-file dump tool offer backup.

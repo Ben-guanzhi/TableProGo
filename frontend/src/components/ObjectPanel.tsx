@@ -140,6 +140,7 @@ const IndexList: React.FC<{ structure: TableStructure }> = ({ structure }) => (
       <tr>
         <th className={thClass}>名称</th>
         <th className={thClass}>类型</th>
+        <th className={thClass}>方法</th>
         <th className={thClass}>唯一</th>
         <th className={thClass}>字段</th>
       </tr>
@@ -151,8 +152,14 @@ const IndexList: React.FC<{ structure: TableStructure }> = ({ structure }) => (
           <td className={`${tdClass} text-secondary`}>
             {i.primary ? 'PRIMARY' : i.kind || 'INDEX'}
           </td>
+          <td className={`${tdClass} text-secondary`}>{i.method || ''}</td>
           <td className={tdClass}>{i.unique ? 'YES' : 'NO'}</td>
-          <td className={`${tdClass} ${monoClass}`}>{i.columns.join(', ')}</td>
+          <td className={`${tdClass} ${monoClass}`}>
+            {(i.parts?.length ? i.parts : i.columns).join(', ')}
+            {i.predicate ? (
+              <div className="text-muted text-2xs font-sans">WHERE {i.predicate}</div>
+            ) : null}
+          </td>
         </tr>
       ))}
     </tbody>
@@ -182,6 +189,27 @@ const ForeignKeyList: React.FC<{ structure: TableStructure }> = ({ structure }) 
           </td>
           <td className={`${tdClass} text-secondary`}>{fk.onDelete}</td>
           <td className={`${tdClass} text-secondary`}>{fk.onUpdate}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
+// CHECK constraints come from the kernel's ExtraMetadataReader; SQLite has no
+// constraint catalog, so the card simply does not appear there.
+const CheckList: React.FC<{ structure: TableStructure }> = ({ structure }) => (
+  <table className={gridClass}>
+    <thead>
+      <tr>
+        <th className={thClass}>名称</th>
+        <th className={thClass}>表达式</th>
+      </tr>
+    </thead>
+    <tbody>
+      {structure.checks?.map(c => (
+        <tr key={c.name} className="even:bg-row-alt/40">
+          <td className={`${tdClass} ${monoClass}`}>{c.name}</td>
+          <td className={`${tdClass} ${monoClass} text-secondary`}>{c.expression}</td>
         </tr>
       ))}
     </tbody>
@@ -614,6 +642,14 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
                     schema={tableRef.schema}
                   />
                 </Card>
+              )}
+              {(structure.data.checks?.length ?? 0) > 0 && (
+                <Card title="CHECK 约束" count={structure.data.checks!.length}>
+                  <CheckList structure={structure.data} />
+                </Card>
+              )}
+              {structure.data.viewDefinition && (
+                <DdlCard ddl={structure.data.viewDefinition} label={`复制 ${full} 的定义`} />
               )}
               {structure.data.createTable && (
                 <DdlCard ddl={structure.data.createTable} label={`复制 ${full} 的建表语句`} />
