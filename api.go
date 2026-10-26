@@ -84,6 +84,42 @@ func (a *App) serveExecuteStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// serveSearchData answers /api/search-data with NDJSON progress events: one
+// per table scanned (hits included) plus a terminal done. A client that
+// disconnects cancels the walk — r.Context() is the parent of the run context,
+// exactly as /api/execute-stream does for statements.
+func (a *App) serveSearchData(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(405)
+		return
+	}
+	var body struct {
+		ConnID   string `json:"connId"`
+		Database string `json:"database"`
+		Keyword  string `json:"keyword"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, 400, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	enc := json.NewEncoder(w)
+	emit := func(ev SearchDataEvent) error {
+		if err := enc.Encode(ev); err != nil {
+			return err
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	}
+	if err := a.SearchTableData(r.Context(), body.ConnID, body.Database, body.Keyword, emit); err != nil {
+		_ = emit(SearchDataEvent{Type: "done", Error: err.Error()})
+	}
+}
+
 // Request shapes of the POST route table, kept in one place so the JSON
 // contract stays reviewable at a glance.
 
@@ -634,6 +670,7 @@ func (a *App) routes() *http.ServeMux {
 	// grid paints before the server finishes reading. Hand-written because the
 	// generic post() helper buffers a single JSON body.
 	mux.HandleFunc("/api/execute-stream", a.serveExecuteStream)
+	mux.HandleFunc("/api/search-data", a.serveSearchData)
 	post(a, mux, "/api/kv-value", 400, func(a *App, body kvValueRequest) (any, error) {
 		return a.GetKVValue(body.ConnID, body.Database, body.Key)
 	})

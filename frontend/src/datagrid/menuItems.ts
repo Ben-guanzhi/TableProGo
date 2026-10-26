@@ -9,6 +9,7 @@ export type MenuItemId =
   | 'er'
   | 'routines'
   | 'enums'
+  | 'searchData'
   | 'copyDdl'
   | 'rename'
   | 'truncate'
@@ -51,6 +52,9 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     if (routineEngine(node.dbType)) items.push('routines');
     // Enum types exist as schema objects only on PostgreSQL.
     if (enumEngine(node.dbType)) items.push('enums');
+    // Whole-database data search walks every table's text columns: it belongs
+    // on a database node (the unit the search scans), never on Redis.
+    if (node.kind === 'database' && node.dbType !== 'redis') items.push('searchData');
     // Native-tool backup (pg_dump/mysqldump) exists for exactly two engines.
     if (backupableEngine(node.dbType)) items.push('backup');
   }

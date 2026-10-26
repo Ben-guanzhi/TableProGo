@@ -90,6 +90,8 @@ interface SidebarProps {
   onRoutines: (node: TreeNode) => void;
   // 枚举类型：目前只有 PostgreSQL 有，菜单项也只在那里出现。
   onEnums: (node: TreeNode) => void;
+  // 整库数据搜索（P2-10）：扫一个 database 所有表的文本列，流式回进度。
+  onSearchData: (node: TreeNode) => void;
   onRenameObject: (table: TableRef, newName: string) => Promise<void>;
   onDropObject: (table: TableRef) => Promise<void>;
   onTruncateObject: (table: TableRef) => Promise<void>;
@@ -185,6 +187,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onBackup,
   onRoutines,
   onEnums,
+  onSearchData,
   onOpenER,
   onConfirm,
 }) => {
@@ -768,6 +771,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       onBackup={onBackup}
       onRoutines={onRoutines}
       onEnums={onEnums}
+      onSearchData={onSearchData}
       onConfirm={onConfirm}
     />
   );

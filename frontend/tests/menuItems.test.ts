@@ -35,11 +35,22 @@ test('a schema is a container: it gains a table, an ER diagram, routines, enums 
   );
 });
 
-test('a database is a container too', () => {
+test('a database is a container too, and owns the data search', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'database', key: 'd|1', label: 'app', schema: undefined, table: undefined })),
-    ['newTable', 'er', 'routines', 'enums', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'enums', 'searchData', 'backup', 'refresh'],
   );
+});
+
+// The data search scans a whole database's tables: it belongs to the database
+// node (which knows the database), not a schema, and never to Redis keys.
+test('searchData appears on SQL databases only', () => {
+  const db = menuItemsFor(node({ kind: 'database', key: 'd|6', label: 'app', schema: undefined, table: undefined, dbType: 'mysql' }));
+  assert.equal(db.includes('searchData'), true, 'a SQL database offers the data search');
+  const schema = menuItemsFor(node({ kind: 'schema', key: 's|6', label: 'public', table: undefined, dbType: 'mysql' }));
+  assert.equal(schema.includes('searchData'), false, 'a schema node does not');
+  const redis = menuItemsFor(node({ kind: 'database', key: 'd|7', label: '0', schema: undefined, table: undefined, dbType: 'redis' }));
+  assert.equal(redis.includes('searchData'), false, 'Redis has no tables to scan');
 });
 
 // Functions/procedures exist on every SQL engine but SQLite; Redis has none.

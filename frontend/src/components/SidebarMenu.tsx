@@ -8,6 +8,7 @@ import {
   FiMinusCircle,
   FiPlus,
   FiRefreshCw,
+  FiSearch,
   FiTag,
   FiTrash2,
 } from 'react-icons/fi';
@@ -58,6 +59,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onOpenER: (node: TNode) => void;
   onRoutines: (node: TNode) => void;
   onEnums: (node: TNode) => void;
+  onSearchData: (node: TNode) => void;
   onBackup: (node: TNode) => void;
   onConfirm: (request: ConfirmRequest) => void;
 }
@@ -205,6 +207,16 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
           onClick={() => {
             props.onClose();
             props.onEnums(node);
+          }}
+        />
+      )}
+      {items.has('searchData') && (
+        <MenuItem
+          label="搜索数据…"
+          icon={<FiSearch size={11} />}
+          onClick={() => {
+            props.onClose();
+            props.onSearchData(node);
           }}
         />
       )}

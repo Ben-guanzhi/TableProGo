@@ -5,6 +5,7 @@ import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
 import RoutinesDialog from './components/RoutinesDialog';
 import EnumsDialog from './components/EnumsDialog';
+import DataSearchDialog from './components/DataSearchDialog';
 import StructureEditorDialog from './components/StructureEditorDialog';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
 import DataGrid from './components/DataGrid';
@@ -753,6 +754,13 @@ function App() {
     title: string;
   } | null>(null);
 
+  // The database whose "搜索数据" dialog is open (P2-10 whole-db data search).
+  const [dataSearchTarget, setDataSearchTarget] = useState<{
+    connId: string;
+    connName: string;
+    database: string;
+  } | null>(null);
+
   const openERTab = (ref: TableRef) => {
     const existing = tabs.find(
       t => t.kind === 'er' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
@@ -1254,6 +1262,13 @@ function App() {
             title: [node.database, node.schema].filter(Boolean).join('.') || node.label,
           })
         }
+        onSearchData={node =>
+          setDataSearchTarget({
+            connId: node.connId,
+            connName: connections.find(c => c.id === node.connId)?.name ?? '',
+            database: (node.database as string) ?? node.label,
+          })
+        }
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
@@ -1585,6 +1600,10 @@ function App() {
 
       {enumsTarget && (
         <EnumsDialog target={enumsTarget} onClose={() => setEnumsTarget(null)} />
+      )}
+
+      {dataSearchTarget && (
+        <DataSearchDialog target={dataSearchTarget} onClose={() => setDataSearchTarget(null)} />
       )}
 
       {structureEditTarget && (

@@ -650,6 +650,68 @@ export async function QueryColumns(connId: string, query: string, database = '')
   return post('/api/query-columns', { connId, query, database });
 }
 
+// One NDJSON line of /api/search-data (whole-database data search, P2-10).
+export interface SearchDataEvent {
+  type: 'start' | 'table' | 'done';
+  tables?: number;
+  scanned?: number;
+  total?: number;
+  schema?: string;
+  table?: string;
+  error?: string;
+  columns?: Column[];
+  rows?: any[][];
+  hits?: number;
+  truncated?: boolean;
+  cancelled?: boolean;
+  elapsedSeconds?: number;
+}
+
+// SearchDatabaseData walks the keyword through every table of one database,
+// handing each object's progress to onTable as it arrives. The AbortSignal
+// cancels the fetch mid-stream; the server cancels its queries the same way
+// (the request context is the parent of the run), so a stopped search never
+// leaves a scan running on the database.
+export async function SearchDatabaseData(
+  connId: string,
+  database: string,
+  keyword: string,
+  handlers: { onStart?: (tables: number) => void; onTable?: (event: SearchDataEvent) => void; signal?: AbortSignal } = {},
+): Promise<SearchDataEvent> {
+  const res = await fetch(`${BASE}/api/search-data`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
+    body: JSON.stringify({ connId, database, keyword }),
+    signal: handlers.signal,
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`search failed: HTTP ${res.status}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let final: SearchDataEvent | null = null;
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) {
+        const event = JSON.parse(line) as SearchDataEvent;
+        if (event.type === 'start') handlers.onStart?.(event.tables ?? 0);
+        else if (event.type === 'table') handlers.onTable?.(event);
+        else final = event;
+      }
+      newline = buffer.indexOf('\n');
+    }
+  }
+  if (!final) throw new Error('搜索没有返回结束事件');
+  return final;
+}
+
 // The table a statement reads rows from, or null when the result is not tied to
 // one and therefore cannot be edited.
 export async function GetQuerySource(
