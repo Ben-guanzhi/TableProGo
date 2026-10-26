@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { emptyQueue } from '../src/gridView.ts';
 import type { ChangeQueue } from '../src/gridView.ts';
-import { editReducer, emptyEditState } from '../src/datagrid/editorState.ts';
+import { editReducer, emptyEditState, primarySelected } from '../src/datagrid/editorState.ts';
 import type { EditAction, EditState } from '../src/datagrid/editorState.ts';
 
 // Apply a run of actions, the way a user gesture would.
@@ -14,7 +14,10 @@ const withQueue = (queue: ChangeQueue): EditState => ({ ...emptyEditState(), que
 
 test('a fresh grid has nothing queued and nothing open', () => {
   const state = emptyEditState();
-  assert.equal(state.selected, null);
+  assert.deepEqual(state.selected, []);
+  assert.equal(state.anchor, null);
+  assert.equal(state.cursor, null);
+  assert.equal(primarySelected(state), null);
   assert.equal(state.editing, null);
   assert.equal(state.draft, '');
   assert.equal(state.review, false);
@@ -119,13 +122,14 @@ test('delete toggles and discards the pending edits on the way out', () => {
 
 test('discarding the queue empties it but leaves the selection', () => {
   const edited = run([
-    { type: 'editSelect', index: 4 },
+    { type: 'cursorSet', row: 4, column: 0 },
     { type: 'editBegin', key: 'u4', column: 'name', value: 'old' },
     { type: 'editCommitFetched', index: 4, column: 'name', value: 'new', original: 'old' },
   ]);
   const cleared = editReducer(edited, { type: 'queueClear' });
   assert.deepEqual(cleared.queue, emptyQueue());
-  assert.equal(cleared.selected, 4);
+  assert.deepEqual(cleared.selected, [4]);
+  assert.equal(primarySelected(cleared), 4);
 });
 
 test('applying clears the queue, the review and the preview text', () => {
@@ -187,7 +191,7 @@ test('opening the review clears a stale apply error', () => {
 // user no longer sees.
 test('a new result resets the whole pipeline', () => {
   const dirty = run([
-    { type: 'editSelect', index: 2 },
+    { type: 'cursorSet', row: 2, column: 0 },
     { type: 'editBegin', key: 'u2', column: 'name', value: 'a' },
     { type: 'editCommitFetched', index: 2, column: 'name', value: 'b', original: 'a' },
     { type: 'reviewOpen' },
@@ -215,7 +219,7 @@ test('cancelling an edit closes the editor but keeps the queue', () => {
 });
 
 test('cancelling with no editor open is a no-op', () => {
-  const state = run([{ type: 'editSelect', index: 0 }]);
+  const state = run([{ type: 'cursorSet', row: 0, column: 0 }]);
   assert.equal(editReducer(state, { type: 'editClose' }), state);
 });
 
@@ -296,10 +300,70 @@ test('undo restores a cleared queue', () => {
 // A non-mutating gesture (selection, draft typing) must not grow the stack.
 test('selection and drafts do not enter the undo stack', () => {
   const state = run([
-    { type: 'editSelect', index: 2 },
+    { type: 'cursorSet', row: 2, column: 0 },
     { type: 'editBegin', key: 'u2', column: 'name', value: 'v' },
     { type: 'editDraft', value: 'vv' },
     { type: 'editClose' },
   ]);
   assert.equal(state.undoStack.length, 0);
+});
+
+// ---- cell cursor and row selection (P1-5 / P1-6) ---------------------------
+
+test('a plain click selects one row and anchors it', () => {
+  const state = run([{ type: 'cursorSet', row: 7, column: 2 }]);
+  assert.deepEqual(state.cursor, { row: 7, column: 2 });
+  assert.deepEqual(state.selected, [7]);
+  assert.equal(state.anchor, 7);
+  assert.equal(primarySelected(state), 7);
+});
+
+test('shift-click extends from the anchor, in either direction', () => {
+  const down = run([
+    { type: 'cursorSet', row: 3, column: 0 },
+    { type: 'cursorSet', row: 6, column: 1, extend: true },
+  ]);
+  assert.deepEqual(down.selected, [3, 4, 5, 6]);
+  // The anchor stays put, so a second shift-click re-spans from the same start
+  // rather than from the last row reached.
+  assert.equal(down.anchor, 3);
+  const back = editReducer(down, { type: 'cursorSet', row: 4, column: 1, extend: true });
+  assert.deepEqual(back.selected, [3, 4]);
+});
+
+test('ctrl-click toggles a row without dropping the others', () => {
+  const state = run([
+    { type: 'cursorSet', row: 1, column: 0 },
+    { type: 'cursorSet', row: 5, column: 0, toggle: true },
+    { type: 'cursorSet', row: 9, column: 0, toggle: true },
+  ]);
+  assert.deepEqual(state.selected, [1, 5, 9]);
+  const off = editReducer(state, { type: 'cursorSet', row: 5, column: 0, toggle: true });
+  assert.deepEqual(off.selected, [1, 9]);
+});
+
+test('keyboard moves the cursor; shift+arrow grows the selection', () => {
+  const moved = run([
+    { type: 'cursorSet', row: 2, column: 0 },
+    { type: 'cursorMove', row: 3, column: 1 },
+  ]);
+  assert.deepEqual(moved.cursor, { row: 3, column: 1 });
+  assert.deepEqual(moved.selected, [3], 'a plain move re-anchors');
+  const grown = editReducer(moved, { type: 'cursorMove', row: 5, column: 1, extend: true });
+  assert.deepEqual(grown.selected, [3, 4, 5]);
+  assert.equal(grown.anchor, 3);
+});
+
+// The cursor wins over the selected set: row actions follow what the user is
+// pointing at, which is what F2/delete/duplicate act on.
+test('primarySelected prefers the cursor row', () => {
+  const state = run([
+    { type: 'cursorSet', row: 1, column: 0 },
+    { type: 'cursorSet', row: 4, column: 0, toggle: true },
+    { type: 'cursorMove', row: 2, column: 0 },
+  ]);
+  assert.deepEqual(state.selected, [2]);
+  assert.equal(primarySelected(state), 2);
+  // A cursor-less state still answers from the selection.
+  assert.equal(primarySelected({ ...emptyEditState(), selected: [8] }), 8);
 });

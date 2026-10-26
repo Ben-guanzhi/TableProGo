@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { FiArrowDown, FiArrowUp, FiChevronDown, FiExternalLink, FiFilter, FiX } from 'react-icons/fi';
+import { FiArrowDown, FiArrowUp, FiChevronDown, FiExternalLink, FiFilter, FiMaximize2, FiX } from 'react-icons/fi';
 import {
   ApplyChanges,
   BuildChanges,
@@ -35,7 +35,7 @@ import {
 } from '../gridView';
 import { download, downloadBlob } from '../datagrid/download';
 import { columnReducer, emptyColumnState } from '../datagrid/columnState';
-import { editReducer, emptyEditState } from '../datagrid/editorState';
+import { editReducer, emptyEditState, primarySelected } from '../datagrid/editorState';
 import { fkReducer, emptyFKState, highlightedIndex, pickerList } from '../datagrid/fkState';
 import {
   MANUAL_MAX_WIDTH,
@@ -101,6 +101,12 @@ interface BodyRow {
 // what each column holds.
 type ExportFormat = 'csv' | 'json' | 'markdown' | 'xlsx' | 'sql';
 
+// P1-8: past this many characters a tooltip is not a viewer — the cell shows a
+// preview and the full value opens in a dialog. The preview length keeps one
+// long cell from dominating the row while still showing what it starts with.
+const LARGE_VALUE_THRESHOLD = 4096;
+const LARGE_VALUE_PREVIEW = 160;
+
 const DataGrid: React.FC<DataGridProps> = ({
   result,
   comments,
@@ -120,7 +126,11 @@ const DataGrid: React.FC<DataGridProps> = ({
   const [gridCols, dispatchColumns] = useReducer(columnReducer, undefined, emptyColumnState);
   const [fk, dispatchFk] = useReducer(fkReducer, undefined, emptyFKState);
 
-  const { queue, selected, editing, draft, review, applying, applyError, statements, planError } = editor;
+  const { queue, selected, cursor, editing, draft, review, applying, applyError, statements, planError } = editor;
+  // The row row-actions work on: the cursor's row, else the first selected one.
+  // Selection itself is a set now (P1-6), so anything that used to read a single
+  // index goes through this.
+  const primaryRow = primarySelected(editor);
   const { overrides, locate, activeMatch, sort, filters, menu, filterDraft, exportMenu } = gridCols;
   const { picker, query: fkQuery, activeOption, lists: fkLists, foreignKeys } = fk;
 
@@ -132,6 +142,8 @@ const DataGrid: React.FC<DataGridProps> = ({
   // Ids for queued new rows, so typing in one cannot renumber another. A ref, not
   // state: it never re-renders and never needs to.
   const rowSeq = useRef(1);
+  // P1-8: a cell too large for a tooltip opens in its own read-only viewer.
+  const [largeValue, setLargeValue] = useState<{ title: string; text: string } | null>(null);
   const scrollerRef = useRef<HTMLDivElement>(null);
 
   const autoWidths = useColumnWidths(result);
@@ -440,17 +452,17 @@ const DataGrid: React.FC<DataGridProps> = ({
   // duplicate gets an identity of its own instead of colliding with the source.
   // What is on screen is what gets copied, an unapplied cell edit included.
   const duplicateRow = () => {
-    if (selected === null) return;
+    if (primaryRow === null) return;
     const id = rowSeq.current++;
-    const shown = columns.map((col, i) => queue.updates[selected]?.[col.name] ?? rows[selected]?.[i] ?? null);
+    const shown = columns.map((col, i) => queue.updates[primaryRow]?.[col.name] ?? rows[primaryRow]?.[i] ?? null);
     dispatchEditor({ type: 'rowDuplicate', id, values: copyValues(shown, columns, keyNames) });
     revealTail();
   };
 
   // The delete mark is a toggle, so the same button undoes itself.
   const toggleSelectedDelete = () => {
-    if (selected === null) return;
-    dispatchEditor({ type: 'deleteToggle', index: selected });
+    if (primaryRow === null) return;
+    dispatchEditor({ type: 'deleteToggle', index: primaryRow });
   };
 
   const applyNow = async () => {
@@ -587,18 +599,25 @@ const DataGrid: React.FC<DataGridProps> = ({
     }
   };
 
-  // Keyboard: the grid is row-selectable by click; arrows move the selection
-  // and Ctrl/Cmd+C copies the selected row as TSV, so a value reaches Excel or
-  // the editor without a context menu.
+  // Keyboard (P1-5): arrows move the focused cell, Tab/Shift+Tab move across
+  // (wrapping at the row's ends), Enter/Shift+Enter move down/up, Home/End jump
+  // to the row's first/last column, F2 opens the editor, Escape closes it.
+  // Ctrl/Cmd+C copies every selected row as TSV (P1-6), Ctrl/Cmd+Z undoes the
+  // last queued gesture.
   const onGridKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
-      if (selected === null || !view.includes(selected)) return;
+      if (selected.length === 0) return;
       e.preventDefault();
-      const line = columns
-        .map((c, i) => cellText(rows[selected]?.[i]) ?? '')
-        .join('	');
-      void copyText(line).then(ok =>
-        ok ? toast.success('已复制该行（Tab 分隔）') : toast.error('复制失败'),
+      const lines = selected
+        .filter(index => view.includes(index))
+        .map(index => columns.map((_, i) => cellText(rows[index]?.[i]) ?? '').join('\t'));
+      if (lines.length === 0) return;
+      void copyText(lines.join('\n')).then(ok =>
+        ok
+          ? toast.success(
+              lines.length === 1 ? '已复制该行（Tab 分隔）' : `已复制 ${lines.length} 行（Tab 分隔）`,
+            )
+          : toast.error('复制失败'),
       );
       return;
     }
@@ -608,17 +627,80 @@ const DataGrid: React.FC<DataGridProps> = ({
       dispatchEditor({ type: 'undo' });
       return;
     }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-    if (editing || fk.picker || menu) return; // an open editor or menu owns the arrows
-    e.preventDefault();
-    const pos = selected === null ? -1 : view.indexOf(selected);
-    const next = e.key === 'ArrowDown' ? Math.min(pos + 1, view.length - 1) : Math.max(pos - 1, 0);
-    if (next < 0 || view[next] === selected) return;
-    dispatchEditor({ type: 'editSelect', index: view[next] });
-    // Keep the row in sight: the scroller scrolls just enough for one row.
-    const scroller = scrollerRef.current;
-    const rowEl = scroller?.querySelector(`tr[data-row-index="${view[next]}"]`);
-    rowEl?.scrollIntoView({ block: 'nearest' });
+    if (editing || fk.picker || menu) return; // an open editor or menu owns the keys
+    if (view.length === 0 || columns.length === 0) return;
+
+    // Work in view coordinates: the cursor stores a row index (which is stable
+    // across sorting), so its position has to be looked up each time.
+    const rowPos = Math.max(0, view.indexOf(cursor?.row ?? view[0]));
+    const column = cursor?.column ?? 0;
+    const go = (nextPos: number, nextColumn: number, extend: boolean) => {
+      const clampedPos = Math.max(0, Math.min(nextPos, view.length - 1));
+      const clampedColumn = Math.max(0, Math.min(nextColumn, columns.length - 1));
+      if (view[clampedPos] === cursor?.row && clampedColumn === column && !extend) return;
+      dispatchEditor({ type: 'cursorMove', row: view[clampedPos], column: clampedColumn, extend });
+      // Keep the focused row in sight: the scroller scrolls just enough.
+      scrollerRef.current
+        ?.querySelector(`tr[data-row-index="${view[clampedPos]}"]`)
+        ?.scrollIntoView({ block: 'nearest' });
+    };
+
+    switch (e.key) {
+      case 'ArrowDown':
+        e.preventDefault();
+        go(rowPos + 1, column, e.shiftKey);
+        return;
+      case 'ArrowUp':
+        e.preventDefault();
+        go(rowPos - 1, column, e.shiftKey);
+        return;
+      case 'ArrowRight':
+        e.preventDefault();
+        go(rowPos, column + 1, e.shiftKey);
+        return;
+      case 'ArrowLeft':
+        e.preventDefault();
+        go(rowPos, column - 1, e.shiftKey);
+        return;
+      case 'Home':
+        e.preventDefault();
+        go(rowPos, 0, e.shiftKey);
+        return;
+      case 'End':
+        e.preventDefault();
+        go(rowPos, columns.length - 1, e.shiftKey);
+        return;
+      case 'Tab': {
+        e.preventDefault();
+        let nextColumn = column + (e.shiftKey ? -1 : 1);
+        let nextPos = rowPos;
+        if (nextColumn >= columns.length) {
+          nextColumn = 0;
+          nextPos = rowPos + 1;
+        } else if (nextColumn < 0) {
+          nextColumn = columns.length - 1;
+          nextPos = rowPos - 1;
+        }
+        go(nextPos, nextColumn, false);
+        return;
+      }
+      case 'Enter': {
+        e.preventDefault();
+        go(rowPos + (e.shiftKey ? -1 : 1), column, false);
+        return;
+      }
+      case 'F2': {
+        e.preventDefault();
+        const row = body[rowPos];
+        if (!row) return;
+        const pending = row.fresh ? undefined : queue.updates[row.index]?.[columns[column].name];
+        const startValue = cellText(rows[row.index]?.[column]) ?? '';
+        startEdit(row, columns[column].name, pending ?? startValue);
+        return;
+      }
+      default:
+        return;
+    }
   };
 
   const openMenu = (e: React.MouseEvent, column: string) => {
@@ -676,8 +758,8 @@ const DataGrid: React.FC<DataGridProps> = ({
         onAppendRow={appendRow}
         onDuplicateRow={duplicateRow}
         onToggleDelete={toggleSelectedDelete}
-        selected={selected !== null}
-        deleteQueued={selected !== null && queue.deletes.includes(selected)}
+        selected={selected.length > 0}
+        deleteQueued={primaryRow !== null && queue.deletes.includes(primaryRow)}
         onImport={onImport}
         exportMenu={exportMenu}
         onExportToggle={rect => {
@@ -782,7 +864,7 @@ const DataGrid: React.FC<DataGridProps> = ({
               const { index, fresh } = target;
               const row = fresh ? [] : rows[index] ?? [];
               const deleting = !fresh && queue.deletes.includes(index);
-              const isSelected = !fresh && selected === index;
+              const isSelected = !fresh && selected.includes(index);
               const rowBg = deleting
                 ? 'bg-danger/15'
                 : fresh
@@ -800,7 +882,16 @@ const DataGrid: React.FC<DataGridProps> = ({
                     deleting ? 'line-through opacity-70' : ''
                   }`}
                   onClick={e => {
-                    if (!fresh) dispatchEditor({ type: 'editSelect', index });
+                    // Row-number / empty-space click: select the row, first
+                    // column. Cell clicks refine the column below.
+                    if (fresh) return;
+                    dispatchEditor({
+                      type: 'cursorSet',
+                      row: index,
+                      column: 0,
+                      extend: e.shiftKey,
+                      toggle: e.ctrlKey || e.metaKey,
+                    });
                   }}
                 >
                   <td
@@ -857,6 +948,9 @@ const DataGrid: React.FC<DataGridProps> = ({
                     // A whole-cell URL gets an open-in-browser arrow, but only
                     // when the reference arrow has no claim on the slot.
                     const linkable = !!magic && magic.kind === 'link' && !hasFk;
+                    // P1-8: past the threshold a tooltip is not a viewer. The
+                    // cell shows a preview and offers the full value in a dialog.
+                    const isLarge = !omitted && !shownNull && shown.length > LARGE_VALUE_THRESHOLD;
                     const listIsHere =
                       !!pickerNow && picker!.rowKey === target.key && picker!.column === col.name;
                     return (
@@ -866,10 +960,23 @@ const DataGrid: React.FC<DataGridProps> = ({
                           pending !== undefined ? 'bg-warning/20' : ''
                         }`}
                         style={{ width: widths[c], minWidth: widths[c], maxWidth: widths[c] }}
-                        onClick={() => {
+                        onClick={e => {
                           // A queued row is still being filled in, so one click
-                          // is enough to start typing in it.
-                          if (fresh && editable) startEdit(target, col.name, startValue);
+                          // is enough to start typing in it. Otherwise the click
+                          // focuses this cell (P1-5): Shift spans rows from the
+                          // anchor, Ctrl/Cmd toggles one row.
+                          if (fresh && editable) {
+                            startEdit(target, col.name, startValue);
+                            return;
+                          }
+                          if (fresh) return;
+                          dispatchEditor({
+                            type: 'cursorSet',
+                            row: index,
+                            column: c,
+                            extend: e.shiftKey,
+                            toggle: e.ctrlKey || e.metaKey,
+                          });
                         }}
                         onDoubleClick={() => {
                           if (!fresh && onCellDoubleClick) {
@@ -974,7 +1081,7 @@ const DataGrid: React.FC<DataGridProps> = ({
                             className={`truncate whitespace-pre ${
                               shownNull && !omitted ? 'italic text-muted' : ''
                             } ${typeof value === 'number' || magic?.kind === 'number' ? 'tabular-nums' : ''} ${
-                              hasFk || linkable ? 'pr-4' : ''
+                              hasFk || linkable || isLarge ? 'pr-4' : ''
                             }`}
                           >
                             {omitted
@@ -983,8 +1090,27 @@ const DataGrid: React.FC<DataGridProps> = ({
                                 ? 'NULL'
                                 : magic && (magic.kind === 'number' || magic.kind === 'date')
                                   ? magic.display
-                                  : shown}
+                                  : isLarge
+                                    ? `${shown.slice(0, LARGE_VALUE_PREVIEW)}…`
+                                    : shown}
                           </div>
+                        )}
+                        {isLarge && (
+                          <button
+                            aria-label={`查看 ${col.name} 的完整值（${shown.length} 字符）`}
+                            title={`查看完整值（${shown.length.toLocaleString()} 字符）`}
+                            className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded text-muted hover:text-ink hover:bg-raised focus-visible:text-ink focus-visible:bg-raised opacity-0 group-hover/cell:opacity-100 focus-visible:opacity-100"
+                            onMouseDown={e => e.preventDefault()}
+                            onClick={e => {
+                              e.stopPropagation();
+                              setLargeValue({
+                                title: `${col.name} · ${shown.length.toLocaleString()} 字符`,
+                                text: shown,
+                              });
+                            }}
+                          >
+                            <FiMaximize2 size={11} aria-hidden />
+                          </button>
                         )}
                         {linkable && (
                           <button
@@ -1159,13 +1285,60 @@ const DataGrid: React.FC<DataGridProps> = ({
           ) : (
             <span title="只有 select * 取自单个表的结果能改回数据库">只读</span>
           ))}
-        {selected !== null && view.includes(selected) && (
+        {primaryRow !== null && view.includes(primaryRow) && (
           <span className="ml-auto truncate">
-            第 {view.indexOf(selected) + 1} 行 ·{' '}
-            {columns.map((c, i) => `${c.name}=${cellText(rows[selected][i]) || 'NULL'}`).join('  ')}
+            {selected.length > 1 && `已选 ${selected.length} 行 · `}第 {view.indexOf(primaryRow) + 1} 行 ·{' '}
+            {columns.map((c, i) => `${c.name}=${cellText(rows[primaryRow][i]) || 'NULL'}`).join('  ')}
           </span>
         )}
       </div>
+
+      {largeValue && (
+        <div
+          className="fixed inset-0 z-[70] bg-scrim/50 flex items-center justify-center px-6"
+          onClick={() => setLargeValue(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={largeValue.title}
+            className="w-full max-w-2xl max-h-[80vh] bg-panel border border-line-strong rounded-lg shadow-xl flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-4 py-2 border-b border-line">
+              <h2 className="text-sm font-semibold truncate">{largeValue.title}</h2>
+              <div className="flex items-center gap-2">
+                <button
+                  className="px-2 py-0.5 rounded text-2xs border border-line text-secondary hover:text-ink hover:bg-raised"
+                  onClick={() => {
+                    void copyText(largeValue.text).then(ok =>
+                      ok ? toast.success('已复制完整值') : toast.error('复制失败'),
+                    );
+                  }}
+                >
+                  复制
+                </button>
+                <button
+                  className="text-secondary hover:text-ink"
+                  aria-label="关闭"
+                  onClick={() => setLargeValue(null)}
+                >
+                  <FiX size={16} />
+                </button>
+              </div>
+            </div>
+            <textarea
+              readOnly
+              aria-label="完整值"
+              value={largeValue.text}
+              className="flex-1 min-h-[40vh] m-3 bg-canvas border border-line rounded p-2 font-mono text-xs text-ink focus:outline-none"
+            />
+            <div className="px-4 pb-3 text-2xs text-muted">
+              {largeValue.text.length.toLocaleString()} 个字符 · 只读，改动请在网格里编辑
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
