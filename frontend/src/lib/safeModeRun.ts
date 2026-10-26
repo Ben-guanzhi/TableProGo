@@ -25,13 +25,16 @@ export const cancelledResult = (): QueryResult => ({
 // confirmThenRun turns a paused result into either the confirmed execution or a
 // cancellation. A result that was not paused is returned untouched, so callers
 // can pipe every result through it.
+//
+// confirm may be synchronous or return a promise: the app answers through its
+// own ConfirmDialog (P1-16), which is asynchronous, while tests answer inline.
 export async function confirmThenRun(
   first: QueryResult,
   resend: () => Promise<QueryResult>,
-  confirm: (message: string) => boolean,
+  confirm: (message: string) => boolean | Promise<boolean>,
 ): Promise<QueryResult> {
   if (!first.needsConfirmation) return first;
-  if (!confirm(`${first.error ?? ''}\n\nRun the statement anyway?`)) {
+  if (!(await confirm(confirmMessage(first)))) {
     return cancelledResult();
   }
   return resend();
@@ -39,4 +42,4 @@ export async function confirmThenRun(
 
 // confirmMessage is the text shown in the prompt for a paused result.
 export const confirmMessage = (result: QueryResult): string =>
-  `${result.error ?? ''}\n\nRun the statement anyway?`;
+  `${result.error ?? ''}\n\n仍要执行这条语句吗？`;

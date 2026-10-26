@@ -25,7 +25,10 @@ export async function runGuarded(
   connId: string,
   sql: string,
   database: string,
-  confirm: (message: string) => boolean = message => window.confirm(message),
+  // Required on purpose: the app answers through its own ConfirmDialog
+  // (P1-16), and a silent window.confirm default is exactly the inconsistency
+  // this parameter exists to remove.
+  confirm: (message: string) => boolean | Promise<boolean>,
   // tabId routes the statement through the tab-scoped endpoint so it joins that
   // tab's open transaction. Empty means "no transaction", which is what a
   // background statement wants.
@@ -59,7 +62,7 @@ export async function runStreamed(
   // to the pool directly).
   tabId = '',
   txActive = false,
-  confirm: (message: string) => boolean = message => window.confirm(message),
+  confirm: (message: string) => boolean | Promise<boolean> = () => false,
 ): Promise<QueryResult> {
   let columns: Column[] = [];
   let rows: any[][] = [];

@@ -66,7 +66,9 @@ test('declining cancels and never re-sends', async () => {
 test('the prompt text carries the backend reason', () => {
   const message = confirmMessage({ ...base, error: 'Safe Mode: a DELETE without a WHERE clause will rewrite every row' });
   assert.match(message, /rewrite every row/);
-  assert.match(message, /Run the statement anyway\?/);
+  // The question is Chinese like the rest of the UI (P1-16 unified the prompt
+  // onto the app's own dialog, so the English window.confirm wording is gone).
+  assert.match(message, /仍要执行这条语句吗？/);
 });
 
 test('cancelledResult is an empty result with the cancellation error', () => {

@@ -207,3 +207,41 @@ func TestSearchMatchesWithoutRegardToCase(t *testing.T) {
 // catalogBuildsOf reports how many catalog walks this connection paid for, which
 // is what "answered from memory" means: one walk per mutation, not per keystroke.
 func catalogBuildsOf(conn *Connection) int { return conn.catalog.Walks() }
+
+// A key/value connection's objects are its keys; the quick-open box must reach
+// them, or a whole Redis connection is invisible to the one search meant to
+// span everything (P1-20).
+func TestSearchFindsRedisKeys(t *testing.T) {
+	a, mr, _ := redisTestApp(t)
+	mr.Set("user:1", "x")
+	mr.Set("user:2", "y")
+	mr.Set("order:42", "z")
+
+	found, err := a.SearchObjects("user", 50)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(found) != 2 {
+		t.Fatalf("matches = %+v, want the two user keys", found)
+	}
+	for _, m := range found {
+		if m.Type != "key" {
+			t.Errorf("type = %q, want key (picking it opens the value tab)", m.Type)
+		}
+		if !strings.Contains(m.Table, "user") {
+			t.Errorf("match %q does not contain the fragment", m.Table)
+		}
+		if m.Database != "0" {
+			t.Errorf("database = %q, want the connection's 0", m.Database)
+		}
+	}
+
+	// A fragment that matches nothing must not invent keys.
+	found, err = a.SearchObjects("nothing-like-this", 50)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(found) != 0 {
+		t.Fatalf("unexpected matches: %+v", found)
+	}
+}

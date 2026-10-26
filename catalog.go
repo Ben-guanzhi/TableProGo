@@ -409,6 +409,7 @@ func (a *App) GetColumns(connID string, database string, schema string, table st
 	for _, c := range found {
 		col := ColumnInfo{
 			Name:         c.Name,
+			Table:        c.Table,
 			Type:         c.Type,
 			Nullable:     c.Nullable,
 			IsPrimaryKey: c.IsPrimaryKey,

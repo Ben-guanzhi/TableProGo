@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dbcore/dbcore"
 	tableprosql "github.com/dbcore/dbcore/sqltext"
 	"tablepro-go/internal/catalogsnap"
 )
@@ -31,6 +32,11 @@ const (
 	searchSnapshotPerDB   = 2000
 	searchSnapshotCap     = 50_000
 	searchLoadConcurrency = 8
+
+	// A keystroke must not walk a million-key database: the KV branch scans a
+	// bounded number of pages and reports what it saw.
+	searchKVScanPages = 20
+	searchKVScanCount = 1000
 )
 
 // catalogLimits are the caps the snapshot honours.
@@ -92,7 +98,11 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 	a.connectionsMu.RLock()
 	conns := make([]*Connection, 0, len(a.connections))
 	for _, conn := range a.connections {
-		if conn.DB != nil {
+		// Every shape a connection can have counts: a pool, a key/value
+		// driver, or a plugin-backed engine. Filtering on conn.DB alone made a
+		// whole Redis connection invisible to the one search meant to span
+		// everything (P1-20).
+		if conn.isConnected() {
 			conns = append(conns, conn)
 		}
 	}
@@ -115,6 +125,27 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 	for _, conn := range conns {
 		if len(found) >= limit {
 			break
+		}
+		// A key/value connection's "objects" are its keys.
+		if conn.KV != nil {
+			hits, err := searchKVKeys(a, conn, lower, limit-len(found))
+			if err != nil {
+				record(conn.Name, err)
+				continue
+			}
+			found = append(found, hits...)
+			continue
+		}
+		// A plugin-backed connection has no pool to read; its driver answers
+		// the same catalog call the navigator uses.
+		if pluginConnection(conn) {
+			hits, err := searchPluginCatalog(a, conn, lower, limit-len(found))
+			if err != nil {
+				record(conn.Name, err)
+				continue
+			}
+			found = append(found, hits...)
+			continue
 		}
 		if rows, ok := a.connSnapshot(conn); ok {
 			for _, match := range rows {
@@ -201,6 +232,84 @@ func searchInDatabase(a *App, conn *Connection, database, fragment string, limit
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	return found, nil
+}
+
+// searchKVKeys matches a fragment against the keys of one key/value
+// connection. The scan is bounded (searchKVScanPages): the fragment is what
+// the user is narrowing, so a bounded walk answers it without ever turning a
+// keystroke into a full keyspace inventory.
+func searchKVKeys(a *App, conn *Connection, lower string, limit int) ([]ObjectMatch, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	database := conn.Config.Database
+	var found []ObjectMatch
+	err := a.withKV(conn, database, func(ctx context.Context, drv dbcore.KVDriver) error {
+		var cursor uint64
+		for page := 0; page < searchKVScanPages; page++ {
+			batch, err := drv.ScanKeys(ctx, cursor, "*", searchKVScanCount)
+			if err != nil {
+				return err
+			}
+			for _, key := range batch.Keys {
+				if strings.Contains(strings.ToLower(key), lower) {
+					found = append(found, ObjectMatch{
+						ConnID:   conn.ID,
+						Database: database,
+						Type:     "key",
+						Table:    key,
+						Lower:    strings.ToLower(key),
+					})
+					if len(found) >= limit {
+						return nil
+					}
+				}
+			}
+			cursor = batch.Cursor
+			if cursor == 0 {
+				return nil
+			}
+		}
+		return nil
+	})
+	return found, err
+}
+
+// searchPluginCatalog matches a fragment against the table list a plugin
+// engine reports, reusing the driver the navigator already trusts so a plugin
+// connection needs no SQL of its own here.
+func searchPluginCatalog(a *App, conn *Connection, lower string, limit int) ([]ObjectMatch, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	database := conn.Config.Database
+	drv, err := a.sqlDriver(conn, database)
+	if err != nil {
+		return nil, err
+	}
+	ctx, done := a.beginRun(conn.ID)
+	defer done()
+	tables, err := drv.ListTables(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	var found []ObjectMatch
+	for _, t := range tables {
+		if strings.Contains(strings.ToLower(t.Name), lower) {
+			found = append(found, ObjectMatch{
+				ConnID:   conn.ID,
+				Database: database,
+				Schema:   t.Schema,
+				Type:     normalizeTableType(t.Type),
+				Table:    t.Name,
+				Lower:    strings.ToLower(t.Name),
+			})
+			if len(found) >= limit {
+				break
+			}
+		}
 	}
 	return found, nil
 }

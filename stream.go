@@ -103,6 +103,8 @@ func (a *App) StreamQuery(ctx context.Context, connID, query, database string, e
 			IsDecimal: dbcore.IsExactDecimalType(typeName),
 		}
 	}
+	// Same rule as the buffered path: duplicate projections get distinct keys.
+	dedupeColumnNames(colInfos)
 	if err := emit(StreamEvent{Type: "columns", Columns: colInfos}); err != nil {
 		return err
 	}

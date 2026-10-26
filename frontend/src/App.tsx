@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
@@ -152,6 +152,30 @@ function App() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
+
+  // One confirmation surface for the whole app (P1-16): Safe Mode pauses and
+  // the destructive compare-apply used to call window.confirm — unstyled,
+  // English, and blocking the webview. This bridges those promise-based callers
+  // onto the same ConfirmDialog the sidebar already uses.
+  const askConfirm = useCallback(
+    (request: { title: string; message: string; confirmLabel: string; destructive?: boolean }) =>
+      new Promise<boolean>(resolve => {
+        setConfirmReq({
+          ...request,
+          onConfirm: () => resolve(true),
+          onCancel: () => resolve(false),
+        });
+      }),
+    [],
+  );
+
+  // The Safe Mode pause answers with a bare message; this is the dialog shape
+  // it becomes.
+  const confirmDestructive = useCallback(
+    (message: string) =>
+      askConfirm({ title: '需要确认', message, confirmLabel: '执行', destructive: true }),
+    [askConfirm],
+  );
   // Edits waiting in each tab's grid, reported by the grid itself. Kept out of
   // tab state because it changes with every keystroke in a cell.
   const pendingEdits = useRef(new Map<string, number>());
@@ -442,7 +466,7 @@ function App() {
         setTabs(current => current.map(t =>
           t.id === tabId ? { ...t, database, result: partial, loading: true } : t
         ));
-      }, tabId, !!tab.txStatus);
+      }, tabId, !!tab.txStatus, confirmDestructive);
       const comments = settings.showColumnComments && !result.error
         ? await queryComments(activeConnection.id, tab.query, database)
         : undefined;
@@ -867,7 +891,7 @@ function App() {
 
     patch({ objectResult: { loading: true }, objectComments: undefined });
     try {
-      const result = await runGuarded(ref.connId, sql, database, undefined, tab.id);
+      const result = await runGuarded(ref.connId, sql, database, confirmDestructive, tab.id);
       const comments =
         settings.showColumnComments && !result.error
           ? await queryComments(ref.connId, sql, database)
@@ -1185,6 +1209,15 @@ function App() {
 
   const openFromQuickSearch = (match: ObjectMatch) => {
     setQuickOpen(false);
+    // A key/value "object" is a key: opening it must land on the value tab,
+    // not on a table tab that would query a table by that name (P1-20).
+    if (match.type === 'key') {
+      openKVTab(
+        { connId: match.connId, database: match.database, schema: '', table: match.table },
+        match.table,
+      );
+      return;
+    }
     openTableTab(
       { connId: match.connId, database: match.database, schema: match.schema, table: match.table },
       match.table,
@@ -1387,6 +1420,7 @@ function App() {
               connections={connections}
               connectedIds={connectedIds}
               initialSource={activeTabData.compareSource}
+              confirm={askConfirm}
             />
           ) : activeTabData?.kind === 'er' ? (
             <ERDiagram

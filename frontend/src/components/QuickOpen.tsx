@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { FiCornerDownLeft, FiEye, FiLoader, FiSearch, FiTable } from 'react-icons/fi';
+import { FiCornerDownLeft, FiEye, FiKey, FiLoader, FiSearch, FiTable } from 'react-icons/fi';
 import { ObjectMatch } from '../api';
 import { useDialog } from '../dialog';
 
@@ -144,6 +144,8 @@ const QuickOpen: React.FC<QuickOpenProps> = ({ connections, search, onPick, onCl
             >
               {match.type === 'view' ? (
                 <FiEye size={12} className="shrink-0 text-icon-view" />
+              ) : match.type === 'key' ? (
+                <FiKey size={12} className="shrink-0 text-warning" />
               ) : (
                 <FiTable size={12} className="shrink-0 text-success" />
               )}

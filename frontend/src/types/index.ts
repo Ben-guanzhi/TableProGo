@@ -48,6 +48,10 @@ export interface Column {
   name: string;
   type: string;
   nullable: boolean;
+  // Table the column came from (catalog paths); absent on result columns,
+  // where the driver cannot report one. Duplicate result names are suffixed
+  // server-side (id, id_2) so a JOIN stays addressable by name.
+  table?: string;
   // Exact-decimal column: its cells cross as digit text and sort as numbers.
   isDecimal?: boolean;
 }

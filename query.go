@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +45,25 @@ type QueryResult struct {
 
 // Column is the result-grid descriptor; the shape lives in catalogmodel.
 type Column = catalogmodel.Column
+
+// dedupeColumnNames makes duplicate result-column names unique in place: the
+// grid keys widths, filters and edits by name, so a JOIN projecting two `id`s
+// would otherwise fold them into one column. The second occurrence becomes
+// "id_2", and a suffix that itself collides keeps bumping. Case-insensitive,
+// like the kernel's DisambiguateColumnNames, because engines fold unquoted
+// identifiers. Order and every other field are preserved.
+func dedupeColumnNames(cols []Column) {
+	used := make(map[string]bool, len(cols))
+	for i := range cols {
+		base := cols[i].Name
+		name := base
+		for n := 2; used[strings.ToLower(name)]; n++ {
+			name = base + "_" + strconv.Itoa(n)
+		}
+		used[strings.ToLower(name)] = true
+		cols[i].Name = name
+	}
+}
 
 // QueryColumns resolves the table a query reads from and returns its columns,
 // which is how the result grid finds column comments for "SELECT *" output.
@@ -428,12 +448,16 @@ func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interfa
 	colInfos := make([]Column, len(columns))
 	for i, col := range columns {
 		nullable, _ := columnTypes[i].Nullable()
+		typeName := columnTypes[i].DatabaseTypeName()
 		colInfos[i] = Column{
-			Name:     col,
-			Type:     columnTypes[i].DatabaseTypeName(),
-			Nullable: nullable,
+			Name:      col,
+			Type:      typeName,
+			Nullable:  nullable,
+			IsDecimal: dbcore.IsExactDecimalType(typeName),
 		}
 	}
+	// A JOIN projecting two `id`s must not yield two columns with one key.
+	dedupeColumnNames(colInfos)
 
 	// The scan destinations are reused across rows (as fynequery's runSelectCtx
 	// already does): one allocation for values and one for valuePtrs instead of
@@ -547,6 +571,7 @@ func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 	for i, c := range res.Columns {
 		out.Columns[i] = Column{
 			Name:      c.Name,
+			Table:     c.Table,
 			Type:      c.Type,
 			Nullable:  c.Nullable,
 			IsDecimal: dbcore.IsExactDecimalType(c.Type),

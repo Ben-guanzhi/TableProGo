@@ -43,6 +43,15 @@ export interface CompareViewProps {
   // right-clicked becomes the source.
   initialSource?: CompareTarget;
   initialTarget?: CompareTarget;
+  // The app's single confirmation surface (P1-16). Absent in tests and in any
+  // embedding without a dialog host; a destructive apply is then refused rather
+  // than silently allowed.
+  confirm?: (request: {
+    title: string;
+    message: string;
+    confirmLabel: string;
+    destructive?: boolean;
+  }) => Promise<boolean>;
 }
 
 /**
@@ -53,7 +62,7 @@ export interface CompareViewProps {
  * changes start unticked, and the run button names how many of them are about to
  * happen before it does anything.
  */
-export default function CompareView({ connections, connectedIds, initialSource, initialTarget }: CompareViewProps) {
+export default function CompareView({ connections, connectedIds, initialSource, initialTarget, confirm }: CompareViewProps) {
   const live = useMemo(
     () => connections.filter(c => connectedIds.includes(c.id) && c.type !== 'redis'),
     [connections, connectedIds],
@@ -141,9 +150,16 @@ export default function CompareView({ connections, connectedIds, initialSource, 
     const ids = result.entries.filter(e => selected[e.id]).map(e => e.id);
     const destructive = result.entries.filter(e => selected[e.id] && e.destructive).length;
     if (destructive > 0) {
-      const ok = window.confirm(
-        `将执行 ${ids.length} 条语句，其中 ${destructive} 条是破坏性变更（删表/删列/修改列），可能造成数据丢失且无法自动回滚。确定继续？`,
-      );
+      // The app's ConfirmDialog, not window.confirm: same surface as every
+      // other confirmation (P1-16). Without a host to ask, refuse — a
+      // destructive apply must never proceed on a missing answer.
+      if (!confirm) return;
+      const ok = await confirm({
+        title: '应用结构变更',
+        message: `将执行 ${ids.length} 条语句，其中 ${destructive} 条是破坏性变更（删表/删列/修改列），可能造成数据丢失且无法自动回滚。确定继续？`,
+        confirmLabel: '执行',
+        destructive: true,
+      });
       if (!ok) return;
     }
     setApplying(true);

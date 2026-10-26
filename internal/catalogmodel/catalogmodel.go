@@ -22,6 +22,9 @@ type ColumnInfo struct {
 	DefaultValue string `json:"defaultValue,omitempty"`
 	IsPrimaryKey bool   `json:"isPrimaryKey"`
 	Comment      string `json:"comment"`
+	// Table is the table this column was read from (P3-9). A column's identity
+	// is (Table, Name); catalog paths always fill it.
+	Table string `json:"table,omitempty"`
 }
 
 // IndexInfo describes one index; composite keys keep their column order.
@@ -116,6 +119,11 @@ type Column struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	Nullable bool   `json:"nullable"`
+	// Table is the table the column came from (catalog paths); empty for
+	// result-set columns, where the driver cannot report one. With Name it
+	// forms the column's identity, which is why duplicate result names are
+	// suffixed (query.go dedupeColumnNames) instead of folding together.
+	Table string `json:"table,omitempty"`
 	// IsDecimal marks an exact-decimal column (DECIMAL/NUMERIC/MONEY…). Its
 	// cells cross the JSON wire as digit TEXT to survive the round trip, so
 	// the grid needs the column's type to sort and sum them as numbers.

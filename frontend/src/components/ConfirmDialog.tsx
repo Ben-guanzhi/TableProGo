@@ -9,6 +9,10 @@ export interface ConfirmRequest {
   // by reflex.
   destructive?: boolean;
   onConfirm: () => void;
+  // onCancel runs on every non-accept exit (button, Escape, overlay click), so
+  // callers that bridge this dialog to a promise can resolve false. Callers
+  // that only close a dialog leave it nil.
+  onCancel?: () => void;
 }
 
 interface Props {
@@ -32,6 +36,7 @@ const ConfirmDialog: React.FC<Props> = ({ request, onDismiss }) => {
   const run = (accept: boolean) => {
     onDismiss();
     if (accept) request.onConfirm();
+    else request.onCancel?.();
   };
 
   return (

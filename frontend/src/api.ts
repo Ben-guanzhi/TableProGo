@@ -505,7 +505,8 @@ export async function ExportWorkbook(
 
 // One catalog hit from the name search behind the quick-open box.
 export interface ObjectMatch extends TableRef {
-  type: 'table' | 'view';
+  // "key" is a key/value connection's object: picking it opens the value tab.
+  type: 'table' | 'view' | 'key';
 }
 
 // Tables and views whose name contains the fragment, across every connected
