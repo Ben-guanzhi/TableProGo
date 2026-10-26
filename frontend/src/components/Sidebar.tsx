@@ -88,6 +88,8 @@ interface SidebarProps {
   onBackup: (node: TreeNode) => void;
   // 函数与过程：schema 级对象，从 database/schema 节点的菜单打开。
   onRoutines: (node: TreeNode) => void;
+  // 枚举类型：目前只有 PostgreSQL 有，菜单项也只在那里出现。
+  onEnums: (node: TreeNode) => void;
   onRenameObject: (table: TableRef, newName: string) => Promise<void>;
   onDropObject: (table: TableRef) => Promise<void>;
   onTruncateObject: (table: TableRef) => Promise<void>;
@@ -182,6 +184,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSetKeyTTL,
   onBackup,
   onRoutines,
+  onEnums,
   onOpenER,
   onConfirm,
 }) => {
@@ -764,6 +767,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       onOpenER={n => onOpenER(tableRefOf(n))}
       onBackup={onBackup}
       onRoutines={onRoutines}
+      onEnums={onEnums}
       onConfirm={onConfirm}
     />
   );

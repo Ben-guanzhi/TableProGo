@@ -216,6 +216,31 @@ const CheckList: React.FC<{ structure: TableStructure }> = ({ structure }) => (
   </table>
 );
 
+// Partitions likewise: a plain table reports none and the card stays hidden, so
+// the structure page only grows the section for a partitioned table.
+const PartitionList: React.FC<{ structure: TableStructure }> = ({ structure }) => (
+  <table className={gridClass}>
+    <thead>
+      <tr>
+        <th className={thClass}>分区</th>
+        <th className={thClass}>边界</th>
+        <th className={`${thClass} text-right`}>估算行数</th>
+      </tr>
+    </thead>
+    <tbody>
+      {structure.partitions?.map(p => (
+        <tr key={p.name} className="even:bg-row-alt/40">
+          <td className={`${tdClass} ${monoClass}`}>{p.name}</td>
+          <td className={`${tdClass} ${monoClass} text-secondary`}>{p.bound}</td>
+          <td className={`${tdClass} text-right tabular-nums text-secondary`}>
+            {p.rows < 0 ? '—' : p.rows.toLocaleString()}
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+);
+
 const TriggerList: React.FC<{
   structure: TableStructure;
   connId: string;
@@ -631,6 +656,11 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
               {structure.data.foreignKeys.length > 0 && (
                 <Card title="外键" count={structure.data.foreignKeys.length}>
                   <ForeignKeyList structure={structure.data} />
+                </Card>
+              )}
+              {(structure.data.partitions?.length ?? 0) > 0 && (
+                <Card title="分区" count={structure.data.partitions!.length}>
+                  <PartitionList structure={structure.data} />
                 </Card>
               )}
               {(structure.data.triggers?.length ?? 0) > 0 && tableRef && (

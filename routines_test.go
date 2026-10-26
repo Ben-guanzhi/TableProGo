@@ -72,6 +72,45 @@ func TestRoutinesUnsupportedOnSQLite(t *testing.T) {
 // schema's routines, read one definition, and drop the fixture again.
 // TABULA_LIVE_PG=postgres://postgres:dbcore@127.0.0.1:55432/dbcore enables it.
 func TestLiveRoutines(t *testing.T) {
+	app, database := livePostgresApp(t)
+
+	name := "tablepro_live_fn_" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if _, err := app.connections["c1"].DB.Exec(
+		`CREATE FUNCTION ` + name + `() RETURNS int LANGUAGE sql AS 'SELECT 1'`); err != nil {
+		t.Fatalf("create function: %v", err)
+	}
+	defer app.connections["c1"].DB.Exec(`DROP FUNCTION ` + name + `()`)
+
+	routines, err := app.GetRoutines("c1", database, "public")
+	if err != nil {
+		t.Fatalf("GetRoutines: %v", err)
+	}
+	found := false
+	for _, r := range routines {
+		if r.Name == name {
+			found = true
+			if r.Kind != "FUNCTION" {
+				t.Errorf("kind = %q, want FUNCTION", r.Kind)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("routine %q missing from %+v", name, routines)
+	}
+
+	def, err := app.GetRoutineDefinition("c1", database, "public", name)
+	if err != nil {
+		t.Fatalf("GetRoutineDefinition: %v", err)
+	}
+	if !strings.Contains(def, name) || !strings.Contains(strings.ToUpper(def), "CREATE") {
+		t.Errorf("definition does not describe the routine:\n%s", def)
+	}
+}
+
+// livePostgresApp connects a test App to TABULA_LIVE_PG and returns it with the
+// database name. The test is skipped when the variable is unset.
+func livePostgresApp(t *testing.T) (*App, string) {
+	t.Helper()
 	raw := os.Getenv("TABULA_LIVE_PG")
 	if raw == "" {
 		t.Skip("TABULA_LIVE_PG not set")
@@ -105,37 +144,6 @@ func TestLiveRoutines(t *testing.T) {
 	if err := app.Connect("c1"); err != nil {
 		t.Fatalf("connect: %v", err)
 	}
-	defer func() { _ = app.Disconnect("c1") }()
-
-	name := "tablepro_live_fn_" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	if _, err := app.connections["c1"].DB.Exec(
-		`CREATE FUNCTION ` + name + `() RETURNS int LANGUAGE sql AS 'SELECT 1'`); err != nil {
-		t.Fatalf("create function: %v", err)
-	}
-	defer app.connections["c1"].DB.Exec(`DROP FUNCTION ` + name + `()`)
-
-	routines, err := app.GetRoutines("c1", cfg.Database, "public")
-	if err != nil {
-		t.Fatalf("GetRoutines: %v", err)
-	}
-	found := false
-	for _, r := range routines {
-		if r.Name == name {
-			found = true
-			if r.Kind != "FUNCTION" {
-				t.Errorf("kind = %q, want FUNCTION", r.Kind)
-			}
-		}
-	}
-	if !found {
-		t.Fatalf("routine %q missing from %+v", name, routines)
-	}
-
-	def, err := app.GetRoutineDefinition("c1", cfg.Database, "public", name)
-	if err != nil {
-		t.Fatalf("GetRoutineDefinition: %v", err)
-	}
-	if !strings.Contains(def, name) || !strings.Contains(strings.ToUpper(def), "CREATE") {
-		t.Errorf("definition does not describe the routine:\n%s", def)
-	}
+	t.Cleanup(func() { _ = app.Disconnect("c1") })
+	return app, cfg.Database
 }

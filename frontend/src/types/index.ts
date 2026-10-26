@@ -201,6 +201,9 @@ export interface TableStructure {
   // checks lists CHECK constraints; empty when the engine has none or the read
   // is unsupported (SQLite has no constraint catalog).
   checks?: CheckInfo[];
+  // partitions lists a partitioned table's partitions; empty for a plain table
+  // and for engines without partitioning.
+  partitions?: PartitionInfo[];
   // viewDefinition is the view's CREATE DDL (view tabs only).
   viewDefinition?: string;
   createTable: string;
@@ -209,6 +212,20 @@ export interface TableStructure {
 export interface CheckInfo {
   name: string;
   expression: string;
+}
+
+// One partition of a partitioned table: the engine's label, its boundary text
+// and an approximate row count (-1 when unknown).
+export interface PartitionInfo {
+  name: string;
+  bound: string;
+  rows: number;
+}
+
+// One user-defined enum type and its labels in declaration order (PostgreSQL).
+export interface EnumTypeInfo {
+  name: string;
+  labels: string[];
 }
 
 // One stored function or procedure in the schema-level list.

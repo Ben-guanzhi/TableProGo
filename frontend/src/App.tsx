@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
 import RoutinesDialog from './components/RoutinesDialog';
+import EnumsDialog from './components/EnumsDialog';
 import StructureEditorDialog from './components/StructureEditorDialog';
 import QueryEditor, { QueryEditorHandle } from './components/QueryEditor';
 import DataGrid from './components/DataGrid';
@@ -708,6 +709,14 @@ function App() {
     title: string;
   } | null>(null);
 
+  // The schema whose "枚举类型" dialog is open (PostgreSQL only).
+  const [enumsTarget, setEnumsTarget] = useState<{
+    connId: string;
+    database: string;
+    schema?: string;
+    title: string;
+  } | null>(null);
+
   const openERTab = (ref: TableRef) => {
     const existing = tabs.find(
       t => t.kind === 'er' && t.tableRef && objectKey(t.tableRef) === objectKey(ref),
@@ -1201,6 +1210,14 @@ function App() {
             title: [node.database, node.schema].filter(Boolean).join('.') || node.label,
           })
         }
+        onEnums={node =>
+          setEnumsTarget({
+            connId: node.connId,
+            database: (node.database as string) ?? '',
+            schema: node.schema ?? '',
+            title: [node.database, node.schema].filter(Boolean).join('.') || node.label,
+          })
+        }
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
@@ -1523,6 +1540,10 @@ function App() {
 
       {routinesTarget && (
         <RoutinesDialog target={routinesTarget} onClose={() => setRoutinesTarget(null)} />
+      )}
+
+      {enumsTarget && (
+        <EnumsDialog target={enumsTarget} onClose={() => setEnumsTarget(null)} />
       )}
 
       {structureEditTarget && (

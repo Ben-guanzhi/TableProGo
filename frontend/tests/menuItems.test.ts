@@ -28,17 +28,17 @@ test('a view has no truncate (it holds no rows of its own)', () => {
   assert.deepEqual(menuItemsFor(node({ kind: 'view' })), ['copyDdl', 'rename', 'drop', 'refresh']);
 });
 
-test('a schema is a container: it gains a table, an ER diagram, routines and backup', () => {
+test('a schema is a container: it gains a table, an ER diagram, routines, enums and backup', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'schema', key: 's|1', label: 'public', table: undefined })),
-    ['newTable', 'er', 'routines', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'enums', 'backup', 'refresh'],
   );
 });
 
 test('a database is a container too', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'database', key: 'd|1', label: 'app', schema: undefined, table: undefined })),
-    ['newTable', 'er', 'routines', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'enums', 'backup', 'refresh'],
   );
 });
 
@@ -51,6 +51,18 @@ test('routines appear exactly where stored routines exist', () => {
   for (const dbType of ['sqlite', 'redis']) {
     const items = menuItemsFor(node({ kind: 'database', key: 'd|5', label: 'app', schema: undefined, table: undefined, dbType }));
     assert.equal(items.includes('routines'), false, `${dbType} must not offer routines`);
+  }
+});
+
+// User-defined enum types are PostgreSQL-only.
+test('enums appear only on PostgreSQL', () => {
+  for (const dbType of ['postgresql']) {
+    const items = menuItemsFor(node({ kind: 'schema', key: 's|2', label: 'public', table: undefined, dbType }));
+    assert.equal(items.includes('enums'), true, `${dbType} should offer enums`);
+  }
+  for (const dbType of ['mysql', 'sqlserver', 'oracle', 'sqlite', 'redis']) {
+    const items = menuItemsFor(node({ kind: 'schema', key: 's|3', label: 'public', table: undefined, dbType }));
+    assert.equal(items.includes('enums'), false, `${dbType} must not offer enums`);
   }
 });
 

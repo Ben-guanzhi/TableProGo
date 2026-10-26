@@ -67,10 +67,28 @@ type TableStructure struct {
 	// Checks lists the table's CHECK constraints; same empty-on-unsupported
 	// discipline as Triggers.
 	Checks []CheckInfo `json:"checks"`
+	// Partitions lists a partitioned table's partitions (empty for a plain
+	// table, and when the engine has no partitioning at all).
+	Partitions []PartitionInfo `json:"partitions"`
 	// ViewDefinition is the view's DDL when the object is a view (empty for a
 	// table, or when the engine cannot produce it).
 	ViewDefinition string `json:"viewDefinition,omitempty"`
 	CreateTable    string `json:"createTable"`
+}
+
+// PartitionInfo is one partition of a partitioned table: the engine's label,
+// its boundary text and an approximate row count (-1 when unknown).
+type PartitionInfo struct {
+	Name  string `json:"name"`
+	Bound string `json:"bound"`
+	Rows  int64  `json:"rows"`
+}
+
+// EnumTypeInfo is one user-defined enum type and its labels in declaration
+// order (PostgreSQL only).
+type EnumTypeInfo struct {
+	Name   string   `json:"name"`
+	Labels []string `json:"labels"`
 }
 
 // CheckInfo is one CHECK constraint as the structure page shows it.

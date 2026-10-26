@@ -77,3 +77,29 @@ func (a *App) GetRoutineDefinition(connID, database, schema, name string) (strin
 	}
 	return def, nil
 }
+
+// GetEnumTypes lists one schema's user-defined enum types with their labels in
+// declaration order. Only PostgreSQL has them; MySQL's ENUM is a column type
+// (visible in the column list) and the others have no equivalent, so the
+// kernel's ErrNotSupported becomes a readable message here.
+func (a *App) GetEnumTypes(connID, database, schema string) ([]catalogmodel.EnumTypeInfo, error) {
+	x, conn, err := a.extraMetadata(connID, database)
+	if err != nil {
+		return nil, err
+	}
+	ctx, done := a.beginRun(connID)
+	defer done()
+
+	found, err := x.EnumTypes(ctx, resolveObjectSchema(conn, database, schema))
+	if errors.Is(err, dbcore.ErrNotSupported) {
+		return nil, fmt.Errorf("%s 没有用户定义枚举类型（MySQL 的 ENUM 是列类型）", conn.Type)
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalogmodel.EnumTypeInfo, 0, len(found))
+	for _, e := range found {
+		out = append(out, catalogmodel.EnumTypeInfo{Name: e.Name, Labels: e.Labels})
+	}
+	return out, nil
+}

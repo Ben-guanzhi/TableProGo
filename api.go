@@ -486,6 +486,9 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"definition": def}, nil
 	})
+	post(a, mux, "/api/enums", 400, func(a *App, body tableRefRequest) (any, error) {
+		return a.GetEnumTypes(body.ConnID, body.Database, body.Schema)
+	})
 
 	post(a, mux, "/api/backup", 400, func(a *App, body BackupRequest) (any, error) {
 		return a.Backup(body)

@@ -8,6 +8,7 @@ export type MenuItemId =
   | 'newTable'
   | 'er'
   | 'routines'
+  | 'enums'
   | 'copyDdl'
   | 'rename'
   | 'truncate'
@@ -25,6 +26,10 @@ const backupableEngine = (dbType: string) => dbType === 'postgresql' || dbType =
 // routineEngine: every SQL engine but SQLite stores functions/procedures; the
 // dialog itself explains when a plugin connection cannot read them.
 const routineEngine = (dbType: string) => dbType !== 'sqlite' && dbType !== 'redis';
+
+// enumEngine: only PostgreSQL has user-defined enum types (MySQL's ENUM is a
+// column type and shows up in the column list instead).
+const enumEngine = (dbType: string) => dbType === 'postgresql';
 
 // menuItemsFor decides the item list for one node. The three "kinds" of menu are
 // deliberately different:
@@ -44,6 +49,8 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     items.push('er');
     // Functions/procedures are schema-level objects: list + definition.
     if (routineEngine(node.dbType)) items.push('routines');
+    // Enum types exist as schema objects only on PostgreSQL.
+    if (enumEngine(node.dbType)) items.push('enums');
     // Native-tool backup (pg_dump/mysqldump) exists for exactly two engines.
     if (backupableEngine(node.dbType)) items.push('backup');
   }

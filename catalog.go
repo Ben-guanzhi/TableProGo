@@ -428,6 +428,8 @@ type (
 	ForeignKeyInfo = catalogmodel.ForeignKeyInfo
 	TableStructure = catalogmodel.TableStructure
 	CheckInfo      = catalogmodel.CheckInfo
+	PartitionInfo  = catalogmodel.PartitionInfo
+	EnumTypeInfo   = catalogmodel.EnumTypeInfo
 )
 
 func resolveSchema(conn *Connection, database, schema string) string {
@@ -553,32 +555,33 @@ func (a *App) GetTableStructure(connID, database, schema, table, objectType stri
 	}
 
 	triggers := a.tableTriggers(conn, database, schema, table)
-	checks, viewDDL := a.extraStructureMetadata(conn, database, schema, table, objectType)
+	checks, partitions, viewDDL := a.extraStructureMetadata(conn, database, schema, table, objectType)
 	return TableStructure{
 		Columns:        columns,
 		Indexes:        indexes,
 		ForeignKeys:    foreignKeys,
 		Triggers:       triggers,
 		Checks:         checks,
+		Partitions:     partitions,
 		ViewDefinition: viewDDL,
 		CreateTable:    ddl,
 	}, nil
 }
 
 // extraStructureMetadata reads the kernel's P3-4 extras for one object: a
-// table's CHECK constraints, or a view's definition. Both are best-effort —
-// an engine without the concept reports ErrNotSupported and the card simply
-// does not appear — and a read failure is logged rather than failing the whole
-// structure page (same discipline as tableTriggers).
-func (a *App) extraStructureMetadata(conn *Connection, database, schema, table, objectType string) ([]CheckInfo, string) {
+// table's CHECK constraints and partitions, or a view's definition. All are
+// best-effort — an engine without the concept reports ErrNotSupported and the
+// card simply does not appear — and a read failure is logged rather than
+// failing the whole structure page (same discipline as tableTriggers).
+func (a *App) extraStructureMetadata(conn *Connection, database, schema, table, objectType string) ([]CheckInfo, []PartitionInfo, string) {
 	drv, err := a.sqlDriver(conn, database)
 	if err != nil {
 		log.Printf("structure extras: %v", err)
-		return nil, ""
+		return nil, nil, ""
 	}
 	x, ok := dbcore.AsExtraMetadata(drv)
 	if !ok {
-		return nil, ""
+		return nil, nil, ""
 	}
 	ctx, done := a.beginRun(conn.ID)
 	defer done()
@@ -589,22 +592,39 @@ func (a *App) extraStructureMetadata(conn *Connection, database, schema, table, 
 			if !errors.Is(err, dbcore.ErrNotSupported) {
 				log.Printf("view definition: %v", err)
 			}
-			return nil, ""
+			return nil, nil, ""
 		}
-		return nil, def
+		return nil, nil, def
 	}
+
 	found, err := x.CheckConstraints(ctx, schema, table)
+	checks := make([]CheckInfo, 0, len(found))
 	if err != nil {
 		if !errors.Is(err, dbcore.ErrNotSupported) {
 			log.Printf("check constraints: %v", err)
 		}
-		return nil, ""
+		checks = nil
+	} else {
+		for _, c := range found {
+			checks = append(checks, CheckInfo{Name: c.Name, Expression: c.Expression})
+		}
 	}
-	checks := make([]CheckInfo, 0, len(found))
-	for _, c := range found {
-		checks = append(checks, CheckInfo{Name: c.Name, Expression: c.Expression})
+
+	// A plain table answers an empty list; only an engine without the concept
+	// answers ErrNotSupported — either way the card stays hidden.
+	parts, perr := x.Partitions(ctx, schema, table)
+	partitions := make([]PartitionInfo, 0, len(parts))
+	if perr != nil {
+		if !errors.Is(perr, dbcore.ErrNotSupported) {
+			log.Printf("partitions: %v", perr)
+		}
+		partitions = nil
+	} else {
+		for _, p := range parts {
+			partitions = append(partitions, PartitionInfo{Name: p.Name, Bound: p.Bound, Rows: p.Rows})
+		}
 	}
-	return checks, ""
+	return checks, partitions, ""
 }
 
 // fullColumnTypes returns name -> type with lengths and precision. MySQL,

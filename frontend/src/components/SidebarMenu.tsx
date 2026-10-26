@@ -8,6 +8,7 @@ import {
   FiMinusCircle,
   FiPlus,
   FiRefreshCw,
+  FiTag,
   FiTrash2,
 } from 'react-icons/fi';
 
@@ -56,6 +57,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onNewTable: (target: NewTableTarget) => void;
   onOpenER: (node: TNode) => void;
   onRoutines: (node: TNode) => void;
+  onEnums: (node: TNode) => void;
   onBackup: (node: TNode) => void;
   onConfirm: (request: ConfirmRequest) => void;
 }
@@ -193,6 +195,16 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
           onClick={() => {
             props.onClose();
             props.onRoutines(node);
+          }}
+        />
+      )}
+      {items.has('enums') && (
+        <MenuItem
+          label="枚举类型…"
+          icon={<FiTag size={11} />}
+          onClick={() => {
+            props.onClose();
+            props.onEnums(node);
           }}
         />
       )}

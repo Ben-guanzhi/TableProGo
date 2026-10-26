@@ -9,6 +9,7 @@ import type {
   Connection,
   ConnectionConfig,
   ERSchema,
+  EnumTypeInfo,
   ForeignKeyInfo,
   HistoryEntry,
   KVKeyInfo,
@@ -300,6 +301,16 @@ export async function GetRoutineDefinition(
 ): Promise<string> {
   const data = await post('/api/routine-definition', { connId, database, schema, name });
   return data.definition ?? '';
+}
+
+// The schema's user-defined enum types (PostgreSQL only). Other engines answer
+// an error naming the reason instead of an empty list.
+export async function GetEnumTypes(
+  connId: string,
+  database: string,
+  schema: string,
+): Promise<EnumTypeInfo[]> {
+  return post('/api/enums', { connId, database, schema });
 }
 
 export interface ColumnEdit {
