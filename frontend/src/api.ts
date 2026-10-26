@@ -487,20 +487,33 @@ export async function ExportInsertStatements(
 }
 
 // The workbook is built by the backend, which is where the column types came
-// from, so the cells can be numbers and dates rather than text. The local API
-// only carries JSON, so the file comes back base64 encoded.
+// from, so the cells can be numbers and dates rather than text. The response is
+// the file itself (P1-13): base64-in-JSON made both sides hold a second
+// full-size copy of every export.
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 export async function ExportWorkbook(
   columns: { name: string; type: string }[],
   rows: any[][],
 ): Promise<Blob> {
-  const data = await post('/api/export-xlsx', { columns, rows });
-  const encoded: string = data.base64 ?? '';
-  const binary = atob(encoded);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return new Blob([bytes], { type: XLSX_MIME });
+  const res = await fetch(`${BASE}/api/export-xlsx`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
+    body: JSON.stringify({ columns, rows }),
+  });
+  if (!res.ok) {
+    // A refusal (row cap, empty result) is still JSON; surface its message
+    // instead of the bare status.
+    let message = `导出失败：HTTP ${res.status}`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = data.error;
+    } catch {
+      /* not JSON: keep the status text */
+    }
+    throw new Error(message);
+  }
+  return new Blob([await res.blob()], { type: XLSX_MIME });
 }
 
 // One catalog hit from the name search behind the quick-open box.

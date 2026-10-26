@@ -12,6 +12,7 @@ package tableproxlsx
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -291,14 +292,38 @@ func newWorkbookStyles(f *excelize.File) (workbookStyles, error) {
 // refuse an oversized export, and a check that only some callers remember is no
 // check at all.
 func BuildWorkbook(columns []Column, rows [][]interface{}) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := WriteWorkbook(&buf, columns, rows); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// WriteWorkbook streams the workbook into w instead of returning it. The rows
+// are already written to disk by excelize's stream writer, so this is the path
+// that keeps a large export from also living in a bytes.Buffer and then again
+// as base64 — the caller's writer is the only full-size copy.
+func WriteWorkbook(w io.Writer, columns []Column, rows [][]interface{}) error {
 	if len(columns) == 0 {
-		return nil, fmt.Errorf("没有列可导出")
+		return fmt.Errorf("没有列可导出")
 	}
 	if len(rows) > MaxRows {
-		return nil, fmt.Errorf("一次最多导出 %d 行（Excel），请翻页或缩小范围", MaxRows)
+		return fmt.Errorf("一次最多导出 %d 行（Excel），请翻页或缩小范围", MaxRows)
 	}
-	f := excelize.NewFile()
+	f, err := buildWorkbookFile(columns, rows)
+	if err != nil {
+		return err
+	}
 	defer func() { _ = f.Close() }()
+	_, err = f.WriteTo(w)
+	return err
+}
+
+// buildWorkbookFile renders the file and hands back the handle; the caller owns
+// Close. Split out so both the bytes and the streaming entry points share one
+// implementation of the rendering.
+func buildWorkbookFile(columns []Column, rows [][]interface{}) (*excelize.File, error) {
+	f := excelize.NewFile()
 
 	styles, err := newWorkbookStyles(f)
 	if err != nil {
@@ -367,10 +392,5 @@ func BuildWorkbook(columns []Column, rows [][]interface{}) ([]byte, error) {
 	if err := sw.Flush(); err != nil {
 		return nil, err
 	}
-
-	var buf bytes.Buffer
-	if _, err := f.WriteTo(&buf); err != nil {
-		return nil, err
-	}
-	return buf.Bytes(), nil
+	return f, nil
 }

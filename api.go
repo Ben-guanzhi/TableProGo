@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"crypto/subtle"
 	"encoding/json"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 
@@ -515,12 +517,41 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"sql": script}, nil
 	})
-	post(a, mux, "/api/export-xlsx", 400, func(a *App, body exportXlsxRequest) (any, error) {
-		workbook, err := a.WorkbookBase64(body.Columns, body.Rows)
-		if err != nil {
-			return nil, err
+	// XLSX export streams the workbook as the response body (P1-13): no base64,
+	// no full-size buffer on the server. It renders into a temp file first so a
+	// refusal (row cap, no columns) still answers with a clean JSON error
+	// instead of a truncated attachment.
+	mux.HandleFunc("/api/export-xlsx", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(405)
+			return
 		}
-		return map[string]string{"base64": workbook}, nil
+		var body exportXlsxRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		tmp, err := os.CreateTemp("", "tablepro-export-*.xlsx")
+		if err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		defer func() { _ = os.Remove(tmp.Name()) }()
+		defer func() { _ = tmp.Close() }()
+		if err := a.WorkbookTo(tmp, body.Columns, body.Rows); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+			writeError(w, 500, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", xlsxMimeType)
+		w.Header().Set("Content-Disposition", `attachment; filename="export.xlsx"`)
+		if _, err := io.Copy(w, tmp); err != nil {
+			// The client went away mid-download; nothing left to tell it.
+			log.Printf("stream xlsx: %v", err)
+		}
 	})
 	mux.HandleFunc("/api/favorites", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
