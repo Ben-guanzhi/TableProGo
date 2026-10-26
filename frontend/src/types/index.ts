@@ -48,6 +48,8 @@ export interface Column {
   name: string;
   type: string;
   nullable: boolean;
+  // Exact-decimal column: its cells cross as digit text and sort as numbers.
+  isDecimal?: boolean;
 }
 
 export interface QueryResult {

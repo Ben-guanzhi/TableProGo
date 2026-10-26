@@ -545,7 +545,12 @@ func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 		LastInsertID: res.LastInsertID,
 	}
 	for i, c := range res.Columns {
-		out.Columns[i] = Column{Name: c.Name, Type: c.Type, Nullable: c.Nullable}
+		out.Columns[i] = Column{
+			Name:      c.Name,
+			Type:      c.Type,
+			Nullable:  c.Nullable,
+			IsDecimal: dbcore.IsExactDecimalType(c.Type),
+		}
 	}
 	out.Rows = make([][]interface{}, len(res.Rows))
 	for i, row := range res.Rows {
@@ -561,7 +566,10 @@ func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 
 // cellValue maps a kernel cell onto the JSON-friendly value the grid renders:
 // blobs stay text (the local scan showed their bytes) and times keep the
-// RFC3339 form the frontend already parses.
+// RFC3339 form the frontend already parses. Decimals cross as their exact
+// digit TEXT — a JSON number would round them through float64 on the JS side,
+// which is the precision loss ValDecimal exists to prevent; the frontend
+// re-attaches numeric ORDERING from the column type (gridView cellKeyFor).
 func cellValue(v dbcore.Value) interface{} {
 	switch v.Kind {
 	case dbcore.ValInt:
@@ -576,6 +584,8 @@ func cellValue(v dbcore.Value) interface{} {
 		return v.Bool
 	case dbcore.ValTime:
 		return v.T.Format(time.RFC3339)
+	case dbcore.ValDecimal:
+		return v.S
 	default:
 		return nil
 	}

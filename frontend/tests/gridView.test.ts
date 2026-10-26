@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   addRow,
   buildView,
+  cellText,
   compareCells,
   copyValues,
   countEdits,
@@ -87,6 +88,25 @@ test('compareCells orders numbers as numbers', () => {
   assert.ok(compareCells(2, 10, 1) < 0);
   assert.ok(compareCells('b', 'a', 1) > 0);
   assert.equal(compareCells(null, null, -1), 0);
+});
+
+// P3-2: an exact-decimal column crosses the wire as digit TEXT, and the grid
+// must still ORDER it numerically (9 < 10, not "10" < "9") while displaying
+// the text verbatim. The column's isDecimal flag is what makes both possible.
+test('a decimal column sorts by value while the cells stay text', () => {
+  const decCols = [{ name: 'price', isDecimal: true }];
+  const decRows: any[][] = [['9'], ['10'], ['2.5'], [null], ['9999999999999999999999.5']];
+  const asc = buildView(decRows, decCols, {}, { column: 'price', dir: 'asc' });
+  // 2.5 < 9 < 10 < the 22-digit value; NULL last whatever the direction.
+  assert.deepEqual(asc, [2, 0, 1, 4, 3]);
+  const desc = buildView(decRows, decCols, {}, { column: 'price', dir: 'desc' });
+  assert.deepEqual(desc, [4, 1, 0, 2, 3]);
+  // Displayed text is untouched by the sort: no float ever touched the digits.
+  assert.equal(cellText(decRows[asc[3]][0]), '9999999999999999999999.5');
+  // Without the flag the same values stay lexical — proving the flag is what
+  // changed the answer.
+  const plain = buildView(decRows, [{ name: 'price' }], {}, { column: 'price', dir: 'asc' });
+  assert.deepEqual(plain, [1, 2, 0, 4, 3]);
 });
 
 // Two numbers compare as numbers even in a column that also holds text, while a

@@ -30,6 +30,8 @@ export interface SortState {
 
 export interface ColumnLike {
   name: string;
+  // Present on query-result columns; decimal columns sort by value, not text.
+  isDecimal?: boolean;
 }
 
 // Unapplied edits: row position in `rows` -> column name -> the typed value.
@@ -46,9 +48,10 @@ export const isNullValue = (value: any) => value === null || value === undefined
 
 // dir is +1 ascending, -1 descending. It is deliberately not applied to the
 // NULL comparison: NULLs sort last either way, so the interesting values stay
-// in view whatever the direction.
-export const compareCells = (a: any, b: any, dir: number): number =>
-  compareKeys(cellKey(a), cellKey(b), dir);
+// in view whatever the direction. numeric marks a decimal column whose text
+// cells order as numbers (see decimalNum).
+export const compareCells = (a: any, b: any, dir: number, numeric?: boolean): number =>
+  compareKeys(cellKey(a, numeric), cellKey(b, numeric), dir);
 
 // What a sort needs from a cell, in the form worth computing once per row: two
 // numbers compare as numbers, anything else as text, so both are kept. NULL is
@@ -59,9 +62,25 @@ interface CellKey {
   text: string;
 }
 
-const cellKey = (value: any): CellKey => ({
+// Exact-decimal cells arrive as their digit TEXT (a JSON number would round
+// them through float64 — the loss ValDecimal exists to prevent). The result's
+// column metadata says which columns are decimal; on those, parse the text as
+// a number for ORDERING only — the cell still displays and copies verbatim,
+// and the parse is allowed to be off by an ULP because sort order is all it
+// feeds. Without the flag, a text column's "9" keeps beating "100" lexically,
+// which is correct there and wrong here.
+const decimalNum = (value: any): number | null => {
+  if (typeof value === 'number') return value;
+  if (typeof value !== 'string' || !/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(value.trim())) {
+    return null;
+  }
+  const n = Number(value);
+  return Number.isNaN(n) ? null : n;
+};
+
+const cellKey = (value: any, numeric?: boolean): CellKey => ({
   isNull: isNullValue(value),
-  num: typeof value === 'number' ? value : null,
+  num: typeof value === 'number' ? value : numeric ? decimalNum(value) : null,
   text: cellText(value),
 });
 
@@ -116,7 +135,8 @@ export const buildView = (
   // values are read, so the work per comparison is what is left to choose: key
   // each row once and let the comparisons read cached values.
   const keys: CellKey[] = [];
-  for (const i of kept) keys[i] = cellKey(rows[i][c]);
+  const numeric = columns[c]?.isDecimal;
+  for (const i of kept) keys[i] = cellKey(rows[i][c], numeric);
   // kept is this call's own array, so the sort can go in place.
   return kept.sort((x, y) => compareKeys(keys[x], keys[y], dir));
 };

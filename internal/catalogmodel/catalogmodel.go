@@ -116,4 +116,8 @@ type Column struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	Nullable bool   `json:"nullable"`
+	// IsDecimal marks an exact-decimal column (DECIMAL/NUMERIC/MONEY…). Its
+	// cells cross the JSON wire as digit TEXT to survive the round trip, so
+	// the grid needs the column's type to sort and sum them as numbers.
+	IsDecimal bool `json:"isDecimal,omitempty"`
 }

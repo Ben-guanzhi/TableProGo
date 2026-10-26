@@ -96,7 +96,12 @@ func (a *App) StreamQuery(ctx context.Context, connID, query, database string, e
 			nullable, _ = columnTypes[i].Nullable()
 			typeName = columnTypes[i].DatabaseTypeName()
 		}
-		colInfos[i] = Column{Name: col, Type: typeName, Nullable: nullable}
+		colInfos[i] = Column{
+			Name:      col,
+			Type:      typeName,
+			Nullable:  nullable,
+			IsDecimal: dbcore.IsExactDecimalType(typeName),
+		}
 	}
 	if err := emit(StreamEvent{Type: "columns", Columns: colInfos}); err != nil {
 		return err
