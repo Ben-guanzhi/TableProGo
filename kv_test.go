@@ -443,6 +443,104 @@ func TestRedisKeyPagination(t *testing.T) {
 	}
 }
 
+// A collection larger than the window must come back in windows, and a list's
+// index column must carry the item's real rank across a continuation — the grid
+// edits list items by index (LSET), so renumbering a window would point an
+// edit at the wrong item. Small keys stay a single done window.
+func TestRedisValueWindowing(t *testing.T) {
+	a, mr, id := redisTestApp(t)
+	const total = kvValueRowLimit + 25
+	for i := 0; i < total; i++ {
+		mr.RPush("biglist", "item-"+strconv.Itoa(i))
+	}
+
+	first, err := a.GetKVValue(id, "0", "biglist")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Result.RowCount != kvValueRowLimit || !first.Result.Truncated || first.Done {
+		t.Fatalf("first window = %d rows truncated=%v done=%v", first.Result.RowCount, first.Result.Truncated, first.Done)
+	}
+	if first.Next == "" {
+		t.Fatal("no continuation cursor")
+	}
+	if got, _ := first.Result.Rows[0][0].(int64); got != 0 {
+		t.Errorf("first row index = %v, want 0", got)
+	}
+
+	second, err := a.GetKVValuePage(id, "0", "biglist", first.Next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Result.RowCount != 25 || !second.Done || second.Next != "" {
+		t.Fatalf("second window = %d rows, done=%v next=%q", second.Result.RowCount, second.Done, second.Next)
+	}
+	// Index 1000 is the rank the item really has, not 0 inside the window.
+	wantFirst := int64(kvValueRowLimit)
+	if got, _ := second.Result.Rows[0][0].(int64); got != wantFirst {
+		t.Fatalf("continuation index = %v, want %v", got, wantFirst)
+	}
+	if got, _ := second.Result.Rows[0][1].(string); got != "item-1000" {
+		t.Errorf("continuation value = %q, want item-1000", got)
+	}
+
+	// Editing a continuation row addresses the right item (the rank is the id).
+	if err := a.SetKVElement(id, "0", dbcore.RedisElement{
+		Key: "biglist", Identity: "index", ID: strconv.FormatInt(wantFirst, 10), Column: "value", Value: "edited",
+	}); err != nil {
+		t.Fatalf("edit continuation row: %v", err)
+	}
+	items, err := mr.List("biglist")
+	if err != nil || len(items) <= int(wantFirst) || items[wantFirst] != "edited" {
+		t.Errorf("list item %d not edited (len=%d, err=%v)", wantFirst, len(items), err)
+	}
+
+	// A string never enters the paged path.
+	mr.Set("greeting", "hello")
+	small, err := a.GetKVValue(id, "0", "greeting")
+	if err != nil || small.Result.RowCount != 1 || !small.Done || small.Next != "" {
+		t.Fatalf("string read = %#v, %v", small, err)
+	}
+}
+
+// A hash window loop must visit each field exactly once: HSCAN counts are
+// hints, so the fill loop de-duplicates; the sorted rendering matches the old
+// whole-key read.
+func TestRedisHashWindowStability(t *testing.T) {
+	a, mr, id := redisTestApp(t)
+	const total = kvValueRowLimit + 10
+	for i := 0; i < total; i++ {
+		mr.HSet("universe", "f"+strconv.Itoa(i), "v"+strconv.Itoa(i))
+	}
+	seen := map[string]bool{}
+	cursor := ""
+	windows := 0
+	for {
+		page, err := a.GetKVValuePage(id, "0", "universe", cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		windows++
+		for _, row := range page.Result.Rows {
+			field, _ := row[0].(string)
+			if seen[field] {
+				t.Fatalf("field %q repeated across windows", field)
+			}
+			seen[field] = true
+		}
+		if page.Done {
+			break
+		}
+		cursor = page.Next
+		if windows > 10 {
+			t.Fatal("no progress made in 10 windows")
+		}
+	}
+	if len(seen) != total {
+		t.Errorf("collected %d fields, want %d", len(seen), total)
+	}
+}
+
 func TestRedisDisconnectClosesDriver(t *testing.T) {
 	a, mr, id := redisTestApp(t)
 	mr.Set("greeting", "hello")

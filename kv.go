@@ -40,11 +40,17 @@ const (
 
 // KVValue is one key opened from the navigator: its identity, remaining
 // lifetime, and the rows that describe its value.
+//
+// Next/Done come from the paged read (P3-3): Next is the opaque cursor for the
+// following window — echo it to /api/kv-value-page — and Done says there is no
+// further window. Both are empty/true for a whole read or an unpaged driver.
 type KVValue struct {
 	Key    string      `json:"key"`
 	Type   string      `json:"type"`
 	TTL    string      `json:"ttl"`
 	Result QueryResult `json:"result"`
+	Next   string      `json:"next,omitempty"`
+	Done   bool        `json:"done"`
 }
 
 // openKV builds the redis:// URL from the same connection fields the SQL
@@ -149,22 +155,66 @@ func (a *App) redisKeys(conn *Connection, database string) ([]TableInfo, error) 
 
 // GetKVValue reads one key's value and lifetime. Streams come back as their
 // rendered entries; every other collection keeps its natural row shape.
+//
+// A driver with the kernel's KeyPageReader capability (dbcore P3-3) is read in
+// a window instead of whole: a million-member hash used to cost one giant
+// HGETALL reply and one giant allocation. When the window covers the whole
+// collection the shape is identical to the old full read; otherwise the result
+// is Truncated and Next names the window to continue from — echo it through
+// GetKVValuePage. A driver without the capability gets today's single read.
 func (a *App) GetKVValue(connID, database, key string) (KVValue, error) {
+	return a.GetKVValuePage(connID, database, key, "")
+}
+
+// GetKVValuePage reads one window of a key's value. cursor is the opaque
+// position the previous window returned ("" starts over); Done=true says there
+// is no further window — the value was read completely, or the driver cannot
+// page and what came back is all there is.
+func (a *App) GetKVValuePage(connID, database, key, cursor string) (KVValue, error) {
 	conn, err := a.kvConnection(connID)
 	if err != nil {
 		return KVValue{}, err
 	}
 
 	var (
-		value dbcore.RedisValue
-		meta  dbcore.KeyMeta
+		value  dbcore.RedisValue
+		meta   dbcore.KeyMeta
+		next   string
+		done   = true
+		window int64 // rank the first row of a list/zset window really has
 	)
 	err = a.withKV(conn, database, func(ctx context.Context, drv dbcore.KVDriver) error {
-		v, err := drv.GetValue(ctx, key)
+		paged, canPage := dbcore.AsKeyPageReader(drv)
+		kind, err := drv.KeyType(ctx, key)
 		if err != nil {
 			return err
 		}
-		value = v
+		if kind == dbcore.RedisNone {
+			// Missing key: let GetValue produce its canonical "not found".
+			_, err := drv.GetValue(ctx, key)
+			return err
+		}
+		if !canPage || kind == dbcore.RedisStr {
+			// A string is one cell and an unpaged driver only ever had the
+			// whole read: both stay on GetValue.
+			value, err = drv.GetValue(ctx, key)
+			if err != nil {
+				return err
+			}
+		} else {
+			v, cont, err := kvWindow(ctx, paged, key, kind, cursor, kvValueRowLimit)
+			if err != nil {
+				return err
+			}
+			value, next, done = v, cont, cont == ""
+			if kind == dbcore.RedisList {
+				// The list's index column must carry the position the item
+				// really has: the grid edits list items by index (LSET), and a
+				// continuation window renumbered from zero would point an edit
+				// at the wrong item. The cursor IS that first rank.
+				window, _ = parseRankCursor(cursor)
+			}
+		}
 		// KeyMeta is optional in the contract; a driver without it still knows
 		// the type from the value, it just cannot say when the key expires.
 		if admin, ok := drv.(dbcore.KeyAdmin); ok {
@@ -175,7 +225,7 @@ func (a *App) GetKVValue(connID, database, key string) (KVValue, error) {
 			meta = m
 			return nil
 		}
-		meta.Kind = v.Type
+		meta.Kind = value.Type
 		return nil
 	})
 	if err != nil {
@@ -186,12 +236,170 @@ func (a *App) GetKVValue(connID, database, key string) (KVValue, error) {
 	if meta.Kind != "" {
 		kind = meta.Kind
 	}
+	result := kvResultWindow(value, window)
+	if !done {
+		result.Truncated = true // rows exist beyond this window
+	}
 	return KVValue{
 		Key:    key,
 		Type:   string(kind),
 		TTL:    formatTTL(meta),
-		Result: kvResult(value),
+		Result: result,
+		Next:   next,
+		Done:   done,
 	}, nil
+}
+
+// kvWindow reads one window of a collection key through the KeyPageReader
+// capabilities (dbcore P3-3). The cursor is per-type and opaque to the client:
+// a rank for list/zset, the last entry ID for stream, a SCAN cursor for
+// hash/set ("" = start). hash/set windows loop until filled because a SCAN
+// count is a hint; the collected members are de-duplicated and sorted, so a
+// key that fits one window renders exactly like the old full read.
+func kvWindow(ctx context.Context, p dbcore.KeyPageReader, key string,
+	kind dbcore.RedisKeyType, cursor string, limit int) (dbcore.RedisValue, string, error) {
+	switch kind {
+	case dbcore.RedisStr:
+		return dbcore.RedisValue{}, "", fmt.Errorf("redis: strings are read whole")
+	case dbcore.RedisList:
+		start, err := parseRankCursor(cursor)
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		items, length, err := p.ListRange(ctx, key, start, start+int64(limit)-1)
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		next := ""
+		if end := start + int64(len(items)); end < length {
+			next = strconv.FormatInt(end, 10)
+		}
+		return dbcore.RedisValue{Type: kind, Items: items}, next, nil
+	case dbcore.RedisZSet:
+		start, err := parseRankCursor(cursor)
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		members, scores, length, err := p.ZSetRange(ctx, key, start, start+int64(limit)-1)
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		next := ""
+		if end := start + int64(len(members)); end < length {
+			next = strconv.FormatInt(end, 10)
+		}
+		return dbcore.RedisValue{Type: kind, Items: members, Scores: scores}, next, nil
+	case dbcore.RedisStream:
+		// StreamRange reads strictly after the ID, so the cursor is the last
+		// entry of the previous window ("" = from the start). A full window is
+		// the only signal more may follow — a short one ends the walk.
+		entries, _, err := p.StreamRange(ctx, key, cursor, int64(limit))
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		v := dbcore.RedisValue{Type: kind, Stream: entries}
+		for _, e := range entries {
+			v.Items = append(v.Items, renderStreamEntry(e))
+		}
+		next := ""
+		if len(entries) == limit {
+			next = entries[len(entries)-1].ID
+		}
+		return v, next, nil
+	case dbcore.RedisSet:
+		seen := map[string]bool{}
+		var members []string
+		scan, err := parseScanCursor(cursor)
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		for round := 0; round < kvScanMaxRounds; round++ {
+			page, cont, err := p.SetPage(ctx, key, scan, int64(limit))
+			if err != nil {
+				return dbcore.RedisValue{}, "", err
+			}
+			for _, m := range page {
+				if !seen[m] {
+					seen[m] = true
+					members = append(members, m)
+				}
+			}
+			scan = cont
+			if scan == 0 || len(members) >= limit {
+				break
+			}
+		}
+		sort.Strings(members)
+		return dbcore.RedisValue{Type: kind, Items: members}, formatCont(scan), nil
+	case dbcore.RedisHash:
+		fields := map[string]string{}
+		scan, err := parseScanCursor(cursor)
+		if err != nil {
+			return dbcore.RedisValue{}, "", err
+		}
+		for round := 0; round < kvScanMaxRounds; round++ {
+			page, cont, err := p.HashPage(ctx, key, scan, int64(limit))
+			if err != nil {
+				return dbcore.RedisValue{}, "", err
+			}
+			for _, f := range page {
+				fields[f.Name] = f.Value
+			}
+			scan = cont
+			if scan == 0 || len(fields) >= limit {
+				break
+			}
+		}
+		return dbcore.RedisValue{Type: kind, Hash: fields}, formatCont(scan), nil
+	default:
+		return dbcore.RedisValue{}, "", fmt.Errorf("redis: cannot page %q keys", kind)
+	}
+}
+
+// kvScanMaxRounds bounds the fill loop the same way the kernel bounds its key
+// scan: a cursor that never advances must not hang the request.
+const kvScanMaxRounds = 100
+
+func parseRankCursor(cursor string) (int64, error) {
+	if cursor == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(cursor, 10, 64)
+	if err != nil || n < 0 {
+		return 0, fmt.Errorf("redis: invalid window cursor %q", cursor)
+	}
+	return n, nil
+}
+
+func parseScanCursor(cursor string) (uint64, error) {
+	if cursor == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(cursor, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("redis: invalid scan cursor %q", cursor)
+	}
+	return n, nil
+}
+
+// formatCont spells a SCAN continuation: cursor 0 means the walk is over.
+func formatCont(cursor uint64) string {
+	if cursor == 0 {
+		return ""
+	}
+	return strconv.FormatUint(cursor, 10)
+}
+
+// renderStreamEntry flattens one entry into the grid's single "entry" column
+// exactly as the whole-key read renders it: the ID, then the fields sorted by
+// name as "k=v", space separated.
+func renderStreamEntry(e dbcore.RedisStreamEntry) string {
+	fields := make([]string, 0, len(e.Fields))
+	for _, f := range e.Fields {
+		fields = append(fields, f.Name+"="+f.Value)
+	}
+	sort.Strings(fields)
+	return e.ID + " " + strings.Join(fields, " ")
 }
 
 func formatTTL(meta dbcore.KeyMeta) string {
@@ -396,6 +604,23 @@ func (a *App) AddKVRow(connID, database string, row dbcore.RedisRow) (string, er
 }
 
 func kvResult(v dbcore.RedisValue) QueryResult {
+	return kvResultAt(v, 0, true)
+}
+
+// kvResultWindow renders one continuation window. Only a list has a positional
+// identity column — its index must be the item's real rank, not the position
+// inside the window, or the grid's LSET would rewrite a different item. A
+// window is never cut to the row limit: a SCAN count is a hint, so one call
+// can legitimately return more members than asked, and dropping the overflow
+// would lose rows with no cursor left to resume from (cursor 0 = done).
+func kvResultWindow(v dbcore.RedisValue, start int64) QueryResult {
+	return kvResultAt(v, start, false)
+}
+
+// kvResultAt renders the value's rows; list indices start at startRank, and
+// capRows bounds a whole-key read to what the grid can render (the pre-paging
+// behaviour; paged reads are bounded by their own window).
+func kvResultAt(v dbcore.RedisValue, startRank int64, capRows bool) QueryResult {
 	result := QueryResult{}
 	add := func(columns ...Column) {
 		result.Columns = append(result.Columns, columns...)
@@ -407,7 +632,7 @@ func kvResult(v dbcore.RedisValue) QueryResult {
 	case dbcore.RedisList:
 		add(Column{Name: "index", Type: "BIGINT"}, Column{Name: "value", Type: "TEXT"})
 		for i, item := range v.Items {
-			result.Rows = append(result.Rows, []interface{}{int64(i), item})
+			result.Rows = append(result.Rows, []interface{}{startRank + int64(i), item})
 		}
 	case dbcore.RedisSet:
 		add(Column{Name: "member", Type: "TEXT"})
@@ -439,7 +664,7 @@ func kvResult(v dbcore.RedisValue) QueryResult {
 			result.Rows = append(result.Rows, []interface{}{entry})
 		}
 	}
-	if len(result.Rows) > kvValueRowLimit {
+	if capRows && len(result.Rows) > kvValueRowLimit {
 		result.Rows = result.Rows[:kvValueRowLimit]
 		result.Truncated = true
 	}

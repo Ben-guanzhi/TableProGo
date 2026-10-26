@@ -167,6 +167,17 @@ export async function GetKVValue(connId: string, database: string, key: string):
   return post('/api/kv-value', { connId, database, key });
 }
 
+// One continuation window of a key's value (P3-3): the cursor is the `next`
+// the previous window returned. The panel appends its rows to what it shows.
+export async function GetKVValuePage(
+  connId: string,
+  database: string,
+  key: string,
+  cursor: string,
+): Promise<KVValue> {
+  return post('/api/kv-value-page', { connId, database, key, cursor });
+}
+
 // One SCAN step. An empty cursor starts at the beginning; `done` means the walk
 // reached cursor 0. Keys can repeat across pages, so callers de-duplicate.
 export async function GetKVKeys(

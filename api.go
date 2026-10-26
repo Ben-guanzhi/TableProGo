@@ -219,6 +219,13 @@ type kvValueRequest struct {
 	Key      string `json:"key"`
 }
 
+// kvValuePageRequest addresses one continuation window of a key's value: the
+// cursor is the opaque `next` the previous window returned (P3-3 paging).
+type kvValuePageRequest struct {
+	kvValueRequest
+	Cursor string `json:"cursor"`
+}
+
 type kvKeysRequest struct {
 	ConnID   string `json:"connId"`
 	Database string `json:"database"`
@@ -629,6 +636,11 @@ func (a *App) routes() *http.ServeMux {
 	mux.HandleFunc("/api/execute-stream", a.serveExecuteStream)
 	post(a, mux, "/api/kv-value", 400, func(a *App, body kvValueRequest) (any, error) {
 		return a.GetKVValue(body.ConnID, body.Database, body.Key)
+	})
+	// The continuation window of a large collection key (P3-3 paging): the
+	// frontend echoes the `next` cursor a truncated read returned.
+	post(a, mux, "/api/kv-value-page", 400, func(a *App, body kvValuePageRequest) (any, error) {
+		return a.GetKVValuePage(body.ConnID, body.Database, body.Key, body.Cursor)
 	})
 	post(a, mux, "/api/kv-keys", 400, func(a *App, body kvKeysRequest) (any, error) {
 		return a.GetKVKeyPage(body.ConnID, body.Database, body.Cursor, body.Count)

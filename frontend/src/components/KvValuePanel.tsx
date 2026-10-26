@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { FiLoader, FiPlus, FiRefreshCw } from 'react-icons/fi';
+import { FiChevronDown, FiLoader, FiPlus, FiRefreshCw } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import DataGrid from './DataGrid';
 import ErrorBanner from './ErrorBanner';
@@ -18,18 +18,22 @@ interface KvValuePanelProps {
   kv: SectionState<KVValue>;
   onRefresh: () => void;
   onDismissError: () => void;
+  // One more window of the value (P3-3). Absent when the read finished or the
+  // driver cannot page; the button then does not exist.
+  onLoadMore?: () => void;
 }
 
-// One Redis key read whole. String, hash, list and sorted-set cells can be
-// rewritten in place. A set has no writable value column and a stream entry is
-// an append-only record, so their grid stays read-only and new rows go through
-// the append dialog instead (SADD/XADD).
+// One Redis key, read in windows when the server says more rows exist. String,
+// hash, list and sorted-set cells can be rewritten in place. A set has no
+// writable value column and a stream entry is an append-only record, so their
+// grid stays read-only and new rows go through the append dialog (SADD/XADD).
 const KvValuePanel: React.FC<KvValuePanelProps> = ({
   connId,
   database,
   kv,
   onRefresh,
   onDismissError,
+  onLoadMore,
 }) => {
   const value = kv.data;
   const appendable = value?.type === 'set' || value?.type === 'stream';
@@ -152,6 +156,19 @@ const KvValuePanel: React.FC<KvValuePanelProps> = ({
             exportName={`redis-${database}-${value.key}`}
             onCellDoubleClick={beginEdit}
           />
+          {onLoadMore && (
+            <div className="flex items-center justify-center px-3 py-1.5 border-t border-line bg-panel shrink-0">
+              <button
+                className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised border border-line"
+                onClick={onLoadMore}
+                disabled={!!kv.loading}
+                title="该键还有更多成员；读取下一窗口"
+              >
+                {kv.loading ? <FiLoader size={12} className="animate-spin" /> : <FiChevronDown size={12} />}
+                加载更多值（已显示 {value.result.rowCount} 行）
+              </button>
+            </div>
+          )}
         </div>
       )}
 

@@ -69,10 +69,12 @@ import {
   AppSettings,
   GetCreateTableTemplate,
   GetKVValue,
+  GetKVValuePage,
   RenameKVKey,
   DeleteKVKey,
   SetKVKeyTTL,
 } from './api';
+import { mergeKVWindow } from './kvPaging';
 import { applyTheme } from './theme';
 import toast from 'react-hot-toast';
 import { runGuarded, runStreamed } from './lib/queryRun';
@@ -657,6 +659,40 @@ function App() {
     } catch (error) {
       if (stillCurrent()) {
         patch({ kv: { loading: false, error: (error as Error).message, data: tab.kv?.data } });
+      }
+    }
+  };
+
+  // One more window of a large key's value (P3-3). The shown rows are merged
+  // with the new window rather than replacing it; a full reload (which bumps
+  // the same sequence) wins over a continuation still in flight.
+  const loadKVMore = async (tab: Tab) => {
+    const ref = tab.tableRef;
+    const shown = tab.kv?.data;
+    if (!ref || !shown || !shown.next) return;
+    const key = `${tab.id}|kv`;
+    const seq = (objectSeq.current.get(key) ?? 0) + 1;
+    objectSeq.current.set(key, seq);
+    const stillCurrent = () => (objectSeq.current.get(key) ?? 0) === seq;
+    const patch = (next: Partial<Tab>) =>
+      setTabs(current => current.map(t => (t.id === tab.id ? { ...t, ...next } : t)));
+
+    patch({ kv: { loading: true, data: shown } });
+    try {
+      const more = (await GetKVValuePage(ref.connId, ref.database, ref.table, shown.next)) as KVValue;
+      if (stillCurrent()) {
+        // The merge reads the tab's current data inside the updater: two quick
+        // clicks must not have the second one build on what the first click
+        // saw before its window arrived.
+        setTabs(current =>
+          current.map(t =>
+            t.id === tab.id && t.kv?.data ? { ...t, kv: { loading: false, data: mergeKVWindow(t.kv.data, more) } } : t,
+          ),
+        );
+      }
+    } catch (error) {
+      if (stillCurrent()) {
+        patch({ kv: { loading: false, error: (error as Error).message, data: shown } });
       }
     }
   };
@@ -1423,6 +1459,11 @@ function App() {
               database={activeTabData.database ?? ''}
               kv={activeTabData.kv ?? { loading: false }}
               onRefresh={() => loadKVValue(activeTabData)}
+              onLoadMore={
+                activeTabData.kv?.data?.next && !activeTabData.kv?.data?.done
+                  ? () => loadKVMore(activeTabData)
+                  : undefined
+              }
               onDismissError={() =>
                 setTabs(current =>
                   current.map(t =>

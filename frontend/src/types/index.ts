@@ -78,6 +78,10 @@ export interface KVValue {
   type: string;
   ttl: string;
   result: QueryResult;
+  // P3-3 windowing: `next` is the opaque cursor of the following window and
+  // `done` says no more exist. Absent next on a whole-key read means done.
+  next?: string;
+  done?: boolean;
 }
 
 // A key's identity without its value, read before the right-click menu offers
