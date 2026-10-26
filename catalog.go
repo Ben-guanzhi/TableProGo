@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strconv"
@@ -453,13 +454,31 @@ func (a *App) tableIndexes(conn *Connection, database, schema, table string) ([]
 	}
 	indexes := make([]IndexInfo, 0, len(found))
 	for _, i := range found {
-		indexes = append(indexes, IndexInfo{
-			Name:    i.Name,
-			Kind:    i.Kind,
-			Unique:  i.Unique,
-			Primary: i.Primary,
-			Columns: i.Columns,
-		})
+		info := IndexInfo{
+			Name:      i.Name,
+			Kind:      i.Kind,
+			Unique:    i.Unique,
+			Primary:   i.Primary,
+			Columns:   i.Columns,
+			Method:    i.Method,
+			Predicate: i.Predicate,
+		}
+		// Parts is the display order (expressions included); Columns stays the
+		// identifier-safe subset used by the DDL builder.
+		for _, part := range i.Parts {
+			text := part.Column
+			if part.Expression != "" {
+				text = part.Expression
+			}
+			if text == "" {
+				continue
+			}
+			if part.Desc {
+				text += " DESC"
+			}
+			info.Parts = append(info.Parts, text)
+		}
+		indexes = append(indexes, info)
 	}
 	return indexes, nil
 }
@@ -497,7 +516,7 @@ func oraLiteral(value string) string {
 	return quotedLiteral("oracle", value)
 }
 
-func (a *App) GetTableStructure(connID, database, schema, table string) (TableStructure, error) {
+func (a *App) GetTableStructure(connID, database, schema, table, objectType string) (TableStructure, error) {
 	conn, err := a.connection(connID)
 	if err != nil {
 		return TableStructure{}, err
@@ -533,13 +552,58 @@ func (a *App) GetTableStructure(connID, database, schema, table string) (TableSt
 	}
 
 	triggers := a.tableTriggers(conn, database, schema, table)
+	checks, viewDDL := a.extraStructureMetadata(conn, database, schema, table, objectType)
 	return TableStructure{
-		Columns:     columns,
-		Indexes:     indexes,
-		ForeignKeys: foreignKeys,
-		Triggers:    triggers,
-		CreateTable: ddl,
+		Columns:        columns,
+		Indexes:        indexes,
+		ForeignKeys:    foreignKeys,
+		Triggers:       triggers,
+		Checks:         checks,
+		ViewDefinition: viewDDL,
+		CreateTable:    ddl,
 	}, nil
+}
+
+// extraStructureMetadata reads the kernel's P3-4 extras for one object: a
+// table's CHECK constraints, or a view's definition. Both are best-effort —
+// an engine without the concept reports ErrNotSupported and the card simply
+// does not appear — and a read failure is logged rather than failing the whole
+// structure page (same discipline as tableTriggers).
+func (a *App) extraStructureMetadata(conn *Connection, database, schema, table, objectType string) ([]CheckInfo, string) {
+	drv, err := a.sqlDriver(conn, database)
+	if err != nil {
+		log.Printf("structure extras: %v", err)
+		return nil, ""
+	}
+	x, ok := dbcore.AsExtraMetadata(drv)
+	if !ok {
+		return nil, ""
+	}
+	ctx, done := a.beginRun(conn.ID)
+	defer done()
+
+	if objectType == "view" {
+		def, err := x.ViewDefinition(ctx, schema, table)
+		if err != nil {
+			if !errors.Is(err, dbcore.ErrNotSupported) {
+				log.Printf("view definition: %v", err)
+			}
+			return nil, ""
+		}
+		return nil, def
+	}
+	found, err := x.CheckConstraints(ctx, schema, table)
+	if err != nil {
+		if !errors.Is(err, dbcore.ErrNotSupported) {
+			log.Printf("check constraints: %v", err)
+		}
+		return nil, ""
+	}
+	checks := make([]CheckInfo, 0, len(found))
+	for _, c := range found {
+		checks = append(checks, CheckInfo{Name: c.Name, Expression: c.Expression})
+	}
+	return checks, ""
 }
 
 // fullColumnTypes returns name -> type with lengths and precision. MySQL,

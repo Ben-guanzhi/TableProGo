@@ -14,8 +14,9 @@ import (
 	"tablepro-go/internal/catalogmodel"
 )
 
-// resolveTriggerSchema 归一目录命名空间：MySQL 用库当 schema，PG 缺省 public。
-func resolveTriggerSchema(conn *Connection, database, schema string) string {
+// resolveObjectSchema 归一 schema 级目录（触发器、函数/过程）的命名空间：
+// MySQL 用库当 schema，PG 缺省 public。
+func resolveObjectSchema(conn *Connection, database, schema string) string {
 	if conn.Type == "mysql" {
 		if schema == "" {
 			return database
@@ -26,7 +27,7 @@ func resolveTriggerSchema(conn *Connection, database, schema string) string {
 }
 
 func (a *App) tableTriggers(conn *Connection, database, schema, table string) []catalogmodel.TriggerInfo {
-	query, args, err := tableprosql.TriggersQuery(conn.Type, resolveTriggerSchema(conn, database, schema), table)
+	query, args, err := tableprosql.TriggersQuery(conn.Type, resolveObjectSchema(conn, database, schema), table)
 	if err != nil {
 		log.Printf("triggers: %v", err)
 		return nil
@@ -90,7 +91,7 @@ func (a *App) GetTriggerDefinition(connID, database, schema, trigger string) (st
 	if conn.Type == "redis" {
 		return "", fmt.Errorf("Redis 没有触发器")
 	}
-	query, args, err := tableprosql.TriggerDefinitionQuery(conn.Type, resolveTriggerSchema(conn, database, schema), trigger)
+	query, args, err := tableprosql.TriggerDefinitionQuery(conn.Type, resolveObjectSchema(conn, database, schema), trigger)
 	if err != nil {
 		return "", err
 	}

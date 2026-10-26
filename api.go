@@ -105,6 +105,17 @@ type tableRefRequest struct {
 	Database string `json:"database"`
 	Schema   string `json:"schema"`
 	Table    string `json:"table"`
+	// Type is the tab's object kind ("table" | "view"); the structure page uses
+	// it to decide whether to read a view definition or table-only extras.
+	Type string `json:"type"`
+}
+
+// routineRefRequest addresses one stored function or procedure by name.
+type routineRefRequest struct {
+	ConnID   string `json:"connId"`
+	Database string `json:"database"`
+	Schema   string `json:"schema"`
+	Name     string `json:"name"`
 }
 
 type sqlNameRequest struct {
@@ -381,7 +392,7 @@ func (a *App) routes() *http.ServeMux {
 		return a.QueryColumns(body.ConnID, body.Query, body.Database)
 	})
 	post(a, mux, "/api/structure", 400, func(a *App, body tableRefRequest) (any, error) {
-		return a.GetTableStructure(body.ConnID, body.Database, body.Schema, body.Table)
+		return a.GetTableStructure(body.ConnID, body.Database, body.Schema, body.Table, body.Type)
 	})
 	// The relationship diagram of one schema: every base table with its columns
 	// and foreign keys, read-only, so the frontend can lay it out as an SVG.
@@ -460,6 +471,16 @@ func (a *App) routes() *http.ServeMux {
 	})
 	post(a, mux, "/api/trigger-definition", 400, func(a *App, body tableRefRequest) (any, error) {
 		def, err := a.GetTriggerDefinition(body.ConnID, body.Database, body.Schema, body.Table)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"definition": def}, nil
+	})
+	post(a, mux, "/api/routines", 400, func(a *App, body tableRefRequest) (any, error) {
+		return a.GetRoutines(body.ConnID, body.Database, body.Schema)
+	})
+	post(a, mux, "/api/routine-definition", 400, func(a *App, body routineRefRequest) (any, error) {
+		def, err := a.GetRoutineDefinition(body.ConnID, body.Database, body.Schema, body.Name)
 		if err != nil {
 			return nil, err
 		}

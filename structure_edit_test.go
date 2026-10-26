@@ -90,7 +90,7 @@ func TestTriggerListAndDefinition(t *testing.T) {
 		t.Fatalf("create trigger: %v", err)
 	}
 
-	structure, err := app.GetTableStructure("c1", "", "", "parts")
+	structure, err := app.GetTableStructure("c1", "", "", "parts", "table")
 	if err != nil {
 		t.Fatalf("structure: %v", err)
 	}

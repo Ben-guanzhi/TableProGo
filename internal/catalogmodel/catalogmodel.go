@@ -31,6 +31,16 @@ type IndexInfo struct {
 	Unique  bool     `json:"unique"`
 	Primary bool     `json:"primary"`
 	Columns []string `json:"columns"`
+	// Method is the engine's access method (btree/BTREE/NONCLUSTERED/NORMAL…),
+	// empty when the engine reports none.
+	Method string `json:"method,omitempty"`
+	// Parts is the ordered key list for display: a plain column name, or the
+	// expression text of an expression part, with " DESC" appended for a
+	// descending part. Columns keeps only plain names so DDL building never
+	// quotes an expression as an identifier.
+	Parts []string `json:"parts,omitempty"`
+	// Predicate is a partial/filtered index's WHERE clause.
+	Predicate string `json:"predicate,omitempty"`
 }
 
 // ForeignKeyInfo describes one constraint pointing at another table; composite
@@ -53,8 +63,26 @@ type TableStructure struct {
 	ForeignKeys []ForeignKeyInfo `json:"foreignKeys"`
 	// Triggers lists the table's triggers; empty when the engine has none or
 	// the read failed (the error is logged, not fatal to the structure page).
-	Triggers    []TriggerInfo `json:"triggers"`
-	CreateTable string        `json:"createTable"`
+	Triggers []TriggerInfo `json:"triggers"`
+	// Checks lists the table's CHECK constraints; same empty-on-unsupported
+	// discipline as Triggers.
+	Checks []CheckInfo `json:"checks"`
+	// ViewDefinition is the view's DDL when the object is a view (empty for a
+	// table, or when the engine cannot produce it).
+	ViewDefinition string `json:"viewDefinition,omitempty"`
+	CreateTable    string `json:"createTable"`
+}
+
+// CheckInfo is one CHECK constraint as the structure page shows it.
+type CheckInfo struct {
+	Name       string `json:"name"`
+	Expression string `json:"expression"`
+}
+
+// RoutineInfo is one stored function or procedure in the schema-level list.
+type RoutineInfo struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"` // FUNCTION | PROCEDURE
 }
 
 // TriggerInfo is one catalog trigger as the structure page shows it.
