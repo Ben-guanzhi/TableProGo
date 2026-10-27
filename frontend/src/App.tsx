@@ -28,6 +28,8 @@ import ImportDialog from './components/ImportDialog';
 import CompareView from './components/CompareView';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
+import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
+import type { ForeignKeyEditRow, IndexEditRow } from './lib/structureEdit';
 import {
   Connection,
   ConnectionConfig,
@@ -765,6 +767,8 @@ function App() {
   const [structureEditTarget, setStructureEditTarget] = useState<{
     ref: TableRef;
     columns: { name: string; type: string; nullable: boolean; defaultValue: string }[];
+    indexes: IndexEditRow[];
+    foreignKeys: ForeignKeyEditRow[];
   } | null>(null);
 
   const [backupTarget, setBackupTarget] = useState<{
@@ -1467,6 +1471,8 @@ function App() {
                     defaultValue: c.defaultValue ?? '',
 
                   })),
+                  indexes: indexEditRows(activeTabData.structure.data.indexes),
+                  foreignKeys: foreignKeyEditRows(activeTabData.structure.data.foreignKeys),
                 });
               }}
               onImport={() => setImportTarget(objectRef)}
@@ -1658,6 +1664,8 @@ function App() {
         <StructureEditorDialog
           target={structureEditTarget.ref}
           columns={structureEditTarget.columns}
+          indexes={structureEditTarget.indexes}
+          foreignKeys={structureEditTarget.foreignKeys}
           onApplied={() => {
             const tab = tabs.find(t => t.tableRef && objectKey(t.tableRef) === objectKey(structureEditTarget.ref));
             if (tab) loadObjectSection(tab, 'structure');

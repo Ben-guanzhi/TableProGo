@@ -369,6 +369,26 @@ export interface ColumnEdit {
   isNew?: boolean;
 }
 
+// P2-7: the index / foreign-key tabs round-trip the catalog the same way the
+// column list does; the backend diffs and renders CREATE/DROP through ddl.
+export interface IndexEdit {
+  name: string;
+  unique: boolean;
+  columns: string[];
+  isNew?: boolean;
+}
+
+export interface ForeignKeyEdit {
+  name: string;
+  columns: string[];
+  refSchema: string;
+  refTable: string;
+  refColumns: string[];
+  onDelete: string;
+  onUpdate: string;
+  isNew?: boolean;
+}
+
 export interface StructureEditResult {
   statements: string[];
   warnings: string[];
@@ -380,6 +400,8 @@ export async function PreviewStructureEdit(req: {
   schema: string;
   table: string;
   columns: ColumnEdit[];
+  indexes?: IndexEdit[];
+  foreignKeys?: ForeignKeyEdit[];
 }): Promise<StructureEditResult> {
   return post('/api/structure-preview', req);
 }
@@ -390,6 +412,8 @@ export async function ApplyStructureEdit(req: {
   schema: string;
   table: string;
   columns: ColumnEdit[];
+  indexes?: IndexEdit[];
+  foreignKeys?: ForeignKeyEdit[];
 }): Promise<StructureEditResult> {
   return post('/api/structure-edit', req);
 }

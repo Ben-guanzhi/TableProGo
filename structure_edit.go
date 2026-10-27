@@ -24,13 +24,41 @@ type ColumnEdit struct {
 	IsNew bool `json:"isNew"`
 }
 
-// StructureEditRequest is the API payload: the full desired column list.
+// IndexEdit is one row of the structure editor's index tab.
+type IndexEdit struct {
+	Name    string   `json:"name"`
+	Unique  bool     `json:"unique"`
+	Columns []string `json:"columns"`
+	// IsNew marks indexes the user added; existing ones are matched by name,
+	// case-insensitively, like the columns.
+	IsNew bool `json:"isNew"`
+}
+
+// ForeignKeyEdit is one row of the structure editor's foreign key tab.
+type ForeignKeyEdit struct {
+	Name       string   `json:"name"`
+	Columns    []string `json:"columns"`
+	RefSchema  string   `json:"refSchema"`
+	RefTable   string   `json:"refTable"`
+	RefColumns []string `json:"refColumns"`
+	OnDelete   string   `json:"onDelete"`
+	OnUpdate   string   `json:"onUpdate"`
+	IsNew      bool     `json:"isNew"`
+}
+
+// StructureEditRequest is the API payload: the full desired column list plus
+// (P2-7) the desired indexes and foreign keys. A nil Indexes/ForeignKeys means
+// "this editor does not touch them" — only a non-nil list diffs against the
+// catalog. That keeps the column-only dialog, which knows nothing about the new
+// fields, exactly as safe as it was.
 type StructureEditRequest struct {
-	ConnID   string       `json:"connId"`
-	Database string       `json:"database"`
-	Schema   string       `json:"schema"`
-	Table    string       `json:"table"`
-	Columns  []ColumnEdit `json:"columns"`
+	ConnID      string           `json:"connId"`
+	Database    string           `json:"database"`
+	Schema      string           `json:"schema"`
+	Table       string           `json:"table"`
+	Columns     []ColumnEdit     `json:"columns"`
+	Indexes     []IndexEdit      `json:"indexes,omitempty"`
+	ForeignKeys []ForeignKeyEdit `json:"foreignKeys,omitempty"`
 }
 
 // StructureEditResult carries the rendered statements and (on apply) what ran.
@@ -104,7 +132,177 @@ func (a *App) buildStructureEdits(req StructureEditRequest) (StructureEditResult
 			res.Statements = append(res.Statements, ddl.DropColumn(dbType, schema, req.Table, c.Name))
 		}
 	}
+	if req.Indexes != nil {
+		if err := a.buildIndexEdits(&res, conn, req, schema, dbType); err != nil {
+			return res, err
+		}
+	}
+	if req.ForeignKeys != nil {
+		if err := a.buildForeignKeyEdits(&res, conn, req, schema, dbType); err != nil {
+			return res, err
+		}
+	}
 	return res, nil
+}
+
+// buildIndexEdits diffs the desired index list against the catalog. A primary
+// key is never touched: it is a table constraint, not an index the editor owns,
+// and dropping it would silently un-key the table. A changed index comes out as
+// DROP + CREATE — no engine edits an index in place.
+func (a *App) buildIndexEdits(res *StructureEditResult, conn *Connection, req StructureEditRequest, schema, dbType string) error {
+	current, err := a.tableIndexes(conn, req.Database, schema, req.Table)
+	if err != nil {
+		return err
+	}
+	currentByName := make(map[string]IndexInfo, len(current))
+	for _, idx := range current {
+		currentByName[strings.ToLower(idx.Name)] = idx
+	}
+	kept := map[string]bool{}
+	for i, want := range req.Indexes {
+		name := strings.TrimSpace(want.Name)
+		if name == "" {
+			return fmt.Errorf("第 %d 行的索引名为空", i+1)
+		}
+		if len(want.Columns) == 0 {
+			return fmt.Errorf("索引 %s 没有列", name)
+		}
+		key := strings.ToLower(name)
+		if kept[key] {
+			return fmt.Errorf("索引 %s 重复出现", name)
+		}
+		kept[key] = true
+		before, exists := currentByName[key]
+		if exists && before.Primary {
+			// A primary key stays exactly as it is; the editor cannot see it
+			// as a secondary index.
+			continue
+		}
+		spec := ddl.Index{Name: name, Unique: want.Unique, Columns: want.Columns}
+		if !exists {
+			res.Statements = append(res.Statements, ddl.CreateIndex(dbType, schema, req.Table, spec))
+			continue
+		}
+		if sameIndexSpec(before, spec) {
+			continue
+		}
+		res.Statements = append(res.Statements,
+			ddl.DropIndex(dbType, schema, req.Table, before.Name),
+			ddl.CreateIndex(dbType, schema, req.Table, spec))
+	}
+	for _, idx := range current {
+		// SQLite's autoindexes back UNIQUE/PK constraints the editor has no
+		// say in; they cannot be dropped and are not the user's to remove.
+		if idx.Primary || strings.HasPrefix(idx.Name, "sqlite_autoindex_") || kept[strings.ToLower(idx.Name)] {
+			continue
+		}
+		res.Statements = append(res.Statements, ddl.DropIndex(dbType, schema, req.Table, idx.Name))
+	}
+	return nil
+}
+
+// sameIndexSpec compares an edited index with what the catalog reports. Only
+// uniqueness and the key columns are comparable across engines: expression
+// parts, methods and predicates are display-only on this form, and the editor
+// re-creates an index the moment it drops those, so a round-trip that keeps the
+// name, unique flag and plain columns must stay a no-op.
+func sameIndexSpec(info IndexInfo, spec ddl.Index) bool {
+	if info.Unique != spec.Unique || len(info.Columns) != len(spec.Columns) {
+		return false
+	}
+	for i, c := range spec.Columns {
+		if !strings.EqualFold(strings.TrimSpace(c), strings.TrimSpace(info.Columns[i])) {
+			return false
+		}
+	}
+	return true
+}
+
+// buildForeignKeyEdits diffs the desired foreign keys against the catalog.
+// SQLite supports neither ADD CONSTRAINT nor DROP CONSTRAINT, so any change
+// there is reported as a warning rather than rendered as a statement it would
+// reject.
+func (a *App) buildForeignKeyEdits(res *StructureEditResult, conn *Connection, req StructureEditRequest, schema, dbType string) error {
+	current, err := a.tableForeignKeys(conn, req.Database, schema, req.Table)
+	if err != nil {
+		return err
+	}
+	currentByName := make(map[string]ForeignKeyInfo, len(current))
+	for _, fk := range current {
+		currentByName[strings.ToLower(fk.Name)] = fk
+	}
+	kept := map[string]bool{}
+	for i, want := range req.ForeignKeys {
+		name := strings.TrimSpace(want.Name)
+		if name == "" {
+			return fmt.Errorf("第 %d 行的外键名为空", i+1)
+		}
+		if len(want.Columns) == 0 || strings.TrimSpace(want.RefTable) == "" || len(want.RefColumns) == 0 {
+			return fmt.Errorf("外键 %s 缺少列或引用目标", name)
+		}
+		if len(want.RefColumns) != len(want.Columns) {
+			return fmt.Errorf("外键 %s 的列数与引用列数不一致", name)
+		}
+		key := strings.ToLower(name)
+		if kept[key] {
+			return fmt.Errorf("外键 %s 重复出现", name)
+		}
+		kept[key] = true
+		spec := ddl.ForeignKey{
+			Name: name, Columns: want.Columns, RefSchema: want.RefSchema,
+			RefTable: want.RefTable, RefColumns: want.RefColumns,
+			OnDelete: dbcore.NormalizeFKAction(want.OnDelete),
+			OnUpdate: dbcore.NormalizeFKAction(want.OnUpdate),
+		}
+		before, exists := currentByName[key]
+		if exists && sameForeignKeySpec(before, spec) {
+			continue
+		}
+		if !ddl.CanAddForeignKey(dbType) || (exists && !ddl.CanDropForeignKey(dbType)) {
+			res.Warnings = append(res.Warnings,
+				fmt.Sprintf("%s 不能在已有表上修改外键 %s（SQLite 需要重建表），该改动被跳过", engineName(dbType), name))
+			continue
+		}
+		if exists {
+			res.Statements = append(res.Statements, ddl.DropForeignKey(dbType, schema, req.Table, before.Name))
+		}
+		res.Statements = append(res.Statements, ddl.AddForeignKey(dbType, schema, req.Table, spec))
+	}
+	for _, fk := range current {
+		if kept[strings.ToLower(fk.Name)] {
+			continue
+		}
+		if !ddl.CanDropForeignKey(dbType) {
+			res.Warnings = append(res.Warnings,
+				fmt.Sprintf("%s 不能删除外键 %s（SQLite 需要重建表），该改动被跳过", engineName(dbType), fk.Name))
+			continue
+		}
+		res.Statements = append(res.Statements, ddl.DropForeignKey(dbType, schema, req.Table, fk.Name))
+	}
+	return nil
+}
+
+// sameForeignKeySpec compares the edited key with the catalog's. The actions
+// compare as normalized standard spellings, so the round-trip of an untouched
+// key is a no-op even where engines report "NO_ACTION" or "SET NULL".
+func sameForeignKeySpec(info ForeignKeyInfo, spec ddl.ForeignKey) bool {
+	return strings.EqualFold(strings.TrimSpace(info.RefTable), strings.TrimSpace(spec.RefTable)) &&
+		columnListsEqual(info.Columns, spec.Columns) &&
+		columnListsEqual(info.RefColumns, spec.RefColumns) &&
+		dbcore.NormalizeFKAction(info.OnDelete) == spec.OnDelete &&
+		dbcore.NormalizeFKAction(info.OnUpdate) == spec.OnUpdate
+}
+
+func columnListsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !strings.EqualFold(strings.TrimSpace(a[i]), strings.TrimSpace(b[i])) {
+			return false
+		}
+	}
+	return true
 }
 
 // PreviewStructureEdit renders the statements without executing.
