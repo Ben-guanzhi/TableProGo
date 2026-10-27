@@ -11,16 +11,20 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strings"
 	"time"
 )
 
 // FavoriteEntry is one saved statement.
 type FavoriteEntry struct {
-	ID        string `json:"id"`
-	ConnID    string `json:"connId"`
-	Database  string `json:"database"`
-	Name      string `json:"name"`
-	SQL       string `json:"sql"`
+	ID       string `json:"id"`
+	ConnID   string `json:"connId"`
+	Database string `json:"database"`
+	Name     string `json:"name"`
+	SQL      string `json:"sql"`
+	// Folder groups favorites in the menu (P2-3); "" is the ungrouped list, so
+	// an existing favorites file keeps rendering exactly as before.
+	Folder    string `json:"folder,omitempty"`
 	CreatedAt int64  `json:"createdAt"`
 }
 
@@ -64,8 +68,9 @@ func (a *App) ListFavorites() []FavoriteEntry {
 	return out
 }
 
-// AddFavorite saves a statement under a user-chosen name.
-func (a *App) AddFavorite(connID, database, name, sql string) (FavoriteEntry, error) {
+// AddFavorite saves a statement under a user-chosen name, optionally inside a
+// folder (an empty folder means the ungrouped list).
+func (a *App) AddFavorite(connID, database, name, sql, folder string) (FavoriteEntry, error) {
 	entry := FavoriteEntry{}
 	if name == "" || sql == "" {
 		return entry, fmt.Errorf("收藏需要名称与语句")
@@ -80,6 +85,7 @@ func (a *App) AddFavorite(connID, database, name, sql string) (FavoriteEntry, er
 		Database:  database,
 		Name:      name,
 		SQL:       sql,
+		Folder:    strings.TrimSpace(folder),
 		CreatedAt: time.Now().UnixMilli(),
 	}
 	a.favoritesMu.Lock()

@@ -563,12 +563,13 @@ func (a *App) routes() *http.ServeMux {
 				Database string `json:"database"`
 				Name     string `json:"name"`
 				SQL      string `json:"sql"`
+				Folder   string `json:"folder"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeError(w, 400, err.Error())
 				return
 			}
-			entry, err := a.AddFavorite(body.ConnID, body.Database, body.Name, body.SQL)
+			entry, err := a.AddFavorite(body.ConnID, body.Database, body.Name, body.SQL, body.Folder)
 			if err != nil {
 				writeError(w, 400, err.Error())
 				return

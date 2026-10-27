@@ -9,14 +9,14 @@ import (
 // back newest first, and a delete really removes the entry.
 func TestFavoritesCRUD(t *testing.T) {
 	app := &App{}
-	if _, err := app.AddFavorite("", "", "", ""); err == nil {
+	if _, err := app.AddFavorite("", "", "", "", ""); err == nil {
 		t.Fatal("empty name and sql should be refused")
 	}
-	first, err := app.AddFavorite("c1", "shop", "月度订单", "SELECT * FROM orders")
+	first, err := app.AddFavorite("c1", "shop", "月度订单", "SELECT * FROM orders", "")
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	second, err := app.AddFavorite("c1", "", "活跃用户", "SELECT * FROM users")
+	second, err := app.AddFavorite("c1", "", "活跃用户", "SELECT * FROM users", "")
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
