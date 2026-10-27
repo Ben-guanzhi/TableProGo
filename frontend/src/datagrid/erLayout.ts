@@ -8,7 +8,7 @@ export const HEADER_H = 28;
 export const ROW_H = 22;
 const GAP_X = 80;
 const GAP_Y = 36;
-const PAD = 28;
+export const PAD = 28;
 
 // One laid-out node: the table plus its top-left corner and box size.
 export interface ERNode {
@@ -52,6 +52,13 @@ export function columnRowY(index: number): number {
 // is one past the deepest table it references, so children sit left of their
 // parents. Tables with no parents form the first column. A recursion-depth guard
 // makes circular foreign keys resolve to level 0 instead of overflowing.
+//
+// Within a column the order starts alphabetical and then goes through a few
+// barycenter sweeps: each column reorders by the average row of its neighbours
+// in the adjacent column, which pulls connected tables level with each other.
+// Minimizing crossings outright is NP-hard even to check, so the heuristic is
+// the point — a fixed small number of sweeps keeps the layout deterministic
+// and O(sweeps · edges).
 export function computeLayout(model: ERSchema): ERLayout {
   const tables = model.tables;
   const tableByName = new Map(tables.map(t => [t.name, t]));
@@ -84,12 +91,62 @@ export function computeLayout(model: ERSchema): ERLayout {
   for (const t of tables) columns[level.get(t.name) ?? 0].push(t);
   for (const col of columns) col.sort((a, b) => a.name.localeCompare(b.name));
 
+  // Undirected adjacency over the drawn edges (self-references add nothing to
+  // a layering and cross-schema refs are not in the diagram).
+  const neighbors = new Map<string, string[]>();
+  const link = (a: string, b: string) => {
+    if (!neighbors.has(a)) neighbors.set(a, []);
+    if (!neighbors.has(b)) neighbors.set(b, []);
+    neighbors.get(a)!.push(b);
+    neighbors.get(b)!.push(a);
+  };
+  for (const t of tables) {
+    for (const fk of t.foreignKeys) {
+      if (fk.refTable === t.name || !tableByName.has(fk.refTable)) continue;
+      link(t.name, fk.refTable);
+    }
+  }
+
+  // The barycenter sweeps. Each pass walks the columns in one direction and
+  // reorders every column by its neighbours' average row in the adjacent one;
+  // alternating direction lets pulls from both sides settle.
+  const order: string[][] = columns.map(col => col.map(t => t.name));
+  const levelOfName = (name: string) => level.get(name) ?? 0;
+  for (let sweep = 0; sweep < 4; sweep++) {
+    const forward = sweep % 2 === 0;
+    const cols = [...order.keys()];
+    if (!forward) cols.reverse();
+    for (const c of cols) {
+      const adj = forward ? c - 1 : c + 1;
+      if (adj < 0 || adj >= order.length || order[c].length < 2) continue;
+      const pos = new Map<string, number>();
+      order.forEach((col, ci) => col.forEach((name, i) => pos.set(name, i)));
+      order[c] = order[c]
+        .map((name, i) => {
+          let sum = 0;
+          let count = 0;
+          for (const nb of neighbors.get(name) ?? []) {
+            if (levelOfName(nb) === adj) {
+              sum += pos.get(nb) ?? 0;
+              count++;
+            }
+          }
+          // A table without neighbours in the adjacent column keeps its
+          // current slot as the sort key, so isolated tables do not drift.
+          return { name, key: count > 0 ? sum / count : i };
+        })
+        .sort((a, b) => a.key - b.key || a.name.localeCompare(b.name))
+        .map(w => w.name);
+    }
+  }
+
   const nodeList: ERNode[] = [];
   const byName = new Map<string, ERNode>();
   let totalH = PAD;
-  columns.forEach((col, ci) => {
+  columns.forEach((_, ci) => {
     let y = PAD;
-    for (const t of col) {
+    for (const name of order[ci]) {
+      const t = tableByName.get(name)!;
       const h = nodeHeight(t);
       const x = PAD + ci * (NODE_W + GAP_X);
       const node: ERNode = { table: t, x, y, width: NODE_W, height: h };
