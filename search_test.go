@@ -245,3 +245,77 @@ func TestSearchFindsRedisKeys(t *testing.T) {
 		t.Fatalf("unexpected matches: %+v", found)
 	}
 }
+
+func TestMatchRankTiers(t *testing.T) {
+	cases := []struct {
+		lower, query string
+		want         int
+	}{
+		{"orders", "orders", 0},         // exact is a prefix
+		{"orders_items", "orders", 0},   // prefix
+		{"order_items", "items", 1},     // word boundary (snake_case)
+		{"invoice.items", "items", 1},   // dotted qualification
+		{"invoice-orders", "orders", 1}, // kebab
+		{"invoice_orders", "orders", 1}, // hit after a digit-free separator
+		{"myitems", "items", 2},         // buried mid-word
+		{"lineitems", "items", 2},       // glued
+		{"中文items表", "items", 2},        // a hit after CJK text is mid-name: CJK bytes are name chars
+	}
+	for _, tc := range cases {
+		if got := matchRank(tc.lower, tc.query); got != tc.want {
+			t.Errorf("matchRank(%q, %q) = %d, want %d", tc.lower, tc.query, got, tc.want)
+		}
+	}
+}
+
+// TestSearchRanksPrefixesOverSubstrings pins the ordering rule: the names the
+// user is typing usually start with the fragment or fall on a word boundary,
+// and those must outrank a buried substring regardless of which connection or
+// catalog walk produced them first.
+func TestSearchRanksPrefixesOverSubstrings(t *testing.T) {
+	conn := sqliteDB(t, "c1", "Main")
+	for _, ddl := range []string{
+		`CREATE TABLE invoice_orders (id integer primary key)`,
+		`CREATE TABLE orders_items (id integer primary key)`,
+		`CREATE TABLE orders (id integer primary key)`,
+		`CREATE TABLE myitems (id integer primary key)`,
+	} {
+		if _, err := conn.DB.Exec(ddl); err != nil {
+			t.Fatalf("create table: %v", err)
+		}
+	}
+
+	a := searchApp(conn)
+
+	// "orders": the two prefix hits must precede the word-boundary one.
+	hits, err := a.SearchObjects("orders", 50)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("hits = %v, want 3", names(hits))
+	}
+	if hits[0].Table != "orders" || hits[1].Table != "orders_items" {
+		t.Fatalf("prefix tier = %v, want orders, orders_items first", names(hits))
+	}
+	if hits[2].Table != "invoice_orders" {
+		t.Fatalf("tail = %v, want invoice_orders last", names(hits))
+	}
+
+	// "items": the word-boundary hit outranks the glued one.
+	hits, err = a.SearchObjects("items", 50)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if len(hits) != 2 || hits[0].Table != "orders_items" || hits[1].Table != "myitems" {
+		t.Fatalf("boundary order = %v, want orders_items before myitems", names(hits))
+	}
+}
+
+func names(hits []ObjectMatch) []string {
+	out := make([]string, len(hits))
+	for i, h := range hits {
+		out[i] = h.Table
+	}
+	return out
+}

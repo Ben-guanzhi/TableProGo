@@ -37,6 +37,12 @@ const (
 	// bounded number of pages and reports what it saw.
 	searchKVScanPages = 20
 	searchKVScanCount = 1000
+
+	// Ranking compares the hits against each other before the limit cuts, so a
+	// prefix match from a later connection can outrank a buried substring from
+	// an earlier one. The pool is the bounded overcollect that makes that
+	// possible without ranking an unbounded catalog.
+	searchRankPool = 200
 )
 
 // catalogLimits are the caps the snapshot honours.
@@ -86,6 +92,48 @@ func (a *App) connSnapshot(conn *Connection) ([]catalogsnap.Match, bool) {
 // because a partial list is more useful than an error. When nothing came back
 // and something did fail, that failure is returned: "no matches" and "the
 // catalog could not be read" look the same in the UI but are not the same thing.
+// matchRank scores a case-folded hit for the quick-open box. The name a user
+// is typing usually starts with what they typed (orders → orders_items) or
+// falls on a word boundary (oi → order_items); a hit buried mid-word is the
+// weakest reading. Lower is better; ties keep the collection order (the
+// stable sort), which is the connections' stable ID order.
+func matchRank(lower, query string) int {
+	switch {
+	case strings.HasPrefix(lower, query):
+		return 0
+	case wordBoundaryHit(lower, query):
+		return 1
+	default:
+		return 2
+	}
+}
+
+// wordBoundaryHit reports whether query occurs in lower right after a
+// separator: snake_case, kebab-case, dotted and schema-qualified names all
+// read as separate words, so a hit after `_`, `-`, `.`, a digit or a space is
+// a word the user can see, not an accident of spelling.
+func wordBoundaryHit(lower, query string) bool {
+	off := 0
+	for {
+		i := strings.Index(lower[off:], query)
+		if i < 0 {
+			return false
+		}
+		at := off + i
+		if at > 0 && !isNameByte(lower[at-1]) {
+			return true
+		}
+		off = at + 1
+	}
+}
+
+// isNameByte reports whether b can be part of a bare identifier word. Letters
+// and digits continue a word; every separator breaks it. Non-ASCII bytes
+// (中文表名) count as word characters: a hit after CJK text is mid-name.
+func isNameByte(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b >= 0x80
+}
+
 func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
@@ -111,6 +159,15 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 	// reshuffling with the map's random iteration order.
 	sort.Slice(conns, func(i, j int) bool { return conns[i].ID < conns[j].ID })
 
+	// Collect into a bounded pool larger than the limit: ranking compares the
+	// hits against each other, and that only helps if the cut happens after
+	// it. A connection's snapshot is in memory anyway; the server-side paths
+	// just fetch a few more rows.
+	pool := limit
+	if pool < searchRankPool {
+		pool = searchRankPool
+	}
+
 	found := []ObjectMatch{}
 	var failures []string
 	record := func(scope string, err error) {
@@ -123,12 +180,12 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 	}
 	lower := strings.ToLower(pattern)
 	for _, conn := range conns {
-		if len(found) >= limit {
+		if len(found) >= pool {
 			break
 		}
 		// A key/value connection's "objects" are its keys.
 		if conn.KV != nil {
-			hits, err := searchKVKeys(a, conn, lower, limit-len(found))
+			hits, err := searchKVKeys(a, conn, lower, pool-len(found))
 			if err != nil {
 				record(conn.Name, err)
 				continue
@@ -139,7 +196,7 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 		// A plugin-backed connection has no pool to read; its driver answers
 		// the same catalog call the navigator uses.
 		if pluginConnection(conn) {
-			hits, err := searchPluginCatalog(a, conn, lower, limit-len(found))
+			hits, err := searchPluginCatalog(a, conn, lower, pool-len(found))
 			if err != nil {
 				record(conn.Name, err)
 				continue
@@ -151,8 +208,8 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 			for _, match := range rows {
 				if strings.Contains(match.Lower, lower) {
 					found = append(found, match)
-					if len(found) >= limit {
-						return found, nil
+					if len(found) >= pool {
+						break
 					}
 				}
 			}
@@ -170,10 +227,10 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 			databases = databases[:searchDatabaseCap]
 		}
 		for _, database := range databases {
-			if len(found) >= limit {
+			if len(found) >= pool {
 				break
 			}
-			hits, err := searchInDatabase(a, conn, database, pattern, limit-len(found))
+			hits, err := searchInDatabase(a, conn, database, pattern, pool-len(found))
 			if err != nil {
 				// One database being unreachable - offline, no rights - must not
 				// hide the matches the others have.
@@ -182,6 +239,28 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 			}
 			found = append(found, hits...)
 		}
+	}
+	// Rank before cutting: the names the user is typing usually start with the
+	// fragment or fall on a word boundary, and those must not lose their slot
+	// to a buried substring that merely came from an earlier connection. The
+	// key is bound to the element, not to an index: a precomputed rank array
+	// goes stale the moment the sort moves anything.
+	if len(found) > 1 {
+		type ranked struct {
+			match ObjectMatch
+			rank  int
+		}
+		order := make([]ranked, 0, len(found))
+		for _, m := range found {
+			order = append(order, ranked{m, matchRank(m.Lower, lower)})
+		}
+		sort.SliceStable(order, func(i, j int) bool { return order[i].rank < order[j].rank })
+		for i := range order {
+			found[i] = order[i].match
+		}
+	}
+	if len(found) > limit {
+		found = found[:limit]
 	}
 	if len(found) == 0 && len(failures) > 0 {
 		return found, fmt.Errorf("catalog search failed: %s", strings.Join(failures, "; "))
