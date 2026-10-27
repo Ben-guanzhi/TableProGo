@@ -177,14 +177,16 @@ func (a *App) GetKVValuePage(connID, database, key, cursor string) (KVValue, err
 	}
 
 	var (
-		value  dbcore.RedisValue
-		meta   dbcore.KeyMeta
-		next   string
-		done   = true
-		window int64 // rank the first row of a list/zset window really has
+		value     dbcore.RedisValue
+		meta      dbcore.KeyMeta
+		next      string
+		done      = true
+		window    int64 // rank the first row of a list/zset window really has
+		truncated bool  // the bounded read cut the value (no paged window follows)
 	)
 	err = a.withKV(conn, database, func(ctx context.Context, drv dbcore.KVDriver) error {
 		paged, canPage := dbcore.AsKeyPageReader(drv)
+		bounded, canBound := dbcore.AsBoundedValueReader(drv)
 		kind, err := drv.KeyType(ctx, key)
 		if err != nil {
 			return err
@@ -194,14 +196,7 @@ func (a *App) GetKVValuePage(connID, database, key, cursor string) (KVValue, err
 			_, err := drv.GetValue(ctx, key)
 			return err
 		}
-		if !canPage || kind == dbcore.RedisStr {
-			// A string is one cell and an unpaged driver only ever had the
-			// whole read: both stay on GetValue.
-			value, err = drv.GetValue(ctx, key)
-			if err != nil {
-				return err
-			}
-		} else {
+		if canPage && kind != dbcore.RedisStr {
 			v, cont, err := kvWindow(ctx, paged, key, kind, cursor, kvValueRowLimit)
 			if err != nil {
 				return err
@@ -214,6 +209,26 @@ func (a *App) GetKVValuePage(connID, database, key, cursor string) (KVValue, err
 				// at the wrong item. The cursor IS that first rank.
 				window, _ = parseRankCursor(cursor)
 			}
+			return nil
+		}
+		// A string is one cell, and an unpaged driver only ever had the whole
+		// read — but neither ever needs the unbounded read again: the bounded
+		// capability caps a half-gigabyte string at its first 64 KiB and a
+		// whole collection at its first kvValueRowLimit entries. Drivers
+		// without the capability keep today's single full read.
+		if canBound {
+			bv, err := bounded.GetValueBounded(ctx, key, dbcore.RedisValueLimit{MaxEntries: kvValueRowLimit})
+			if err != nil {
+				return err
+			}
+			value = bv.Value
+			truncated = bv.Truncated
+		} else {
+			v, err := drv.GetValue(ctx, key)
+			if err != nil {
+				return err
+			}
+			value = v
 		}
 		// KeyMeta is optional in the contract; a driver without it still knows
 		// the type from the value, it just cannot say when the key expires.
@@ -239,6 +254,11 @@ func (a *App) GetKVValuePage(connID, database, key, cursor string) (KVValue, err
 	result := kvResultWindow(value, window)
 	if !done {
 		result.Truncated = true // rows exist beyond this window
+	}
+	if truncated {
+		// The bounded read cut the value (a long string, or an unpaged driver's
+		// collection): same signal the row cap uses, without a Next window.
+		result.Truncated = true
 	}
 	return KVValue{
 		Key:    key,
