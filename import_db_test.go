@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -159,5 +160,85 @@ func TestImportCSVWithoutHeaderGetsGeneratedNames(t *testing.T) {
 	}
 	if res.Rows != 2 {
 		t.Fatalf("rows = %d", res.Rows)
+	}
+}
+
+// TestImportMapsColumnsIntoExistingTable pins the column mapping: a file whose
+// headers differ in case and order, and that carries a column the table does
+// not have, still lands on the right columns instead of failing the INSERT —
+// and the pairing is reported, not guessed silently.
+func TestImportMapsColumnsIntoExistingTable(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+
+	// The table exists with lowercase columns the file spells differently.
+	if r := app.ExecuteQuery("c1", "CREATE TABLE map_people (id INTEGER PRIMARY KEY, name TEXT, note TEXT)", ""); r.Error != "" {
+		t.Fatalf("create table: %s", r.Error)
+	}
+
+	path := writeTempFile(t, "people2.csv", "Name,ID,extra\ncarol,3,z\n")
+	res, err := app.ImportFile(ImportRequest{
+		ConnID: "c1", Table: "map_people", Path: path,
+		Options: ImportOptions{HasHeader: true, CreateTable: true},
+	})
+	if err != nil {
+		t.Fatalf("mapped import: %v", err)
+	}
+	if res.CreatedTable {
+		t.Fatal("the table already existed; the second run must land on it")
+	}
+	if res.Rows != 1 || res.Skipped != 0 {
+		t.Fatalf("result = %+v, want 1 row written", res)
+	}
+	if len(res.Mapped) != 3 {
+		t.Fatalf("mapped = %+v, want one pair per file column", res.Mapped)
+	}
+	byFile := map[string]string{}
+	for _, m := range res.Mapped {
+		byFile[m.File] = m.Table
+	}
+	if byFile["Name"] != "name" || byFile["ID"] != "id" {
+		t.Fatalf("mapping = %v, want Name->name and ID->id", byFile)
+	}
+	if byFile["extra"] != "" {
+		t.Fatalf("extra should be reported unmatched, got %q", byFile["extra"])
+	}
+
+	r := app.ExecuteQuery("c1", "SELECT id, name FROM map_people ORDER BY id", "")
+	if r.Error != "" || r.RowCount != 1 {
+		t.Fatalf("rows = %+v", r)
+	}
+	// The values landed in the right columns: carol is a name, 3 an id —
+	// despite the file spelling them Name/ID and carrying an extra column.
+	if got := fmt.Sprintf("%v|%v", r.Rows[0][0], r.Rows[0][1]); got != "3|carol" {
+		t.Fatalf("row 1 = %s, want 3|carol", got)
+	}
+}
+
+// TestImportHeaderlessIntoExistingTableMapsByPosition covers the only identity
+// a headerless file has: column order.
+func TestImportHeaderlessIntoExistingTableMapsByPosition(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	path := writeTempFile(t, "pairs.csv", "id,name,score\n1,alice,9.5\n2,bob,7\n")
+	if _, err := app.ImportFile(ImportRequest{
+		ConnID: "c1", Table: "plain_people", Path: path,
+		Options: ImportOptions{HasHeader: true, CreateTable: true, InferTypes: true},
+	}); err != nil {
+		t.Fatalf("setup import: %v", err)
+	}
+
+	path = writeTempFile(t, "pairs2.csv", "3,carol,8.1\n")
+	res, err := app.ImportFile(ImportRequest{
+		ConnID: "c1", Table: "plain_people", Path: path,
+		Options: ImportOptions{HasHeader: false, CreateTable: true},
+	})
+	if err != nil {
+		t.Fatalf("headerless import: %v", err)
+	}
+	if res.Rows != 1 {
+		t.Fatalf("result = %+v, want 1 row", res)
+	}
+	r := app.ExecuteQuery("c1", "SELECT id, name FROM plain_people WHERE id = 3", "")
+	if r.Error != "" || r.RowCount != 1 || fmt.Sprintf("%v", r.Rows[0][1]) != "carol" {
+		t.Fatalf("rows = %+v, want 3|carol", r)
 	}
 }

@@ -59,6 +59,10 @@ type ImportResult struct {
 	Statements   int      `json:"statements"`
 	Columns      []string `json:"columns"`
 	CreatedTable bool     `json:"createdTable"`
+	// Mapped is the file-column → table-column pairing when the import landed
+	// on an existing table (MatchColumns). Empty when the table was created
+	// from the file, where the two lists are identical by construction.
+	Mapped []importfile.ColumnMap `json:"mapped,omitempty"`
 	// FirstError is the first skipped row's error with its 1-based row number,
 	// so "skipped 300" is not a dead end. Empty when nothing was skipped.
 	FirstError string `json:"firstError,omitempty"`
@@ -167,6 +171,10 @@ type importWriter struct {
 	skipErrors bool
 	res        *ImportResult
 	cols       []string
+	// keep lists the file-column indexes that landed on table columns (column
+	// mapping); nil when every file column is kept. Each written row is
+	// projected down to these indexes so values stay paired with w.cols.
+	keep []int
 }
 
 func (w *importWriter) begin() error {
@@ -208,6 +216,21 @@ func (w *importWriter) abort() {
 func (w *importWriter) write(chunk [][]*string, firstRow int) error {
 	if len(chunk) == 0 {
 		return nil
+	}
+	if w.keep != nil {
+		// Column mapping dropped some file columns: project every row onto the
+		// kept indexes so values stay paired with the mapped w.cols.
+		projected := make([][]*string, len(chunk))
+		for i, row := range chunk {
+			p := make([]*string, len(w.keep))
+			for j, idx := range w.keep {
+				if idx < len(row) {
+					p[j] = row[idx]
+				}
+			}
+			projected[i] = p
+		}
+		chunk = projected
 	}
 	batch := importBatchSize
 	if w.dbType == "oracle" {
@@ -310,24 +333,91 @@ func (a *App) importJSONRows(req ImportRequest, opts importfile.Options, w *impo
 }
 
 // prepareImport runs the once-per-import setup on the first chunk: create the
-// table when asked (the chunk is the inference sample) and resolve the upsert
-// conflict keys against the real columns.
+// table when asked (the chunk is the inference sample), align the file's
+// columns with an existing table's catalog, and resolve the upsert conflict
+// keys against the real columns.
 func (a *App) prepareImport(w *importWriter, req ImportRequest, opts importfile.Options, cols []string, sample [][]*string) error {
 	w.cols = cols
+	created := false
 	if req.Options.CreateTable {
-		created, err := a.ensureImportTable(w.ctx, w.drv, w.dbType, req.Database, req.Table, cols, sample, opts)
+		var err error
+		created, err = a.ensureImportTable(w.ctx, w.drv, w.dbType, req.Database, req.Table, cols, sample, opts)
 		if err != nil {
 			return err
 		}
 		w.res.CreatedTable = created
 	}
+	if !created {
+		// Landing on a table that already exists: the file's headers are not
+		// automatically the table's columns. The mapping is reported in
+		// res.Mapped, not guessed silently.
+		if err := a.mapImportColumns(w, req, cols); err != nil {
+			return err
+		}
+	}
 	if opts.Mode == "upsert" {
-		keys, err := a.resolveUpsertKeys(w.ctx, w.drv, w.dbType, req.Database, req.Table, cols, opts.UpsertKeys)
+		// User-named keys may spell file headers; translate them through the
+		// mapping so the conflict clause names real table columns.
+		keys := make([]string, len(opts.UpsertKeys))
+		byFile := make(map[string]string, len(w.res.Mapped))
+		for _, m := range w.res.Mapped {
+			if m.Table != "" {
+				byFile[m.File] = m.Table
+			}
+		}
+		for i, k := range opts.UpsertKeys {
+			if mapped, ok := byFile[k]; ok {
+				k = mapped
+			}
+			keys[i] = k
+		}
+		resolved, err := a.resolveUpsertKeys(w.ctx, w.drv, w.dbType, req.Database, req.Table, w.cols, keys)
 		if err != nil {
 			return err
 		}
-		w.opts.UpsertKeys = keys
+		w.opts.UpsertKeys = resolved
 	}
+	return nil
+}
+
+// mapImportColumns aligns the file's columns with the target table's catalog:
+// the file may spell its headers differently (case, separators), hold the
+// columns in another order, or carry columns the table does not have — a
+// straight "headers are the column list" INSERT fails on all three. A
+// headerless file maps positionally when the arity agrees. File columns with
+// no counterpart are dropped from the INSERT and the pairing is reported.
+func (a *App) mapImportColumns(w *importWriter, req ImportRequest, fileCols []string) error {
+	cols, err := w.drv.ListColumns(w.ctx, importSchema(w.dbType, req.Database), req.Table)
+	if err != nil {
+		return fmt.Errorf("import: 读取表 %s 的列失败：%w", req.Table, err)
+	}
+	if len(cols) == 0 {
+		return fmt.Errorf("import: 目标表 %s 不存在（或没有列）", req.Table)
+	}
+	tableNames := make([]string, len(cols))
+	for i, c := range cols {
+		tableNames[i] = c.Name
+	}
+	mapping := importfile.MatchColumns(fileCols, tableNames, w.opts.HasHeader)
+	kept := make([]string, 0, len(mapping))
+	keepIdx := make([]int, 0, len(mapping))
+	for i, m := range mapping {
+		if m.Table == "" {
+			continue
+		}
+		kept = append(kept, m.Table)
+		keepIdx = append(keepIdx, i)
+	}
+	if len(kept) == 0 {
+		return fmt.Errorf("import: 文件的列与表 %s 的列没有对应关系（文件 %v / 表 %v）", req.Table, fileCols, tableNames)
+	}
+	w.res.Mapped = mapping
+	if len(keepIdx) == len(fileCols) {
+		w.cols = kept // 1:1, order included: only the spellings changed
+		return nil
+	}
+	w.cols = kept
+	w.keep = keepIdx // the writer projects each row down to the kept columns
 	return nil
 }
 
