@@ -775,14 +775,54 @@ const Sidebar: React.FC<SidebarProps> = ({
       onConfirm={onConfirm}
     />
   );
-  const roots: TreeNode[] = connections.map(c => ({
+  const nodeFor = (c: Connection): TreeNode => ({
     key: nodeKey.connection(c.id),
     kind: 'connection',
     label: c.name,
     connId: c.id,
     dbType: c.type,
     connection: c,
+  });
+
+  // Group headers are presentation-only: the connections inside stay real tree
+  // nodes so expand/collapse, keyboard nav and refresh all keep working. roots
+  // is built in the order the sections render (grouped first, ungrouped last),
+  // so arrow-key navigation walks the tree exactly as it looks.
+  const withGroup = (c: Connection | undefined) => (c?.group ?? '').trim();
+  const grouped = connections.filter(c => withGroup(c) !== '');
+  const ungrouped = connections.filter(c => withGroup(c) === '');
+  const groupNames: string[] = [];
+  for (const c of grouped) {
+    const name = withGroup(c);
+    if (!groupNames.includes(name)) groupNames.push(name);
+  }
+  const ungroupedNodes = ungrouped.map(nodeFor);
+  const sections: { name: string; nodes: TreeNode[] }[] = groupNames.map(name => ({
+    name,
+    nodes: grouped.filter(c => withGroup(c) === name).map(nodeFor),
   }));
+  const roots: TreeNode[] = sections.flatMap(s => s.nodes).concat(ungroupedNodes);
+
+  const renderSections = (): React.ReactNode => (
+    <>
+      {sections.map(section => {
+        const visible = section.nodes.filter(isVisible);
+        if (visible.length === 0) return null;
+        return (
+          <React.Fragment key={`group:${section.name}`}>
+            <div
+              role="presentation"
+              className="px-2 pt-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-muted"
+            >
+              {section.name}
+            </div>
+            {renderNodes(visible, 0)}
+          </React.Fragment>
+        );
+      })}
+      {renderNodes(ungroupedNodes, 0)}
+    </>
+  );
 
   return (
     <>
@@ -809,7 +849,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       <div role="tree" aria-label="数据库对象" className="flex-1 overflow-y-auto py-1">
-        {renderNodes(roots, 0)}
+        {renderSections()}
 
         {roots.length === 0 && (
           <div className="text-center text-muted text-xs py-3">还没有连接，点击右上角 + 新建</div>

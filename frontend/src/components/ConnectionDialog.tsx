@@ -62,6 +62,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
         password: initialConfig.password ?? '',
         database: initialConfig.database,
         sslMode: initialConfig.sslMode || 'false',
+        group: initialConfig.group,
         options: initialConfig.options || {},
         ssh: initialConfig.ssh ? { ...emptySSH, ...initialConfig.ssh } : { ...emptySSH },
         databaseFilter: initialConfig.databaseFilter,
@@ -240,6 +241,18 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                 config.type === 'redis' ? '0' :
                 '数据库名'
               }
+            />
+          </div>
+
+          <div>
+            <label htmlFor="conn-group" className="block text-sm text-secondary mb-1">分组</label>
+            <input
+              id="conn-group"
+              type="text"
+              className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+              value={config.group ?? ''}
+              onChange={(e) => setConfig({ ...config, group: e.target.value })}
+              placeholder="留空为未分组（侧栏顶部）"
             />
           </div>
 

@@ -163,6 +163,8 @@ export interface Favorite {
   database: string;
   name: string;
   sql: string;
+  // Folder groups favorites in the menu (P2-3); empty = ungrouped.
+  folder?: string;
   createdAt: number;
 }
 
@@ -175,8 +177,9 @@ export async function AddFavorite(
   database: string,
   name: string,
   sql: string,
+  folder = '',
 ): Promise<Favorite> {
-  return post('/api/favorites', { connId, database, name, sql });
+  return post('/api/favorites', { connId, database, name, sql, folder });
 }
 
 export async function DeleteFavorite(id: string): Promise<void> {

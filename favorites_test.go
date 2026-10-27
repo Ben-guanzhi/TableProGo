@@ -36,3 +36,20 @@ func TestFavoritesCRUD(t *testing.T) {
 		t.Fatalf("after delete = %+v", got)
 	}
 }
+
+// P2-3: a favorite keeps its folder so the menu can group it; an empty folder
+// means ungrouped, and the trimmed value is what gets stored.
+func TestFavoriteFolderRoundTrips(t *testing.T) {
+	app := &App{}
+	saved, err := app.AddFavorite("c1", "shop", "日报", "SELECT 1", "  报表  ")
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if saved.Folder != "报表" {
+		t.Fatalf("folder = %q, want trimmed 报表", saved.Folder)
+	}
+	list := app.ListFavorites()
+	if len(list) != 1 || list[0].Folder != "报表" {
+		t.Fatalf("list = %+v", list)
+	}
+}

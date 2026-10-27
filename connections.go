@@ -84,16 +84,19 @@ type Connection struct {
 }
 
 type ConnectionConfig struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	Type     string            `json:"type"`
-	Host     string            `json:"host"`
-	Port     int               `json:"port"`
-	Username string            `json:"username"`
-	Password string            `json:"password"`
-	Database string            `json:"database"`
-	SSLMode  string            `json:"sslMode"`
-	Options  map[string]string `json:"options"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Database string `json:"database"`
+	SSLMode  string `json:"sslMode"`
+	// Group labels the sidebar section the connection renders under (P2-3);
+	// "" is the ungrouped section, so old connection files keep their layout.
+	Group   string            `json:"group,omitempty"`
+	Options map[string]string `json:"options"`
 	// SSH optionally routes the connection through a jump host. The database
 	// host/port above stay the ones the user typed; the tunnel rewrites only the
 	// dialed endpoint (see dialTarget).

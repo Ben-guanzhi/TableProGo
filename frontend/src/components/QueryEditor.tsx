@@ -310,8 +310,11 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     }
     const name = window.prompt('收藏名称', sql.split('\n')[0].slice(0, 50));
     if (!name) return;
+    // Folder is optional: empty means the ungrouped list. Prompting after the
+    // name keeps the common case (one prompt) unchanged.
+    const folder = window.prompt('收藏文件夹（留空为不分组）', '') ?? '';
     try {
-      await AddFavorite('', '', name.trim(), sql);
+      await AddFavorite('', '', name.trim(), sql, folder.trim());
       toast.success('已收藏');
       refreshFavorites();
     } catch (error) {
@@ -326,6 +329,67 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     } catch (error) {
       toast.error(`删除收藏失败：${(error as Error).message}`);
     }
+  };
+
+  // Favorites render under their folder: the grouped list is the same list the
+  // user built, so the ungrouped ones stay last and grouped ones keep the order
+  // they were saved in. Each item still opens in place; folders are labels.
+  const renderFavoriteGroups = (list: Favorite[]): React.ReactNode => {
+    const ungrouped = list.filter(f => !f.folder);
+    const folders: string[] = [];
+    for (const f of list) {
+      const name = (f.folder ?? '').trim();
+      if (name && !folders.includes(name)) folders.push(name);
+    }
+    const renderOne = (f: Favorite) => (
+      <div key={f.id} className="group flex items-center gap-1 px-1 py-0.5 rounded hover:bg-raised">
+        <button
+          className="flex-1 min-w-0 text-left px-1 py-1 rounded"
+          onClick={() => {
+            viewRef.current?.dispatch({
+              changes: { from: 0, to: viewRef.current.state.doc.length, insert: f.sql },
+            });
+            setShowFavorites(false);
+          }}
+          title={f.sql}
+        >
+          <span className="block text-xs text-ink truncate">{f.name}</span>
+          <span className="block text-2xs text-muted truncate">{f.sql}</span>
+        </button>
+        <button
+          className="shrink-0 p-1 text-secondary hover:text-danger opacity-0 group-hover:opacity-100"
+          onClick={() => void removeFavorite(f.id)}
+          aria-label={`删除收藏 ${f.name}`}
+          title="删除收藏"
+        >
+          <FiTrash2 size={11} />
+        </button>
+      </div>
+    );
+    return (
+      <>
+        {folders.map(folder => {
+          const items = list.filter(f => (f.folder ?? '').trim() === folder);
+          if (items.length === 0) return null;
+          return (
+            <div key={folder}>
+              <div className="px-2 pt-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-muted">
+                {folder}
+              </div>
+              {items.map(renderOne)}
+            </div>
+          );
+        })}
+        {ungrouped.length > 0 && (
+          <>
+            {folders.length > 0 && (
+              <div className="px-2 pt-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-muted">未分组</div>
+            )}
+            {ungrouped.map(renderOne)}
+          </>
+        )}
+      </>
+    );
   };
 
   // Callbacks change on every parent render; routing them through a ref lets
@@ -645,31 +709,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                   {favorites.length === 0 && (
                     <div className="px-2 py-1.5 text-2xs text-muted">还没有收藏，编辑好语句后点上面收藏</div>
                   )}
-                  {favorites.map(f => (
-                    <div key={f.id} className="group flex items-center gap-1 px-1 py-0.5 rounded hover:bg-raised">
-                      <button
-                        className="flex-1 min-w-0 text-left px-1 py-1 rounded"
-                        onClick={() => {
-                          viewRef.current?.dispatch({
-                            changes: { from: 0, to: viewRef.current.state.doc.length, insert: f.sql },
-                          });
-                          setShowFavorites(false);
-                        }}
-                        title={f.sql}
-                      >
-                        <span className="block text-xs text-ink truncate">{f.name}</span>
-                        <span className="block text-2xs text-muted truncate">{f.sql}</span>
-                      </button>
-                      <button
-                        className="shrink-0 p-1 text-secondary hover:text-danger opacity-0 group-hover:opacity-100"
-                        onClick={() => void removeFavorite(f.id)}
-                        aria-label={`删除收藏 ${f.name}`}
-                        title="删除收藏"
-                      >
-                        <FiTrash2 size={11} />
-                      </button>
-                    </div>
-                  ))}
+                  {renderFavoriteGroups(favorites)}
                 </div>
               </>
             )}

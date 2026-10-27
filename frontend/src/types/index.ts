@@ -14,6 +14,8 @@ export interface Connection {
   password?: string;
   database: string;
   sslMode: string;
+  // Sidebar section label; empty = ungrouped section.
+  group?: string;
   options: Record<string, string>;
   ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
@@ -39,6 +41,8 @@ export interface ConnectionConfig {
   password: string;
   database: string;
   sslMode: string;
+  // Sidebar section label; empty = ungrouped section.
+  group?: string;
   options: Record<string, string>;
   ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
