@@ -13,9 +13,12 @@ import (
 	"testing"
 )
 
-// mcpCall drives one JSON-RPC request through the app's stdio handler.
+// mcpCall drives one JSON-RPC request through the app's stdio handler. Each
+// call is a fresh session, so it performs the handshake a real client performs
+// first: without it the server refuses tools as "not initialized".
 func mcpCall(t *testing.T, a *App, method string, params interface{}) map[string]interface{} {
 	t.Helper()
+	handshake := []byte(`{"jsonrpc":"2.0","id":0,"method":"initialize","params":{}}` + "\n")
 	body := map[string]interface{}{"jsonrpc": "2.0", "id": 1, "method": method}
 	if params != nil {
 		body["params"] = params
@@ -25,11 +28,14 @@ func mcpCall(t *testing.T, a *App, method string, params interface{}) map[string
 		t.Fatalf("marshal: %v", err)
 	}
 	var out bytes.Buffer
-	if err := a.RunMCPStdio(bytes.NewReader(append(raw, '\n')), &out); err != nil {
+	input := append(append(handshake, raw...), '\n')
+	if err := a.RunMCPStdio(bytes.NewReader(input), &out); err != nil {
 		t.Fatalf("stdio: %v", err)
 	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	last := lines[len(lines)-1]
 	var resp map[string]interface{}
-	if err := json.Unmarshal(out.Bytes(), &resp); err != nil {
+	if err := json.Unmarshal([]byte(last), &resp); err != nil {
 		t.Fatalf("decode %q: %v", out.String(), err)
 	}
 	return resp
@@ -212,15 +218,33 @@ func TestMCPStdioFraming(t *testing.T) {
 }
 
 // The HTTP endpoint is the same handler, so an MCP client can attach to a running
-// app. A notification answers 202.
+// app. The server persists across requests — that is what makes the handshake
+// hold — and a request that skips it is refused with the spec's "not initialized".
 func TestMCPOverHTTP(t *testing.T) {
 	conn := sqliteDB(t, "mcp5", "scratch")
 	a := searchApp(conn)
 	mux := a.routes()
 
-	req := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// tools/list before any handshake is refused, not answered by a half-built
+	// server.
+	rec := post(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
+	if !strings.Contains(rec.Body.String(), "-32002") {
+		t.Fatalf("uninitialized tools/list = %s, want a -32002 refusal", rec.Body.String())
+	}
+
+	// The handshake lands on the persistent server, so the next request is served.
+	rec = post(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`)
+	if rec.Code != 200 {
+		t.Fatalf("initialize status %d: %s", rec.Code, rec.Body.String())
+	}
+	rec = post(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
 	}
@@ -229,9 +253,7 @@ func TestMCPOverHTTP(t *testing.T) {
 	}
 
 	// A notification has no answer: 202 with an empty body.
-	note := httptest.NewRequest("POST", "/api/mcp", strings.NewReader(`{"jsonrpc":"2.0","method":"notifications/initialized"}`))
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, note)
+	rec = post(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
 	if rec.Code != 202 {
 		t.Fatalf("notification status = %d", rec.Code)
 	}

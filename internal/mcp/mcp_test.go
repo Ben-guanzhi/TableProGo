@@ -45,7 +45,36 @@ func newTestServer(opts Options) (*Server, *fakeCatalog) {
 		columns: []ColumnInfo{{Name: "id", Type: "bigint", IsPrimaryKey: true}},
 		result:  &QueryResult{Columns: []string{"id"}, Rows: [][]interface{}{{1}}, RowCount: 1},
 	}
-	return New(cat, opts), cat
+	s := New(cat, opts)
+	// Every caller wants a usable server, and tools answer only after the
+	// handshake: perform it here so tests exercise the tool surface, not the
+	// transport's initialize duty.
+	s.Handle([]byte(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`))
+	return s, cat
+}
+
+// A client that skips the handshake gets the spec's "not initialized" refusal,
+// not tools answered by a half-built server.
+func TestToolsBeforeInitializeAreRefused(t *testing.T) {
+	s2 := &Server{catalog: &fakeCatalog{}, opts: Options{MaxRows: 1}} // never initialized
+	resp := rpc(t, s2, "tools/list", nil)
+	errObj, ok := resp["error"].(map[string]interface{})
+	if !ok || errObj["code"].(float64) != -32002 {
+		t.Fatalf("tools/list before initialize = %v, want code -32002", resp["error"])
+	}
+	resp = rpc(t, s2, "tools/call", map[string]interface{}{
+		"name": "list_connections", "arguments": map[string]interface{}{},
+	})
+	if errObj, ok = resp["error"].(map[string]interface{}); !ok || errObj["code"].(float64) != -32002 {
+		t.Fatalf("tools/call before initialize = %v, want code -32002", resp["error"])
+	}
+	// The refused server answers normally once it is initialized.
+	if resp := rpc(t, s2, "initialize", map[string]interface{}{}); resp["result"] == nil {
+		t.Fatalf("initialize = %v", resp)
+	}
+	if resp := rpc(t, s2, "tools/list", nil); resp["error"] != nil {
+		t.Fatalf("tools/list after initialize = %v", resp["error"])
+	}
 }
 
 // rpc drives one request through Handle and decodes the response.

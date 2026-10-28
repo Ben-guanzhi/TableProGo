@@ -115,15 +115,10 @@ func (a *App) previewPage(connID string, database string, schema string, table s
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}
-	// A plugin-backed connection renders the page itself: the client has no
-	// dialect knowledge for an engine it does not compile, so the page cannot be
-	// built from a WHERE and an ORDER BY here.
-	if pluginConnection(conn) {
-		return a.previewViaPlugin(conn, database, schema, table, limit, offset, filters)
-	}
 	// No explicit request falls back to a sane default page; a real request is
 	// honored up to the paging cap, so asking for 5000 rows gets 5000 instead
-	// of a silent downgrade to 100.
+	// of a silent downgrade to 100. This runs before the plugin branch too: a
+	// plugin gets the same normalized page request, not a raw `PageSize: 0`.
 	if limit <= 0 {
 		limit = defaultPreviewRows
 	}
@@ -132,6 +127,12 @@ func (a *App) previewPage(connID string, database string, schema string, table s
 	}
 	if offset < 0 {
 		offset = 0
+	}
+	// A plugin-backed connection renders the page itself: the client has no
+	// dialect knowledge for an engine it does not compile, so the page cannot be
+	// built from a WHERE and an ORDER BY here.
+	if pluginConnection(conn) {
+		return a.previewViaPlugin(conn, database, schema, table, limit, offset, filters)
 	}
 
 	db := conn.DB

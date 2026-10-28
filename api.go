@@ -27,6 +27,13 @@ import (
 // statusOK is the shared success payload of the mutating endpoints.
 var statusOK = map[string]string{"status": "ok"}
 
+// apiBodyLimit caps one JSON request body. The endpoints are loopback-only, but
+// they are still reachable by any local process holding the API token, and a
+// decode of an unbounded body is a free way to exhaust the process's memory
+// (the MCP endpoint caps itself tighter; bulk imports upload by file path, not
+// body, so nothing here needs more).
+const apiBodyLimit = 32 << 20
+
 // post registers one POST endpoint of the JSON API: decode the request body
 // into Req, run call, and map the result onto the shared convention — 405 for
 // a non-POST request, errStatus (or 400) for a body that does not decode or a
@@ -39,7 +46,7 @@ func post[Req any](a *App, mux *http.ServeMux, path string, errStatus int, call 
 			return
 		}
 		var body Req
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
 			writeError(w, 400, err.Error())
 			return
 		}
@@ -691,9 +698,25 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/llm/proposal/reject", 400, func(a *App, body llmProposalRequest) (any, error) {
 		return map[string]bool{"rejected": a.RejectProposal(body.ID) == nil}, nil
 	})
-	post(a, mux, "/api/llm/ask", 400, func(a *App, body llmAskRequest) (any, error) {
-		text, err := a.AskLLM(body.Question)
-		return map[string]string{"answer": text}, err
+	// Hand-written instead of post() so the question's cancel reaches the
+	// upstream model call: the generic wrapper has no request context to hand
+	// down, and a cancelled question must stop paying for its answer.
+	mux.HandleFunc("/api/llm/ask", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(405)
+			return
+		}
+		var body llmAskRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		text, err := a.AskLLM(r.Context(), body.Question)
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"answer": text})
 	})
 	post(a, mux, "/api/llm/history", 400, func(a *App, body connIDRequest) (any, error) {
 		return map[string]any{"history": LLMHistory()}, nil

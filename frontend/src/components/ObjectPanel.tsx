@@ -25,6 +25,7 @@ import {
 import toast from 'react-hot-toast';
 import { GetTriggerDefinition } from '../api';
 import { copyText } from '../clipboard';
+import type { ConfirmRequestSpec } from './ConfirmDialog';
 import DataGrid from './DataGrid';
 import ErrorBanner from './ErrorBanner';
 import FilterBar from './FilterBar';
@@ -77,6 +78,9 @@ interface ObjectPanelProps {
   onDismissError: (section: ObjectSection) => void;
   onUseStatement?: (sql: string) => void;
   onClearHistory?: () => void;
+  // The app's ConfirmDialog bridge (P1-16): destructive actions answer through
+  // it, never through window.confirm.
+  confirm: (request: ConfirmRequestSpec) => Promise<boolean>;
 }
 
 const Card: React.FC<{ title: string; count?: number; actions?: React.ReactNode; children: React.ReactNode }> = ({
@@ -488,6 +492,7 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
   onDismissError,
   onUseStatement,
   onClearHistory,
+  confirm,
 }) => {
   const full = qualifier ? `${qualifier}.${tableName}` : tableName;
 
@@ -552,7 +557,14 @@ const ObjectPanel: React.FC<ObjectPanelProps> = ({
                   <button
                     className="ml-auto flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-danger hover:bg-raised shrink-0"
                     onClick={() => {
-                      if (window.confirm('确定清空该表相关的全部执行历史吗？此操作不可恢复。')) onClearHistory();
+                      void confirm({
+                        title: '清空历史',
+                        message: '确定清空该表相关的全部执行历史吗？此操作不可恢复。',
+                        confirmLabel: '清空',
+                        destructive: true,
+                      }).then(ok => {
+                        if (ok) onClearHistory();
+                      });
                     }}
                     title="清空该表相关的执行历史"
                   >

@@ -70,9 +70,43 @@ type ImportResult struct {
 }
 
 // importBatchSize caps how many rows go into one multi-row INSERT: large enough
-// to amortize round trips, small enough to stay under every engine's parameter
-// limit (SQLite's is the tightest at 32766).
+// to amortize round trips. The engine's parameter limit is enforced against the
+// real shape by importBatchFor — rows×cols placeholders, so a wide table needs
+// a smaller batch than any constant can promise.
 const importBatchSize = 200
+
+// importParamCap is an engine's bound on bind parameters in one statement. An
+// unknown engine gets the tightest known cap rather than a guess that it is
+// larger.
+func importParamCap(dbType string) int {
+	switch dbType {
+	case "mysql", "postgresql":
+		return 65535
+	case "sqlite":
+		return 32766
+	default:
+		return 2100 // SQL Server; also the safe floor for anything unrecognized
+	}
+}
+
+// importBatchFor sizes one multi-row INSERT so rows×cols stays under the
+// engine's parameter cap: 200 rows × 100 columns into SQL Server would be
+// 20 000 placeholders, and with skipErrors the failed batch would drop every
+// row in it. Oracle has no multi-row VALUES clause, so it stays at one row per
+// statement regardless of width.
+func importBatchFor(dbType string, cols int) int {
+	if dbType == "oracle" || cols <= 0 {
+		return 1
+	}
+	batch := importParamCap(dbType) / cols
+	if batch > importBatchSize {
+		return importBatchSize
+	}
+	if batch < 1 {
+		return 1
+	}
+	return batch
+}
 
 // ImportFile parses path and writes its rows into table. A .sql path runs as a
 // script instead, where the file itself decides the tables.
@@ -232,12 +266,7 @@ func (w *importWriter) write(chunk [][]*string, firstRow int) error {
 		}
 		chunk = projected
 	}
-	batch := importBatchSize
-	if w.dbType == "oracle" {
-		// Oracle has no multi-row VALUES clause on older versions; one row per
-		// statement keeps the import correct at the cost of round trips.
-		batch = 1
-	}
+	batch := importBatchFor(w.dbType, len(w.cols))
 	for start := 0; start < len(chunk); start += batch {
 		end := minInt(start+batch, len(chunk))
 		stmt, args, err := importfile.InsertSQL(w.dbType, w.table, w.cols, chunk[start:end], w.opts)

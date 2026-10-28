@@ -39,24 +39,39 @@ const API_TOKEN = window.__API_TOKEN__
   ?? new URLSearchParams(window.location.search).get('apiToken') ?? '';
 const BASE = `http://127.0.0.1:${API_PORT}`;
 
-export async function post(path: string, body: any = {}): Promise<any> {
+export interface RequestOptions {
+  signal?: AbortSignal;
+}
+
+// parseResponse turns the API's conventions into results and errors: the
+// `error` field is a failed call, and a non-JSON body (a proxy error page, a
+// crashed process) is reported as an HTTP failure instead of surfacing as a
+// JSON parse accident.
+async function parseResponse(res: Response): Promise<any> {
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(`HTTP ${res.status} ${res.statusText || '请求失败'}`);
+  }
+  if (data?.error) throw new Error(data.error);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText || '请求失败'}`);
+  return data;
+}
+
+export async function post(path: string, body: any = {}, opts: RequestOptions = {}): Promise<any> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
     body: JSON.stringify(body),
+    signal: opts.signal,
   });
-  const data = await res.json();
-  // Endpoints answer `null` for an empty catalog (a sqlite connection has no
-  // schemas), which is a result, not an error.
-  if (data?.error) throw new Error(data.error);
-  return data;
+  return parseResponse(res);
 }
 
 async function get(path: string): Promise<any> {
   const res = await fetch(`${BASE}${path}`, { headers: { 'X-API-Token': API_TOKEN } });
-  const data = await res.json();
-  if (data?.error) throw new Error(data.error);
-  return data;
+  return parseResponse(res);
 }
 
 export async function GetConnections(): Promise<Connection[]> {
@@ -300,19 +315,20 @@ export type TableDdlAction = 'drop' | 'truncate' | 'rename';
 // Rename/truncate/drop one object. The backend renders the statement from the
 // names in its own catalog - and refuses anything that is not there - so no
 // text typed in the menu can reach the database as SQL. When Safe Mode pauses
-// the statement, one blocking confirmation is collected and the action is
-// resent through the confirmed endpoint; cancelling throws, so the caller
-// treats it like any other aborted action.
+// the statement, one confirmation is collected through `confirm` — the app
+// passes its themed ConfirmDialog; cancelling throws, so the caller treats it
+// like any other aborted action. The confirm may be asynchronous and is always
+// awaited, so a promise-based dialog cannot be mistaken for an approval.
 export async function RunTableAction(
   ref: TableRef,
   action: TableDdlAction,
-  newName = '',
-  confirm: (message: string) => boolean = message => window.confirm(message),
+  newName: string,
+  confirm: (message: string) => boolean | Promise<boolean>,
 ): Promise<string> {
   const data = await post('/api/table-action', { ...ref, action, newName });
   if (data.needsConfirmation) {
     const reason: string = data.reason ?? '';
-    if (!confirm(`${reason}\n\n仍要执行这条语句吗？`)) {
+    if (!(await confirm(`${reason}\n\n仍要执行这条语句吗？`))) {
       throw new Error('Cancelled (Safe Mode)');
     }
     const confirmed = await post('/api/table-action-confirmed', { ...ref, action, newName });

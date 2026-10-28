@@ -142,6 +142,23 @@ func (a *App) mcpServer() *mcp.Server {
 	return mcp.New(mcpCatalog{app: a}, opts)
 }
 
+// mcpHTTPServerFor returns the HTTP transport's server, creating it once and
+// rebuilding it only when the settings it was built from change. The handshake
+// lives on the server, so stdio keeps its own instance per session while HTTP —
+// one Handle call per request — must reuse one across requests or tools/list
+// after initialize would always see a fresh, uninitialized server.
+func (a *App) mcpHTTPServerFor() *mcp.Server {
+	maxRows, writes := a.mcpMaxRows(), a.mcpWritesEnabled()
+	a.mcpHTTPMu.Lock()
+	defer a.mcpHTTPMu.Unlock()
+	if a.mcpHTTPServer != nil && a.mcpHTTPMaxRows == maxRows && a.mcpHTTPWrites == writes {
+		return a.mcpHTTPServer
+	}
+	server := a.mcpServer()
+	a.mcpHTTPServer, a.mcpHTTPMaxRows, a.mcpHTTPWrites = server, maxRows, writes
+	return server
+}
+
 // mcpMaxRows reads the cap from settings, defaulting to the package's.
 func (a *App) mcpMaxRows() int {
 	if n := a.GetSettings().MCPMaxRows; n > 0 {
@@ -175,13 +192,27 @@ func (a *App) confirmMCPWrite(connID, sql string) bool {
 // something to report. Errors are returned rather than logged: the stdio transport
 // writes only protocol frames to stdout, and the caller decides where diagnostics go.
 func (a *App) ConnectSavedConnections() []error {
-	var errs []error
+	// Snapshot the work under the registry's lock, then connect outside it:
+	// Connect takes the write lock itself, so holding the read lock here would
+	// deadlock the very thing it is protecting.
+	a.connectionsMu.RLock()
+	type pending struct {
+		id   string
+		name string
+	}
+	var todo []pending
 	for _, cfg := range a.savedConnections {
 		if conn, ok := a.connections[cfg.ID]; ok && (conn.DB != nil || conn.KV != nil) {
 			continue
 		}
-		if err := a.Connect(cfg.ID); err != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", cfg.Name, err))
+		todo = append(todo, pending{id: cfg.ID, name: cfg.Name})
+	}
+	a.connectionsMu.RUnlock()
+
+	var errs []error
+	for _, p := range todo {
+		if err := a.Connect(p.id); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", p.name, err))
 		}
 	}
 	return errs
@@ -239,7 +270,7 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, err.Error())
 		return
 	}
-	resp := a.mcpServer().Handle(body)
+	resp := a.mcpHTTPServerFor().Handle(body)
 	w.Header().Set("Content-Type", "application/json")
 	if resp == nil {
 		// A notification: the protocol says the answer is an empty 202.

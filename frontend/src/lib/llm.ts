@@ -58,9 +58,11 @@ export async function SaveLlmConfig(config: LlmConfig): Promise<void> {
   await post('/api/llm/config', { config, save: true });
 }
 
-// AskLlm asks the assistant and returns its answer.
-export async function AskLlm(question: string): Promise<string> {
-  const res = await post('/api/llm/ask', { question });
+// AskLlm asks the assistant and returns its answer. The signal lets the panel
+// cancel a question in flight: the browser drops the connection, and the
+// backend's request context ends with it.
+export async function AskLlm(question: string, signal?: AbortSignal): Promise<string> {
+  const res = await post('/api/llm/ask', { question }, { signal });
   return (res?.answer ?? '') as string;
 }
 

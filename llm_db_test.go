@@ -74,7 +74,7 @@ func TestLLMReachesTheDatabaseThroughTheTools(t *testing.T) {
 	}
 	ClearLLMHistory()
 
-	answer, err := a.AskLLM("what is in parts?")
+	answer, err := a.AskLLM(context.Background(), "what is in parts?")
 	if err != nil {
 		t.Fatalf("ask: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestLLMWithNoConnections(t *testing.T) {
 	if err := SaveLLMConfig(llm.Config{Provider: "openai", BaseURL: srv.URL, APIKey: "k", Model: "m", Enabled: true}); err != nil {
 		t.Fatalf("save config: %v", err)
 	}
-	answer, err := a.AskLLM("what can you see?")
+	answer, err := a.AskLLM(context.Background(), "what can you see?")
 	if err != nil {
 		t.Fatalf("ask: %v", err)
 	}
@@ -187,10 +187,10 @@ func TestLLMRemembersTheConversation(t *testing.T) {
 	}
 	ClearLLMHistory()
 
-	if _, err := a.AskLLM("one"); err != nil {
+	if _, err := a.AskLLM(context.Background(), "one"); err != nil {
 		t.Fatalf("ask: %v", err)
 	}
-	if _, err := a.AskLLM("two"); err != nil {
+	if _, err := a.AskLLM(context.Background(), "two"); err != nil {
 		t.Fatalf("ask: %v", err)
 	}
 	history := LLMHistory()

@@ -15,6 +15,7 @@ import {
   SaveLlmConfig,
   defaultLlmConfig,
 } from '../lib/llm';
+import type { ConfirmRequestSpec } from './ConfirmDialog';
 
 // The AI assistant panel: a question, an answer, and the provider settings.
 //
@@ -24,9 +25,12 @@ import {
 
 interface AiPanelProps {
   onClose: () => void;
+  // The app's ConfirmDialog bridge (P1-16): destructive actions answer through
+  // it, never through window.confirm.
+  confirm: (request: ConfirmRequestSpec) => Promise<boolean>;
 }
 
-const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
+const AiPanel: React.FC<AiPanelProps> = ({ onClose, confirm }) => {
   const [messages, setMessages] = useState<LlmMessage[]>([]);
   const [question, setQuestion] = useState('');
   const [busy, setBusy] = useState(false);
@@ -35,7 +39,11 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
   const [config, setConfig] = useState<LlmConfig>(defaultLlmConfig);
   const [providers, setProviders] = useState<LlmProvider[]>([]);
   const [proposals, setProposals] = useState<LlmProposal[]>([]);
+  // The proposal currently being accepted or rejected, so a double click cannot
+  // send the same one twice and meet the backend's "no longer waiting" error.
+  const [actingId, setActingId] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const askAbort = useRef<AbortController | null>(null);
 
   useEffect(() => {
     LoadLlmHistory()
@@ -67,22 +75,34 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
   }, [messages]);
 
   const accept = async (id: string) => {
+    if (actingId) return;
     setError('');
-    const result = await AcceptLlmProposal(id).catch(e => ({ error: (e as Error).message }));
-    await refreshProposals();
-    if (result.error) {
-      setError(result.error);
-      return;
+    setActingId(id);
+    try {
+      const result = await AcceptLlmProposal(id).catch(e => ({ error: (e as Error).message }));
+      await refreshProposals();
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      setMessages(current => [
+        ...current,
+        { role: 'assistant', content: `已执行你确认的语句。` },
+      ]);
+    } finally {
+      setActingId(null);
     }
-    setMessages(current => [
-      ...current,
-      { role: 'assistant', content: `已执行你确认的语句。` },
-    ]);
   };
 
   const reject = async (id: string) => {
-    await RejectLlmProposal(id).catch(() => {});
-    await refreshProposals();
+    if (actingId) return;
+    setActingId(id);
+    try {
+      await RejectLlmProposal(id).catch(() => {});
+      await refreshProposals();
+    } finally {
+      setActingId(null);
+    }
   };
 
   const ask = async () => {
@@ -92,17 +112,28 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
     setError('');
     setMessages(current => [...current, { role: 'user', content: text }]);
     setBusy(true);
+    const controller = new AbortController();
+    askAbort.current = controller;
     try {
-      const answer = await AskLlm(text);
+      const answer = await AskLlm(text, controller.signal);
       setMessages(current => [...current, { role: 'assistant', content: answer }]);
     } catch (e) {
-      setError((e as Error).message);
+      if (controller.signal.aborted) {
+        // The user cancelled: the question stays in the log with a visible
+        // answer slot, so it does not read like a silently dropped turn.
+        setMessages(current => [...current, { role: 'assistant', content: '（已取消）' }]);
+      } else {
+        setError((e as Error).message);
+      }
     } finally {
+      if (askAbort.current === controller) askAbort.current = null;
       setBusy(false);
       // The model may have proposed a statement while it was answering.
       await refreshProposals();
     }
   };
+
+  const cancelAsk = () => askAbort.current?.abort();
 
   const clear = async () => {
     await ClearLlmHistory().catch(() => {});
@@ -146,7 +177,14 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
           <button
             className="text-secondary hover:text-ink p-1"
             onClick={() => {
-              if (window.confirm('确定清空全部对话记录吗？此操作不可恢复。')) clear();
+              void confirm({
+                title: '清空对话',
+                message: '确定清空全部对话记录吗？此操作不可恢复。',
+                confirmLabel: '清空',
+                destructive: true,
+              }).then(ok => {
+                if (ok) clear();
+              });
             }}
             title="清空对话"
             aria-label="清空对话"
@@ -265,14 +303,16 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
               <pre className="text-2xs text-ink whitespace-pre-wrap break-words mb-1.5">{p.sql}</pre>
               <div className="flex items-center gap-1">
                 <button
-                  className="px-2 py-0.5 rounded text-2xs bg-success text-on-success hover:bg-success-hover"
+                  className="px-2 py-0.5 rounded text-2xs bg-success text-on-success hover:bg-success-hover disabled:opacity-40"
                   onClick={() => accept(p.id)}
+                  disabled={!!actingId}
                 >
                   执行
                 </button>
                 <button
-                  className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink"
+                  className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
                   onClick={() => reject(p.id)}
+                  disabled={!!actingId}
                 >
                   放弃
                 </button>
@@ -301,12 +341,12 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose }) => {
           />
           <button
             className="flex items-center justify-center w-7 h-7 rounded bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40 shrink-0"
-            onClick={ask}
-            disabled={busy || !question.trim()}
-            title="发送"
-            aria-label="发送问题"
+            onClick={busy ? cancelAsk : ask}
+            disabled={!busy && !question.trim()}
+            title={busy ? '取消' : '发送'}
+            aria-label={busy ? '取消提问' : '发送问题'}
           >
-            <FiSend size={12} />
+            {busy ? <FiX size={12} /> : <FiSend size={12} />}
           </button>
         </div>
       </div>

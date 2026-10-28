@@ -242,3 +242,30 @@ func TestImportHeaderlessIntoExistingTableMapsByPosition(t *testing.T) {
 		t.Fatalf("rows = %+v, want 3|carol", r)
 	}
 }
+
+// The multi-row INSERT sends rows×cols placeholders, so the batch must shrink
+// on a wide table: SQL Server's 2100 would reject a 200×100 batch outright,
+// and with skipErrors that failure drops the whole chunk.
+func TestImportBatchForStaysUnderParameterCap(t *testing.T) {
+	cases := []struct {
+		dbType string
+		cols   int
+		want   int
+	}{
+		{"sqlite", 2, importBatchSize},     // 32766/2 ≫ 200
+		{"sqlite", 100, 200},               // 32766/100 = 327 > 200
+		{"mysql", 100, importBatchSize},    // 65535/100 > 200
+		{"postgresql", 400, 163},           // 65535/400
+		{"sqlserver", 10, importBatchSize}, // 2100/10 = 210, capped at 200
+		{"sqlserver", 100, 21},             // the case the old constant broke
+		{"sqlserver", 2500, 1},             // floor at one row per statement
+		{"oracle", 1, 1},                   // no multi-row VALUES at all
+		{"unknown-engine", 1000, 2},        // 2100/1000
+		{"sqlite", 0, 1},                   // degenerate: never divide by zero
+	}
+	for _, tc := range cases {
+		if got := importBatchFor(tc.dbType, tc.cols); got != tc.want {
+			t.Errorf("importBatchFor(%s, %d) = %d, want %d", tc.dbType, tc.cols, got, tc.want)
+		}
+	}
+}

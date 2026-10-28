@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/dbcore/dbcore"
@@ -89,7 +90,11 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 		}
 		erTable, err := erTableOf(ctx, drv, schema, t)
 		if err != nil {
-			return ERSchema{}, err
+			// One unreadable table (a dropped-in-flight object, a permission
+			// gap) must not throw away the whole diagram — the same discipline
+			// the data search follows: record, skip, keep going.
+			log.Printf("er: skipping %s: %v", t.Name, err)
+			continue
 		}
 		tables = append(tables, erTable)
 	}

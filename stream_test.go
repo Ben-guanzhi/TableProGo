@@ -67,6 +67,33 @@ func TestStreamMarksTruncationAndStopsAtLimit(t *testing.T) {
 	}
 }
 
+// A statement carrying a LIMIT of its own runs untouched: the configured cap
+// must neither cut it nor leave it marked untruncated at a smaller count (the
+// buffered path's rule, which the stream path used to contradict).
+func TestStreamOwnLimitRunsUntouched(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	for i := 3; i <= 12; i++ {
+		q := "INSERT INTO t(id,name) VALUES (" + strconv.Itoa(i) + ",'x')"
+		if r := app.ExecuteQuery("c1", q, ""); r.Error != "" {
+			t.Fatalf("seed: %s", r.Error)
+		}
+	}
+	app.settings.ResultLimit = 5
+
+	events := collectStream(t, app, "SELECT id FROM t ORDER BY id LIMIT 8")
+	done := events[len(events)-1]
+	if done.Type != "done" || done.RowCount != 8 || done.Truncated {
+		t.Fatalf("done = %+v, want rowCount=8, truncated=false", done)
+	}
+	rows := 0
+	for _, ev := range events {
+		rows += len(ev.Rows)
+	}
+	if rows != 8 {
+		t.Fatalf("streamed %d rows, want 8", rows)
+	}
+}
+
 func TestStreamBatchesLargeResults(t *testing.T) {
 	app, _ := newTestAppWithSQLite(t, safeModeOff)
 	if r := app.ExecuteQuery("c1", "CREATE TABLE big(id INTEGER)", ""); r.Error != "" {

@@ -94,6 +94,13 @@ func (c *Connection) closeKV() {
 	}
 }
 
+// kvCallTimeout bounds one KV call. The calls run under kvMu, and Redis has no
+// statement timeout of its own, so a hung server used to hold the lock — and
+// every KV request on this connection — forever, with no cancel path either.
+// The window fits a bounded SCAN walk with room to spare; a raw command that
+// genuinely needs longer reports a timeout instead of wedging the connection.
+const kvCallTimeout = 60 * time.Second
+
 // withKV runs fn on the requested logical database. SELECT is session state on
 // the shared client, so the switch and the command it serves happen under one
 // lock: two panels reading different databases can never interleave.
@@ -108,13 +115,15 @@ func (a *App) withKV(conn *Connection, database string, fn func(context.Context,
 
 	conn.kvMu.Lock()
 	defer conn.kvMu.Unlock()
+	ctx, done := context.WithTimeout(context.Background(), kvCallTimeout)
+	defer done()
 	if !conn.kvDBSet || conn.kvDB != idx {
-		if err := conn.KV.SelectDB(context.Background(), idx); err != nil {
+		if err := conn.KV.SelectDB(ctx, idx); err != nil {
 			return err
 		}
 		conn.kvDB, conn.kvDBSet = idx, true
 	}
-	return fn(context.Background(), conn.KV)
+	return fn(ctx, conn.KV)
 }
 
 // redisKeys lists the keys of one logical database. SCAN may repeat a key and

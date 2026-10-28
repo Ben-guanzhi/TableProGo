@@ -152,6 +152,18 @@ func errResponse(id json.RawMessage, code int, message string) *response {
 	return &response{JSONRPC: "2.0", ID: id, Error: &rpcError{Code: code, Message: message}}
 }
 
+// errNotInitialized is the JSON-RPC code the MCP spec assigns to a tool call
+// that skips the handshake.
+const errNotInitialized = -32002
+
+// ready reports the handshake state. The comment on `initialized` promised this
+// refusal; without the check the field was write-only.
+func (s *Server) ready() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.initialized
+}
+
 // Handle processes one JSON-RPC request. A notification (no id) returns nil: the
 // protocol says not to answer those.
 func (s *Server) Handle(raw []byte) []byte {
@@ -191,8 +203,14 @@ func (s *Server) handle(req *request) *response {
 		}
 		return nil
 	case "tools/list":
+		if !s.ready() {
+			return errResponse(req.ID, errNotInitialized, "Server not initialized")
+		}
 		return &response{JSONRPC: "2.0", ID: req.ID, Result: map[string]interface{}{"tools": s.tools()}}
 	case "tools/call":
+		if !s.ready() {
+			return errResponse(req.ID, errNotInitialized, "Server not initialized")
+		}
 		return s.callTool(req)
 	default:
 		if len(req.ID) == 0 {

@@ -110,6 +110,13 @@ const commentMap = (columns: ColumnInfo[]) => {
 
 const objectKey = (ref: TableRef) => `${ref.connId}|${ref.database}|${ref.schema}|${ref.table}`;
 
+// New tab ids: Date.now() alone collides when two tabs appear in the same
+// millisecond (a double click on "new tab"), which would corrupt the React keys
+// and make switchToTab land on the wrong tab. The counter keeps ids unique
+// within the process.
+let tabIdSeq = 0;
+const newTabId = () => `tab_${Date.now()}_${++tabIdSeq}`;
+
 const objectQualifier = (ref: TableRef, dbType?: string) => {
   if (dbType === 'mysql') return ref.database;
   if (ref.schema) return `${ref.database}.${ref.schema}`;
@@ -316,7 +323,7 @@ function App() {
 
   const handleNewTab = () => {
     const newTab: Tab = {
-      id: `tab_${Date.now()}`,
+      id: newTabId(),
       title: `Query ${tabs.length + 1}`,
       query: '',
       database: tabDatabase(),
@@ -364,6 +371,27 @@ function App() {
           return {};
         });
       commentCache.current.set(key, pending);
+    }
+    return pending;
+  };
+
+  // Column comments of one table are static metadata, and the comments effect
+  // re-runs on every tabs change (every keystroke, every streamed batch) while
+  // the tab has none: without a cache a comment-less table would refetch
+  // GetColumns on each of those. Same shape as commentCache, keyed by object.
+  const tableCommentCache = useRef(new Map<string, Promise<Record<string, string>>>());
+
+  const tableComments = (ref: TableRef): Promise<Record<string, string>> => {
+    const key = `${ref.connId}|${ref.database}|${ref.schema}|${ref.table}`;
+    let pending = tableCommentCache.current.get(key);
+    if (!pending) {
+      pending = GetColumns(ref.connId, ref.database, ref.schema, ref.table)
+        .then(cols => commentMap(cols as unknown as ColumnInfo[]))
+        .catch(() => {
+          tableCommentCache.current.delete(key);
+          return {};
+        });
+      tableCommentCache.current.set(key, pending);
     }
     return pending;
   };
@@ -423,6 +451,25 @@ function App() {
       return;
     }
     setActiveTab(tabId);
+  };
+
+  // The object page's data grid also dies on a reload (page flip, filter edit,
+  // refresh) and on a section change, and its edit queue dies with it. Those
+  // paths warn the same way a tab switch does, so no door out of the grid is
+  // silent about the loss.
+  const confirmDiscardPending = (tabId: string, proceed: () => void) => {
+    const waiting = pendingEdits.current.get(tabId) ?? 0;
+    if (waiting > 0) {
+      setConfirmReq({
+        title: '丢弃未应用的改动',
+        message: `当前网格还有 ${waiting} 处改动没有写入数据库，继续后它们会直接丢掉。`,
+        confirmLabel: '丢弃并继续',
+        destructive: true,
+        onConfirm: proceed,
+      });
+      return;
+    }
+    proceed();
   };
 
   // The keyring fallback is silent on the backend side by design; surface it
@@ -525,14 +572,11 @@ function App() {
 
     const ref = tab?.kind === 'table' ? tab.tableRef : undefined;
     if (ref && tab?.data?.data && !tab.comments) {
-      GetColumns(ref.connId, ref.database, ref.schema, ref.table)
-        .then(cols => {
-          const comments = commentMap(cols as unknown as ColumnInfo[]);
-          if (Object.keys(comments).length) {
-            setTabs(current => current.map(t => (t.id === tab.id ? { ...t, comments } : t)));
-          }
-        })
-        .catch(() => {});
+      tableComments(ref).then(comments => {
+        if (Object.keys(comments).length) {
+          setTabs(current => current.map(t => (t.id === tab.id ? { ...t, comments } : t)));
+        }
+      });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.showColumnComments, activeTab, tabs]);
@@ -662,7 +706,7 @@ function App() {
       return;
     }
     const tab: Tab = {
-      id: `tab_${Date.now()}`,
+      id: newTabId(),
       title: label,
       query: '',
       database: table.database,
@@ -745,7 +789,7 @@ function App() {
       return;
     }
     const tab: Tab = {
-      id: `tab_${Date.now()}`,
+      id: newTabId(),
       title: label,
       query: '',
       database: ref.database,
@@ -811,7 +855,7 @@ function App() {
     }
     const qualifier = ref.schema ? `${ref.database}.${ref.schema}` : ref.database;
     const tab: Tab = {
-      id: `tab_${Date.now()}`,
+      id: newTabId(),
       title: `ER ${qualifier}`,
       query: '',
       database: ref.database,
@@ -833,7 +877,7 @@ function App() {
       return;
     }
     const tab: Tab = {
-      id: `tab_${Date.now()}`,
+      id: newTabId(),
       title: '结构对比',
       query: '',
       isDirty: false,
@@ -858,6 +902,16 @@ function App() {
   };
 
   const handleObjectSectionChange = (tab: Tab, section: ObjectSection) => {
+    // Leaving the data section unmounts the grid and its edit queue; ask the
+    // same question a tab switch asks when something is still unapplied.
+    if ((tab.section ?? 'data') === 'data' && section !== 'data') {
+      confirmDiscardPending(tab.id, () => applyObjectSectionChange(tab, section));
+      return;
+    }
+    applyObjectSectionChange(tab, section);
+  };
+
+  const applyObjectSectionChange = (tab: Tab, section: ObjectSection) => {
     const needDefault = section === 'query' && !tab.objectQuery;
     setTabs(current => current.map(t => (t.id === tab.id ? { ...t, section } : t)));
     if (needDefault) {
@@ -878,7 +932,12 @@ function App() {
 
   const handleObjectRefresh = (tab: Tab) => {
     const section = tab.section ?? 'data';
-    if (section !== 'query') loadObjectSection(tab, section);
+    if (section === 'query') return;
+    if (section === 'data') {
+      confirmDiscardPending(tab.id, () => loadObjectSection(tab, section));
+      return;
+    }
+    loadObjectSection(tab, section);
   };
 
   const handleObjectExecute = async (tab: Tab) => {
@@ -930,7 +989,7 @@ function App() {
       await ClearHistory({ connId: ref.connId, database: ref.database, table: ref.table });
       loadObjectSection(tab, 'history');
     } catch (error) {
-      console.error('Failed to clear history:', error);
+      toast.error(`清空历史失败：${(error as Error).message}`, { duration: 8000 });
     }
   };
 
@@ -1012,7 +1071,7 @@ function App() {
 
     if (!editorTab) {
       const newTab: Tab = {
-        id: `tab_${Date.now()}`,
+        id: newTabId(),
         title: `Query ${tabs.length + 1}`,
         query: `SELECT * FROM ${text}`,
         database: tabDatabase(),
@@ -1029,7 +1088,7 @@ function App() {
   // A DDL statement makes every name-level cache for that connection wrong, so
   // it goes with the connection rather than being patched one entry at a time.
   const invalidateCatalog = (connId: string) => {
-    for (const cache of [tableCache, columnCache, commentCache]) {
+    for (const cache of [tableCache, columnCache, commentCache, tableCommentCache]) {
       for (const key of [...cache.current.keys()]) {
         if (key.split('|')[0] === connId) cache.current.delete(key);
       }
@@ -1040,7 +1099,7 @@ function App() {
     tabs.find(t => t.kind === 'table' && t.tableRef && objectKey(t.tableRef) === objectKey(ref));
 
   const handleRenameObject = async (ref: TableRef, newName: string) => {
-    await RunTableAction(ref, 'rename', newName);
+    await RunTableAction(ref, 'rename', newName, confirmDestructive);
     invalidateCatalog(ref.connId);
     const open = objectTabFor(ref);
     if (!open) return;
@@ -1060,7 +1119,7 @@ function App() {
   // The object is gone, so the tab has nothing left to show; the tree loses the
   // node when the sidebar refetches the branch.
   const handleDropObject = async (ref: TableRef) => {
-    await RunTableAction(ref, 'drop');
+    await RunTableAction(ref, 'drop', '', confirmDestructive);
     invalidateCatalog(ref.connId);
     const open = objectTabFor(ref);
     if (!open) return;
@@ -1072,7 +1131,7 @@ function App() {
   // Rows were pulled out from under the grid; its queue is keyed to them, so it
   // is reloaded rather than left showing data that no longer exists.
   const handleTruncateObject = async (ref: TableRef) => {
-    await RunTableAction(ref, 'truncate');
+    await RunTableAction(ref, 'truncate', '', confirmDestructive);
     const open = objectTabFor(ref);
     if (open && (open.section ?? 'data') === 'data') loadObjectSection(open, 'data');
   };
@@ -1112,7 +1171,7 @@ function App() {
   // and columns are the user's to decide.
   const handleNewTable = async (target: NewTableTarget) => {
     const tab: Tab = {
-      id: `tab_${Date.now()}`,
+      id: newTabId(),
       title: '新建表',
       query: await GetCreateTableTemplate(target.dbType, target.schema),
       database: target.database,
@@ -1159,7 +1218,14 @@ function App() {
   // The backend re-reads the filter from the saved config, so an open
   // connection picks it up on its next refresh without reconnecting.
   const handleSaveDatabaseFilter = async (connection: Connection, filter: DatabaseFilter) => {
-    await UpdateConnection({ ...connection, password: connection.password ?? '', databaseFilter: filter });
+    try {
+      await UpdateConnection({ ...connection, password: connection.password ?? '', databaseFilter: filter });
+    } catch (error) {
+      // The dialog stays open on a failed save: the filter the user typed is
+      // still there, and the toast explains why nothing happened.
+      toast.error(`保存筛选失败：${(error as Error).message}`, { duration: 8000 });
+      throw error;
+    }
     await loadConnections();
     // The tab's database picker keeps its own copy of the server list, which
     // would otherwise still offer the databases the navigator just hid.
@@ -1181,7 +1247,7 @@ function App() {
       }
       await loadConnections();
     } catch (error) {
-      console.error('Failed to delete connection:', error);
+      toast.error(`删除连接失败：${(error as Error).message}`, { duration: 8000 });
     }
   };
 
@@ -1448,11 +1514,17 @@ function App() {
               dataPage={activeTabData.dataPage ?? 1}
               dataPageSize={activeTabData.dataPageSize ?? DEFAULT_PAGE_SIZE}
               onDataPage={page =>
-                showDataPage(activeTabData, page, activeTabData.dataPageSize ?? DEFAULT_PAGE_SIZE)
+                confirmDiscardPending(activeTabData.id, () =>
+                  showDataPage(activeTabData, page, activeTabData.dataPageSize ?? DEFAULT_PAGE_SIZE)
+                )
               }
-              onDataPageSize={size => showDataPage(activeTabData, 1, size)}
+              onDataPageSize={size =>
+                confirmDiscardPending(activeTabData.id, () => showDataPage(activeTabData, 1, size))
+              }
               dataFilters={activeTabData.dataFilters ?? []}
-              onDataFilters={filters => showDataFilters(activeTabData, filters)}
+              onDataFilters={filters =>
+                confirmDiscardPending(activeTabData.id, () => showDataFilters(activeTabData, filters))
+              }
               structure={activeTabData.structure ?? { loading: false }}
               history={activeTabData.history ?? { loading: false }}
               comments={activeTabData.comments}
@@ -1482,6 +1554,7 @@ function App() {
               onDismissError={section => clearObjectSection(activeTabData.id, section)}
               onUseStatement={sql => handleUseStatement(activeTabData, sql)}
               onClearHistory={() => handleClearHistory(activeTabData)}
+              confirm={askConfirm}
               queryPage={
                 <ObjectQueryPage
                   sql={activeTabData.objectQuery ?? ''}
@@ -1551,7 +1624,10 @@ function App() {
                   ref={editorRef}
                   query={activeTabData.query}
                   onQueryChange={(query) => {
-                    setTabs(tabs.map(tab =>
+                    // Functional form: a keystroke landing in the same batch as
+                    // a streaming partial result must build on that result's
+                    // tab state, not on the stale snapshot this closure holds.
+                    setTabs(current => current.map(tab =>
                       tab.id === activeTab
                         ? { ...tab, query, isDirty: true }
                         : tab
@@ -1624,12 +1700,14 @@ function App() {
             <div className="flex-1 flex items-center justify-center text-muted">
               <div className="text-center">
                 <p className="text-2xl mb-2">TablePro Go</p>
-                <p className="text-sm">Create a new query tab to get started</p>
+                <p className="text-sm">新建一个查询标签页开始使用</p>
               </div>
             </div>
           )}
         </div>
       </div>
+
+      {showAiPanel && <AiPanel onClose={() => setShowAiPanel(false)} confirm={askConfirm} />}
 
       {showConnectionDialog && (
         <ConnectionDialog

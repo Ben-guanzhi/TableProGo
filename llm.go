@@ -98,8 +98,9 @@ func ClearLLMHistory() {
 // The model is given the MCP tools and a runner that executes them against this
 // app's connections — the same ones the user has open. A question with no
 // connection open is answered from the model's own knowledge, with the tools
-// simply failing.
-func (a *App) AskLLM(question string) (string, error) {
+// simply failing. The context comes from the HTTP request, so a cancelled
+// question stops paying for the answer nobody will read.
+func (a *App) AskLLM(ctx context.Context, question string) (string, error) {
 	question = strings.TrimSpace(question)
 	if question == "" {
 		return "", fmt.Errorf("ask something")
@@ -114,7 +115,7 @@ func (a *App) AskLLM(question string) (string, error) {
 
 	tools := a.llmTools()
 	runner := a.llmRunner()
-	resp, err := client.Ask(context.Background(), llmSystemPrompt, append(history, llm.Message{Role: "user", Content: question}), tools, runner)
+	resp, err := client.Ask(ctx, llmSystemPrompt, append(history, llm.Message{Role: "user", Content: question}), tools, runner)
 	if err != nil {
 		return "", err
 	}

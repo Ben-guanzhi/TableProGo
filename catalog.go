@@ -117,7 +117,9 @@ func (a *App) GetDatabases(connID string) ([]string, error) {
 		return nil, nil
 	}
 
-	rows, err := conn.DB.Query(query)
+	ctx, done := a.beginRun(connID)
+	defer done()
+	rows, err := conn.DB.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -632,6 +634,12 @@ func (a *App) extraStructureMetadata(conn *Connection, database, schema, table, 
 // PostgreSQL and SQLite already report the full type through GetColumns;
 // MSSQL and Oracle report bare type names, which would build invalid DDL.
 func fullColumnTypes(conn *Connection, database, schema, table string) map[string]string {
+	if conn.DB == nil {
+		// A plugin-backed connection has no *sql.DB (its driver lives in the
+		// plugin process): fall back to the type names GetColumns already
+		// reported instead of panicking on the nil handle.
+		return nil
+	}
 	db := conn.DB
 	query, args, err := tableprosql.FullColumnTypesQuery(conn.Type, database, schema, table)
 	if err != nil || query == "" {

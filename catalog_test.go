@@ -165,3 +165,13 @@ func TestOraLiteralEscapesSingleQuotes(t *testing.T) {
 		}
 	}
 }
+
+// A plugin-backed connection holds no *sql.DB, and the structure page reaches
+// fullColumnTypes for every object: the nil handle must fall back to the type
+// names GetColumns already reported, not panic the request.
+func TestFullColumnTypesNilDBForPluginConnection(t *testing.T) {
+	conn := &Connection{ID: "c1", Type: "mysql"}
+	if got := fullColumnTypes(conn, "erp", "", "users"); got != nil {
+		t.Fatalf("fullColumnTypes on a plugin connection = %v, want nil", got)
+	}
+}

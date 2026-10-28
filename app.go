@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"sync/atomic"
+	"tablepro-go/internal/mcp"
 	"tablepro-go/internal/txn"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -63,6 +64,13 @@ type App struct {
 	// server is read-only: an unattended write path is exactly what it refuses.
 	mcpConfirmerMu sync.Mutex
 	mcpConfirmer   func(connName, sql string) bool
+	// mcpHTTPServer is the HTTP transport's persistent server: the initialized
+	// handshake must outlive one request for tools/list to be answerable. It is
+	// rebuilt when the settings it was built from change.
+	mcpHTTPMu      sync.Mutex
+	mcpHTTPServer  *mcp.Server
+	mcpHTTPMaxRows int
+	mcpHTTPWrites  bool
 
 	// txSessions is the interactive transaction each tab holds (txn.go). Keyed by
 	// tab id so two tabs on one connection keep separate transactions.

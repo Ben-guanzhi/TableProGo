@@ -125,10 +125,12 @@ func (a *App) StreamQuery(ctx context.Context, connID, query, database string, e
 		if err := rows.Scan(ptrs...); err != nil {
 			return a.finishStream(connID, database, query, start, err, emitted, false, emit)
 		}
-		if limit > 0 && emitted+len(batch) >= limit {
-			// The extra row is a probe only when the cap is ours; stop here and
-			// mark the result as cut.
-			truncated = probe != query
+		if limit > 0 && probe != query && emitted+len(batch) >= limit {
+			// The cap is ours (the probe added it): stop one past the limit and
+			// mark the result as cut. A statement carrying a LIMIT of its own
+			// runs untouched — same rule as the buffered path, which never cuts
+			// or marks it.
+			truncated = true
 			break
 		}
 		row := make([]interface{}, len(values))

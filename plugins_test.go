@@ -5,6 +5,7 @@ package main
 // child process answers, and the catalog and query paths work unchanged.
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,13 +74,15 @@ func main() {
 						{Name: "label", Type: "TEXT", Nullable: true},
 					}, "", "")
 				case "browse":
+					var params plugindriver.ConnBrowseParams
+					_ = json.Unmarshal(req.Params, &params)
 					send(plugindriver.ConnQueryResult{
 						Columns: []plugindriver.ConnColumn{
 							{Name: "id", Type: "INTEGER"},
 							{Name: "label", Type: "TEXT"},
 						},
 						Rows: [][]interface{}{
-							[]interface{}{plugindriver.CellPayload{Kind: "int", Int: 1}, plugindriver.CellPayload{Kind: "text", Text: "first"}},
+							[]interface{}{plugindriver.CellPayload{Kind: "int", Int: 1}, plugindriver.CellPayload{Kind: "text", Text: fmt.Sprintf("first@%d", params.Limit)}},
 							[]interface{}{plugindriver.CellPayload{Kind: "int", Int: 2}, plugindriver.CellPayload{Kind: "text", Text: "second"}},
 						},
 					}, "", "")
@@ -203,6 +206,24 @@ func TestPluginConnectionServesDataPages(t *testing.T) {
 	}
 	if value, ok := page.Rows[1][1].(string); !ok || value != "second" {
 		t.Fatalf("cell = %#v", page.Rows[1][1])
+	}
+}
+
+// An unset preview request is normalized before it reaches a plugin: the child
+// sees the default page size, not a raw 0 (the page contract previewPage states).
+func TestPluginPreviewNormalizesUnsetLimit(t *testing.T) {
+	buildFakeEnginePlugin(t)
+	conn := &Connection{ID: "fake6", Name: "fake", Type: "fakeengine", Database: "main"}
+	defer conn.closePlugin()
+	a := searchApp(conn)
+
+	page := a.Preview(conn.ID, "main", "", "widgets", 0, 0, nil)
+	if page.Error != "" {
+		t.Fatalf("preview: %s", page.Error)
+	}
+	value, ok := page.Rows[0][1].(string)
+	if !ok || value != fmt.Sprintf("first@%d", defaultPreviewRows) {
+		t.Fatalf("cell = %#v, want first@%d", page.Rows[0][1], defaultPreviewRows)
 	}
 }
 

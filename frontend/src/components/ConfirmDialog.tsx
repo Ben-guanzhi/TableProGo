@@ -1,13 +1,19 @@
 import React, { useEffect, useRef } from 'react';
 import { useDialog } from '../dialog';
 
-export interface ConfirmRequest {
+// ConfirmRequestSpec is the description part of a request — what a caller via
+// the promise bridge (askConfirm) supplies. ConfirmRequest adds the callbacks
+// the dialog itself needs.
+export interface ConfirmRequestSpec {
   title: string;
   message: string;
   confirmLabel: string;
   // Destructive requests start on the safe button, so Enter cannot wipe a table
   // by reflex.
   destructive?: boolean;
+}
+
+export interface ConfirmRequest extends ConfirmRequestSpec {
   onConfirm: () => void;
   // onCancel runs on every non-accept exit (button, Escape, overlay click), so
   // callers that bridge this dialog to a promise can resolve false. Callers
