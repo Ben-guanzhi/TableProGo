@@ -50,9 +50,9 @@ function useThemeColors(theme: Theme): Colors {
       canvas: v('--canvas', dark ? '#1b1d23' : '#ffffff'),
       ink: v('--ink', dark ? '#e6e8ec' : '#1e2229'),
       secondary: v('--secondary', dark ? '#a6abb5' : '#505661'),
-      line: v('--line', dark ? '#34374a' : '#dee0e6'),
+      line: v('--line', dark ? '#343741' : '#ded0e6'),
       accent: v('--accent', dark ? '#4c8df6' : '#2562e0'),
-      raised: v('--raised', dark ? '#34374a' : '#e3e5ea'),
+      raised: v('--raised', dark ? '#343741' : '#e3e5ea'),
       muted: v('--muted', dark ? '#8c929d' : '#646a75'),
     };
   }, [theme]);

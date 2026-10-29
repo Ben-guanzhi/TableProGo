@@ -280,7 +280,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                   className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
                   value={config.password}
                   onChange={(e) => setConfig({ ...config, password: e.target.value })}
-                  placeholder={isEdit ? '•••••••• (blank = keep)' : '••••••••'}
+                  placeholder={isEdit ? '••••••••（留空保持不变）' : '••••••••'}
                 />
               </div>
             </>

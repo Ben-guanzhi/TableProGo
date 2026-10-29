@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { useDialog } from '../dialog';
 
 // ConfirmRequestSpec is the description part of a request — what a caller via
@@ -31,7 +31,16 @@ const ConfirmDialog: React.FC<Props> = ({ request, onDismiss }) => {
   const confirmRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  useDialog(panelRef, onDismiss);
+  // Escape goes through the cancel path too: the bridge callers (askConfirm)
+  // resolve their promise from onCancel, and routing Esc straight to
+  // onDismiss left those promises pending forever — the dialog closed and the
+  // caller was frozen waiting for an answer that never came.
+  const dismissWithCancel = useCallback(() => {
+    request.onCancel?.();
+    onDismiss();
+  }, [request, onDismiss]);
+
+  useDialog(panelRef, dismissWithCancel);
 
   useEffect(() => {
     // Destructive requests open on the safe button, so Enter cannot wipe a table

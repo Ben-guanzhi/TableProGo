@@ -606,11 +606,22 @@ const DataGrid: React.FC<DataGridProps> = ({
   // last queued gesture.
   const onGridKeyDown = (e: React.KeyboardEvent) => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+      if (editing) return; // the open cell editor has its own copy
       if (selected.length === 0) return;
       e.preventDefault();
       const lines = selected
         .filter(index => view.includes(index))
-        .map(index => columns.map((_, i) => cellText(rows[index]?.[i]) ?? '').join('\t'));
+        .map(index =>
+          columns
+            .map((col, i) => {
+              // What the user sees: a pending edit overrides the stored cell,
+              // the same ordering duplicateRow uses. Copying raw rows while
+              // unapplied edits sat on screen sent data nobody could see.
+              const pending = queue.updates[index]?.[col.name];
+              return cellText(pending ?? rows[index]?.[i]) ?? '';
+            })
+            .join('\t'),
+        );
       if (lines.length === 0) return;
       void copyText(lines.join('\n')).then(ok =>
         ok

@@ -271,6 +271,9 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   // it runs. The substitution lands in the editor itself, so what runs is
   // exactly what the user sees — the same contract a typed statement has.
   const [paramDialog, setParamDialog] = useState<{ names: string[]; values: Record<string, string> } | null>(null);
+  // 收藏命名对话框（替换原生 window.prompt：不跟随主题、样式突兀），名称
+  // 必填、文件夹可选，一次弹窗而不是两次原生提示。
+  const [favDialog, setFavDialog] = useState<{ name: string; folder: string } | null>(null);
 
   const executeWithParams = () => {
     const sql = viewRef.current?.state.doc.toString() ?? '';
@@ -308,13 +311,19 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
       toast.error('编辑器为空，没有可收藏的语句');
       return;
     }
-    const name = window.prompt('收藏名称', sql.split('\n')[0].slice(0, 50));
-    if (!name) return;
-    // Folder is optional: empty means the ungrouped list. Prompting after the
-    // name keeps the common case (one prompt) unchanged.
-    const folder = window.prompt('收藏文件夹（留空为不分组）', '') ?? '';
+    setFavDialog({ name: sql.split('\n')[0].slice(0, 50), folder: '' });
+  };
+
+  const commitFavDialog = async () => {
+    const sql = viewRef.current?.state.doc.toString().trim() ?? '';
+    const name = favDialog?.name.trim() ?? '';
+    if (!name) {
+      toast.error('收藏名称不能为空');
+      return;
+    }
+    setFavDialog(null);
     try {
-      await AddFavorite('', '', name.trim(), sql, folder.trim());
+      await AddFavorite('', '', name, sql, favDialog?.folder.trim() ?? '');
       toast.success('已收藏');
       refreshFavorites();
     } catch (error) {
@@ -947,6 +956,62 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                   onClick={confirmParams}
                 >
                   替换并执行
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {favDialog && (
+        <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50">
+          <div className="bg-panel rounded-lg w-full max-w-sm shadow-xl" role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+              <h2 className="text-sm font-semibold">收藏查询</h2>
+              <button className="text-secondary hover:text-ink" onClick={() => setFavDialog(null)} aria-label="取消">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <label className="block text-xs text-secondary">
+                <span className="mb-1 block">名称（必填）</span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={favDialog.name}
+                  onChange={e => setFavDialog({ ...favDialog, name: e.target.value })}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void commitFavDialog();
+                    }
+                  }}
+                  className="w-full bg-canvas border border-line-strong rounded px-2 py-1.5 text-xs text-ink focus:outline-none focus:border-accent"
+                />
+              </label>
+              <label className="block text-xs text-secondary">
+                <span className="mb-1 block">文件夹（留空为不分组）</span>
+                <input
+                  type="text"
+                  value={favDialog.folder}
+                  onChange={e => setFavDialog({ ...favDialog, folder: e.target.value })}
+                  className="w-full bg-canvas border border-line-strong rounded px-2 py-1.5 text-xs text-ink focus:outline-none focus:border-accent"
+                />
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded text-xs bg-raised hover:bg-emphasis text-ink"
+                  onClick={() => setFavDialog(null)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded text-xs bg-accent hover:bg-accent-hover text-on-accent"
+                  onClick={() => void commitFavDialog()}
+                >
+                  收藏
                 </button>
               </div>
             </div>
