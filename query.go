@@ -10,7 +10,6 @@ import (
 	"github.com/dbcore/dbcore"
 
 	tableprosql "github.com/dbcore/dbcore/sqltext"
-	"tablepro-go/internal/txn"
 
 	"tablepro-go/internal/catalogmodel"
 
@@ -329,8 +328,8 @@ func (a *App) runQuery(ctx context.Context, tabID, connID, query, database strin
 	// transaction would only be bookkeeping: the statement would go through the
 	// pool in autocommit and commit/rollback would govern nothing.
 	txID := ""
-	if session := a.txSession(tabID); session.Status == txn.Active || session.Status == txn.Failed {
-		txID = session.ID
+	if session := a.txSession(tabID); session.HasTx() {
+		txID = session.TxID()
 	}
 
 	start := time.Now()

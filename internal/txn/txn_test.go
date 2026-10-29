@@ -2,6 +2,7 @@ package txn
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 )
 
@@ -38,7 +39,7 @@ func TestBeginCommitRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Status != Active || s.ID != "txn-app" || s.Database != "app" {
-		t.Fatalf("session = %+v", s)
+		t.Fatalf("session = %+v", *s)
 	}
 	s.Record(nil)
 	s.Record(nil)
@@ -49,7 +50,7 @@ func TestBeginCommitRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Status != None || s.ID != "" {
-		t.Fatalf("after commit = %+v", s)
+		t.Fatalf("after commit = %+v", *s)
 	}
 	if len(op.commits) != 1 || op.commits[0] != "txn-app" {
 		t.Fatalf("commits = %v", op.commits)
@@ -194,4 +195,39 @@ func indexOf(haystack, needle string) int {
 		}
 	}
 	return -1
+}
+
+// Two concurrent statements on one tab (the HTTP layer's worst case: two
+// execute-in-tab requests, or a statement racing a commit) share the Session
+// pointer. The mutex discipline is what keeps that off the race detector —
+// run with -race for the assertion to mean anything.
+func TestSessionConcurrentAccess(t *testing.T) {
+	op := &fakeOpener{}
+	var s Session
+	if err := s.Begin(op, "app"); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = s.Guard("app")
+			s.Record(nil)
+			_ = s.HasTx()
+			_ = s.TxID()
+			_ = s.DatabaseName()
+			_ = s.Describe()
+		}()
+	}
+	wg.Wait()
+	if !s.HasTx() || s.TxID() != "txn-app" {
+		t.Fatalf("after concurrent statements: HasTx=%v id=%q", s.HasTx(), s.TxID())
+	}
+	if err := s.Commit(op); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if s.HasTx() {
+		t.Fatal("session still holds a transaction after commit")
+	}
 }

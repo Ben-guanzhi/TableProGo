@@ -117,7 +117,7 @@ func (o txOpener) Begin(database string) (string, error) {
 }
 
 func (o txOpener) Commit(id string) error {
-	m, err := o.app.txManagerFor(o.conn, o.owner.Database)
+	m, err := o.app.txManagerFor(o.conn, o.owner.DatabaseName())
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (o txOpener) Commit(id string) error {
 }
 
 func (o txOpener) Rollback(id string) error {
-	m, err := o.app.txManagerFor(o.conn, o.owner.Database)
+	m, err := o.app.txManagerFor(o.conn, o.owner.DatabaseName())
 	if err != nil {
 		return err
 	}
@@ -155,10 +155,10 @@ func (a *App) forgetSession(tabID string) {
 	s, ok := a.txSessions[tabID]
 	delete(a.txSessions, tabID)
 	a.txSessionsMu.Unlock()
-	if !ok || s.Status == txn.None {
+	if !ok || !s.HasTx() {
 		return
 	}
-	conn, err := a.connection(s.ConnID)
+	conn, err := a.connection(s.ConnectionID())
 	if err != nil {
 		return
 	}
@@ -194,7 +194,7 @@ func (a *App) BeginTransaction(connID, tabID, database string) (string, error) {
 		database = conn.Database
 	}
 	s := a.sessionOf(tabID)
-	s.ConnID = connID
+	s.BindConnection(connID)
 	opener := txOpener{app: a, conn: conn, owner: s}
 	if err := s.Begin(opener, database); err != nil {
 		return "", err

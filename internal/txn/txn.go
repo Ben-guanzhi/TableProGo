@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // Status is what the UI shows for a tab's transaction.
@@ -32,7 +33,15 @@ const (
 
 // Session is the transaction one tab has open. The zero value is a tab in
 // autocommit, which is the common case.
+//
+// The Session pointer is shared between the query paths and the transaction
+// endpoints (two concurrent statements on one tab, or a commit arriving while
+// one runs), so every mutation and hot-path read goes through the mutex —
+// the methods below lock it; the exported fields remain for tests and must
+// not be read by concurrent production code.
 type Session struct {
+	mu sync.Mutex
+
 	Status Status
 	ID     string
 	// ConnID is the connection the transaction was opened on; the client needs it
@@ -46,6 +55,44 @@ type Session struct {
 	Statements int
 	// Err is the statement error that failed the transaction.
 	Err string
+}
+
+// HasTx reports whether a transaction is open or aborted. Both states keep the
+// transaction id: the engine decides what a statement or commit against an
+// aborted transaction does.
+func (s *Session) HasTx() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Status == Active || s.Status == Failed
+}
+
+// TxID returns the open transaction's id ("" when none).
+func (s *Session) TxID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ID
+}
+
+// ConnectionID returns the connection the transaction was opened on.
+func (s *Session) ConnectionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ConnID
+}
+
+// BindConnection records which connection the tab's transaction lives on,
+// before Begin.
+func (s *Session) BindConnection(connID string) {
+	s.mu.Lock()
+	s.ConnID = connID
+	s.mu.Unlock()
+}
+
+// DatabaseName returns the database the transaction is bound to.
+func (s *Session) DatabaseName() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Database
 }
 
 // Opener is what the client must provide: the three calls that reach dbcore.
@@ -66,13 +113,18 @@ var ErrDatabaseMismatch = errors.New("the open transaction belongs to another da
 // is refused rather than silently nesting: SQL has no nested transactions, and a
 // second Begin would leak the first.
 func (s *Session) Begin(open Opener, database string) error {
+	s.mu.Lock()
 	if s.Status == Active || s.Status == Failed {
+		s.mu.Unlock()
 		return fmt.Errorf("this tab already has an open transaction; commit or roll it back first")
 	}
+	s.mu.Unlock()
 	id, err := open.Begin(database)
 	if err != nil {
 		return err
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.Status = Active
 	s.ID = id
 	s.Database = database
@@ -84,25 +136,31 @@ func (s *Session) Begin(open Opener, database string) error {
 // Commit finalizes. A failed transaction can still be committed (the engine
 // decides what survives); it is the user's explicit choice.
 func (s *Session) Commit(open Opener) error {
+	s.mu.Lock()
 	if s.Status != Active && s.Status != Failed {
+		s.mu.Unlock()
 		return ErrNotActive
 	}
 	id := s.ID
 	// Reset before the round trip: whatever the server says, this tab no longer
 	// holds an open transaction, and retrying a half-committed one is worse than
 	// reporting the error.
-	s.reset()
+	s.resetLocked()
+	s.mu.Unlock()
 	return open.Commit(id)
 }
 
 // Rollback discards. It is always allowed, including after a failure — that is the
 // only way out of an aborted transaction.
 func (s *Session) Rollback(open Opener) error {
+	s.mu.Lock()
 	if s.Status != Active && s.Status != Failed {
+		s.mu.Unlock()
 		return ErrNotActive
 	}
 	id := s.ID
-	s.reset()
+	s.resetLocked()
+	s.mu.Unlock()
 	return open.Rollback(id)
 }
 
@@ -115,6 +173,8 @@ func (s *Session) Rollback(open Opener) error {
 // paths pass when the tab's picker is untouched. It is folded onto the session's
 // database so the common case is not a mismatch.
 func (s *Session) Guard(database string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Status != Active && s.Status != Failed {
 		return nil
 	}
@@ -133,6 +193,8 @@ func (s *Session) Guard(database string) error {
 // Record counts a statement that ran inside the transaction and, when it failed,
 // marks the session aborted so the UI stops offering more statements.
 func (s *Session) Record(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Status != Active {
 		return
 	}
@@ -143,9 +205,9 @@ func (s *Session) Record(err error) {
 	}
 }
 
-// reset returns the session to autocommit. ConnID is kept: it identifies the tab's
-// connection, not the transaction.
-func (s *Session) reset() {
+// resetLocked returns the session to autocommit; the caller holds mu.
+// ConnID is kept: it identifies the tab's connection, not the transaction.
+func (s *Session) resetLocked() {
 	s.Status = None
 	s.ID = ""
 	s.Database = ""
@@ -155,6 +217,8 @@ func (s *Session) reset() {
 
 // Describe is the one-line status the UI shows next to the editor.
 func (s *Session) Describe() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	switch s.Status {
 	case Active:
 		return fmt.Sprintf("事务中 · %d 条语句 · %s", s.Statements, s.Database)
