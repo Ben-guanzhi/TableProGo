@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -99,4 +101,79 @@ func TestCloseDropsEverything(t *testing.T) {
 		t.Fatalf("reopen after Close: %v", err)
 	}
 	s.Close()
+}
+
+// N concurrent Gets for one database join a single dial instead of racing
+// their own handshakes (the dial is the expensive part: connect + ping).
+func TestGetConcurrentSameDatabaseDialsOnce(t *testing.T) {
+	var opens atomic.Int64
+	s := New(func(database string) (*sql.DB, error) {
+		opens.Add(1)
+		time.Sleep(50 * time.Millisecond) // a handshake-sized window
+		return sql.Open("sqlite", ":memory:")
+	}, 4)
+	defer s.Close()
+
+	const n = 12
+	dbs := make([]*sql.DB, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			dbs[i], errs[i] = s.Get("shared")
+		}(i)
+	}
+	wg.Wait()
+	for i := range n {
+		if errs[i] != nil {
+			t.Fatalf("goroutine %d: %v", i, errs[i])
+		}
+		if dbs[i] != dbs[0] {
+			t.Fatal("concurrent Gets must hand out the same pool")
+		}
+	}
+	if got := opens.Load(); got != 1 {
+		t.Fatalf("opens = %d, want 1 (callers share the dial)", got)
+	}
+}
+
+// The dial runs outside the cache lock: one slow database's open must not
+// make other databases' Gets wait behind it (this used to hold the lock
+// through connect + ping, freezing a whole connection on one bad server).
+func TestGetSlowOpenerDoesNotBlockOtherDatabases(t *testing.T) {
+	s := New(func(database string) (*sql.DB, error) {
+		if database == "slow" {
+			time.Sleep(600 * time.Millisecond)
+		}
+		return sql.Open("sqlite", ":memory:")
+	}, 8)
+	defer s.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := s.Get("slow"); err != nil {
+			t.Errorf("slow: %v", err)
+		}
+	}()
+
+	// Give the slow dial a head start into its (former) lock-held window,
+	// then require the fast database to answer while it is still dialing.
+	time.Sleep(100 * time.Millisecond)
+	fastDone := make(chan struct{})
+	go func() {
+		defer close(fastDone)
+		if _, err := s.Get("fast"); err != nil {
+			t.Errorf("fast: %v", err)
+		}
+	}()
+	select {
+	case <-fastDone:
+		// The fast Get landed while the slow dial was still in flight.
+	case <-time.After(2 * time.Second):
+		t.Fatal("a slow opener blocked another database's Get")
+	}
+	<-done
 }

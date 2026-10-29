@@ -35,11 +35,20 @@ type Opener func(database string) (*sql.DB, error)
 
 // Set is the cache for one connection. The zero value is not usable; call New.
 type Set struct {
-	mu    sync.Mutex
-	open  Opener
-	max   int
-	pools map[string]*sql.DB
-	order []string // least-recently-used first
+	mu      sync.Mutex
+	open    Opener
+	max     int
+	pools   map[string]*sql.DB
+	order   []string // least-recently-used first
+	dialing map[string]*dialCall
+}
+
+// dialCall is one in-flight opener: same-database callers share the dial
+// instead of each paying their own handshake.
+type dialCall struct {
+	done chan struct{}
+	db   *sql.DB
+	err  error
 }
 
 // New returns a cache that opens pools through open and keeps at most max of
@@ -48,33 +57,61 @@ func New(open Opener, max int) *Set {
 	if max <= 0 {
 		max = DefaultMax
 	}
-	return &Set{open: open, max: max, pools: make(map[string]*sql.DB)}
+	return &Set{open: open, max: max, pools: make(map[string]*sql.DB), dialing: make(map[string]*dialCall)}
 }
 
 // Get returns the pool for database, opening it on first use. Errors from the
 // opener are returned unchanged so the caller can add its own context.
+//
+// The dial runs OUTSIDE the lock: an opener dials and pings (up to the
+// connection timeout), and holding the cache lock through it queued every
+// other database's Get on this connection behind one slow server — an ER
+// diagram walk touching dozens of databases froze on the first unreachable
+// one. Same-database callers join the in-flight dial instead of racing their
+// own.
 func (s *Set) Get(database string) (*sql.DB, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if db, ok := s.pools[database]; ok {
 		s.touchLocked(database)
+		s.mu.Unlock()
 		return db, nil
 	}
 	if s.open == nil {
+		s.mu.Unlock()
 		return nil, fmt.Errorf("pool: no opener configured")
 	}
-	db, err := s.open(database)
+	if call, ok := s.dialing[database]; ok {
+		s.mu.Unlock()
+		<-call.done
+		// The dial's winner inserted the pool under the lock; handing the
+		// call's own result covers the rare case where it was evicted in the
+		// meantime (fencing keeps an evicted pool usable while it drains).
+		return call.db, call.err
+	}
+	call := &dialCall{done: make(chan struct{})}
+	s.dialing[database] = call
+	opener := s.open
+	s.mu.Unlock()
+
+	db, err := opener(database)
+
+	s.mu.Lock()
+	delete(s.dialing, database)
+	if err == nil {
+		// Browsing a server with hundreds of databases must not accumulate one
+		// live pool per database; the oldest-unused pool is closed instead.
+		for len(s.pools) >= s.max {
+			s.evictOldestLocked()
+		}
+		s.pools[database] = db
+		s.order = append(s.order, database)
+	}
+	call.db, call.err = db, err
+	close(call.done)
+	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	// Browsing a server with hundreds of databases must not accumulate one live
-	// pool per database; the oldest-unused pool is closed instead.
-	for len(s.pools) >= s.max {
-		s.evictOldestLocked()
-	}
-	s.pools[database] = db
-	s.order = append(s.order, database)
 	return db, nil
 }
 
@@ -94,6 +131,9 @@ func (s *Set) Close() {
 		delete(s.pools, name)
 	}
 	s.order = nil
+	// An in-flight dial that lands after Close just repopulates the map —
+	// Close is not a tombstone (a fresh Get after it reopens), so the dial
+	// result stays usable.
 }
 
 // touchLocked moves database to the most-recently-used end of the order.
