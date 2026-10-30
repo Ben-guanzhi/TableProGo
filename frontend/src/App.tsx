@@ -59,6 +59,7 @@ import {
   TestConnection,
   PreviewTable,
   RunTableAction,
+  ExplainQuery,
   GetTableStructure,
   GetHistory,
   ClearHistory,
@@ -495,9 +496,13 @@ function App() {
     );
   };
 
-  const handleExecuteQuery = async (tab: Tab) => {
+  const handleExecuteQuery = async (tab: Tab, sqlOverride?: string) => {
     if (!activeConnection) return;
     const database = tabDatabase(tab);
+    // The editor passes the statement it actually shows: a named-parameter
+    // substitution lands in the editor and this call lands in the same React
+    // batch, so tab.query would still be the pre-substitution text.
+    const sql = sqlOverride ?? tab.query;
     const tabId = tab.id;
     const seq = (runSeq.current.get(tabId) ?? 0) + 1;
     runSeq.current.set(tabId, seq);
@@ -510,18 +515,18 @@ function App() {
       // statement would go out in autocommit and the transaction would govern
       // nothing. Streaming is still used: the transaction and streaming are
       // independent (beginRun holds the cancel context either way).
-      const result = await runStreamed(connId, tab.query, database, partial => {
+      const result = await runStreamed(connId, sql, database, partial => {
         if (!stillCurrent()) return;
         setTabs(current => current.map(t =>
           t.id === tabId ? { ...t, database, result: partial, loading: true } : t
         ));
       }, tabId, !!tab.txStatus, confirmDestructive);
       const comments = settings.showColumnComments && !result.error
-        ? await queryComments(activeConnection.id, tab.query, database)
+        ? await queryComments(activeConnection.id, sql, database)
         : undefined;
       // Which table, if any, the rows can be written back to; a statement that
       // reads from more than one gets null and stays read-only.
-      const source = result.error ? null : await GetQuerySource(activeConnection.id, tab.query, database);
+      const source = result.error ? null : await GetQuerySource(activeConnection.id, sql, database);
       if (!stillCurrent()) return;
 
       setTabs(current => current.map(t =>
@@ -940,9 +945,34 @@ function App() {
     loadObjectSection(tab, section);
   };
 
-  const handleObjectExecute = async (tab: Tab) => {
+  // EXPLAIN 只读语句的计划：结果进同一个结果区，但绕过写回源/注释解析——
+  // 计划不是行集，也没有可写表。语句本身不执行，Safe Mode 与事务都不参与。
+  const handleExplainQuery = async (tab: Tab, sqlOverride?: string) => {
+    if (!activeConnection) return;
+    const database = tabDatabase(tab);
+    const tabId = tab.id;
+    const sql = sqlOverride ?? tab.query;
+    const seq = (runSeq.current.get(tabId) ?? 0) + 1;
+    runSeq.current.set(tabId, seq);
+    setTabs(current => current.map(t => (t.id === tabId ? { ...t, loading: true } : t)));
+    const stillCurrent = () => (runSeq.current.get(tabId) ?? 0) === seq;
+    try {
+      const result = await ExplainQuery(activeConnection.id, sql, database);
+      if (!stillCurrent()) return;
+      setTabs(current => current.map(t =>
+        t.id === tabId ? { ...t, database, result, comments: undefined, source: null, loading: false } : t
+      ));
+    } catch (error) {
+      if (!stillCurrent()) return;
+      toast.error(`执行计划失败：${(error as Error).message}`, { duration: 8000 });
+      setTabs(current => current.map(t => (t.id === tabId ? { ...t, loading: false } : t)));
+    }
+  };
+
+  const handleObjectExecute = async (tab: Tab, sqlOverride?: string) => {
     const ref = tab.tableRef;
-    const sql = tab.objectQuery?.trim();
+    // 同 handleExecuteQuery：命名参数替换落在编辑器里，同批次的闭包读不到。
+    const sql = sqlOverride ?? tab.objectQuery?.trim();
     if (!ref || !sql) return;
     const database = tabDatabase(tab);
     const key = `${tab.id}|query`;
@@ -1563,7 +1593,7 @@ function App() {
                       current.map(t => (t.id === activeTabData.id ? { ...t, objectQuery: sql } : t))
                     )
                   }
-                  onExecute={() => handleObjectExecute(activeTabData)}
+                  onExecute={sql => handleObjectExecute(activeTabData, sql)}
                   onCancel={() => {
                     if (!activeConnection) return;
                     CancelQuery(activeConnection.id).catch(() => {});
@@ -1633,7 +1663,8 @@ function App() {
                         : tab
                     ));
                   }}
-                  onExecute={() => handleExecuteQuery(activeTabData)}
+                  onExecute={sql => handleExecuteQuery(activeTabData, sql)}
+                  onExplain={sql => handleExplainQuery(activeTabData, sql)}
                   onCancel={() => {
                     if (!activeConnection) return;
                     // Stop the server-side statement, then clear the spinner:

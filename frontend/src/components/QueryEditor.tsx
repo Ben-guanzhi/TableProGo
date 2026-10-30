@@ -13,7 +13,7 @@ import {
   rectangularSelection,
 } from '@codemirror/view';
 import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirror/commands';
-import { FiAlignLeft, FiStar, FiTrash2, FiX } from 'react-icons/fi';
+import { FiAlignLeft, FiList, FiStar, FiTrash2, FiX } from 'react-icons/fi';
 import {
   HighlightStyle,
   bracketMatching,
@@ -71,7 +71,12 @@ export interface QueryEditorHandle {
 interface QueryEditorProps {
   query: string;
   onQueryChange: (query: string) => void;
-  onExecute: () => void;
+  onExecute: (sql?: string) => void;
+  // onExplain renders the statement's execution plan instead of running it
+  // (the backend's /api/explain; absent on callers without the entry).
+  onExplain?: (sql?: string) => void;
+  // explaining dims the EXPLAIN button while a plan is being fetched.
+  explaining?: boolean;
   // onCancel aborts the in-flight statement server-side (cancels its context).
   // Optional so read-only embeds (object query page) can omit it.
   onCancel?: () => void;
@@ -237,6 +242,8 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     query,
     onQueryChange,
     onExecute,
+    onExplain,
+    explaining,
     onCancel,
     isConnected,
     loading,
@@ -270,7 +277,11 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   // Named parameters: a statement with `:name` markers asks for values before
   // it runs. The substitution lands in the editor itself, so what runs is
   // exactly what the user sees — the same contract a typed statement has.
-  const [paramDialog, setParamDialog] = useState<{ names: string[]; values: Record<string, string> } | null>(null);
+  const [paramDialog, setParamDialog] = useState<{
+    names: string[];
+    values: Record<string, string>;
+    kind: 'run' | 'explain';
+  } | null>(null);
   // 收藏命名对话框（替换原生 window.prompt：不跟随主题、样式突兀），名称
   // 必填、文件夹可选，一次弹窗而不是两次原生提示。
   const [favDialog, setFavDialog] = useState<{ name: string; folder: string } | null>(null);
@@ -282,7 +293,19 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
       onExecute();
       return;
     }
-    setParamDialog({ names, values: {} });
+    setParamDialog({ names, values: {}, kind: 'run' });
+  };
+
+  // EXPLAIN shares the named-parameter machinery: the substitution lands in
+  // the editor and the plan is asked for the statement the user sees.
+  const explainWithParams = () => {
+    const sql = viewRef.current?.state.doc.toString() ?? '';
+    const names = findNamedParams(sql);
+    if (names.length === 0) {
+      onExplain?.();
+      return;
+    }
+    setParamDialog({ names, values: {}, kind: 'explain' });
   };
 
   const confirmParams = () => {
@@ -296,7 +319,14 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
       selection: { anchor: Math.min(view.state.selection.main.head, filled.length) },
     });
     setParamDialog(null);
-    onExecute();
+    // The substituted SQL is passed explicitly: the editor dispatch and this
+    // call land in the same React batch, so the parent's tab.query closure is
+    // still the pre-substitution text and must not be read.
+    if (paramDialog.kind === 'explain') {
+      onExplain?.(filled);
+    } else {
+      onExecute(filled);
+    }
   };
 
   const refreshFavorites = () => {
@@ -636,6 +666,26 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
           >
             <FiSquare size={11} className="mr-1.5 shrink-0" />
             取消
+          </button>
+        )}
+
+        {onExplain && (
+          <button
+            className={`flex items-center whitespace-nowrap px-3 py-1 rounded text-xs font-medium ${
+              isConnected && !loading && !explaining
+                ? 'bg-raised hover:bg-emphasis text-ink'
+                : 'bg-raised text-muted cursor-not-allowed'
+            }`}
+            onClick={explainWithParams}
+            disabled={!isConnected || loading || !!explaining}
+            title="执行计划：只读语句的查询计划，语句本身不执行"
+          >
+            {explaining ? (
+              <FiLoader size={12} className="mr-1.5 shrink-0 animate-spin" />
+            ) : (
+              <FiList size={12} className="mr-1.5 shrink-0" />
+            )}
+            EXPLAIN
           </button>
         )}
 

@@ -9,7 +9,7 @@ import { ColumnInfo, QueryResult, SectionState, TableRef } from '../types';
 interface ObjectQueryPageProps {
   sql: string;
   onSqlChange: (sql: string) => void;
-  onExecute: () => void;
+  onExecute: (sql?: string) => void;
   onCancel?: () => void;
   loading: boolean;
   isConnected: boolean;

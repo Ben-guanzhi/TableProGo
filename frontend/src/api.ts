@@ -319,6 +319,17 @@ export type TableDdlAction = 'drop' | 'truncate' | 'rename';
 // passes its themed ConfirmDialog; cancelling throws, so the caller treats it
 // like any other aborted action. The confirm may be asynchronous and is always
 // awaited, so a promise-based dialog cannot be mistaken for an approval.
+// ExplainQuery renders one statement's execution plan as a result grid.
+// Nothing in a plan executes the statement (EXPLAIN DELETE does not delete),
+// so Safe Mode has no say here; the result carries no write-back source.
+export async function ExplainQuery(
+  connId: string,
+  query: string,
+  database: string,
+): Promise<QueryResult> {
+  return (await post('/api/explain', { connId, query, database })) as unknown as QueryResult;
+}
+
 export async function RunTableAction(
   ref: TableRef,
   action: TableDdlAction,
