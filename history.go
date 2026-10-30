@@ -26,7 +26,19 @@ type HistoryEntry struct {
 	// ExecutionTime is in seconds, matching QueryResult.
 	ExecutionTime float64 `json:"executionTime"`
 	Error         string  `json:"error,omitempty"`
+	// Source says who ran the statement: "" (the default) is the user typing
+	// in this app, "mcp" is an MCP client's tool call, "llm" is an approved
+	// assistant proposal. The audit value is the point: an AI surface must be
+	// distinguishable in history from the user's own statements.
+	Source string `json:"source,omitempty"`
 }
+
+// History source spellings. "" is the user; the AI surfaces are named.
+const (
+	HistorySourceUser = ""
+	HistorySourceMCP  = "mcp"
+	HistorySourceLLM  = "llm"
+)
 
 // historyLimit keeps the on-disk log bounded; a GUI session produces orders of
 // magnitude more browses than statements worth remembering.
@@ -69,6 +81,10 @@ func statementTable(query string) string {
 }
 
 func (a *App) recordStatement(connID, database, query string, result QueryResult) {
+	a.recordStatementFrom(HistorySourceUser, connID, database, query, result)
+}
+
+func (a *App) recordStatementFrom(source, connID, database, query string, result QueryResult) {
 	sql := strings.TrimSpace(query)
 	if sql == "" {
 		return
@@ -88,6 +104,7 @@ func (a *App) recordStatement(connID, database, query string, result QueryResult
 		RowCount:      result.RowCount,
 		Affected:      result.AffectedRows,
 		ExecutionTime: result.ExecutionTime,
+		Source:        source,
 	}
 
 	a.historyMu.Lock()

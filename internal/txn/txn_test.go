@@ -39,7 +39,7 @@ func TestBeginCommitRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Status != Active || s.ID != "txn-app" || s.Database != "app" {
-		t.Fatalf("session = %+v", *s)
+		t.Fatalf("session = %+v", &s)
 	}
 	s.Record(nil)
 	s.Record(nil)
@@ -50,7 +50,7 @@ func TestBeginCommitRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Status != None || s.ID != "" {
-		t.Fatalf("after commit = %+v", *s)
+		t.Fatalf("after commit = %+v", &s)
 	}
 	if len(op.commits) != 1 || op.commits[0] != "txn-app" {
 		t.Fatalf("commits = %v", op.commits)
@@ -106,7 +106,7 @@ func TestFailedStatementAbortsTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if s.Status != None {
-		t.Fatalf("after rollback = %+v", s)
+		t.Fatalf("after rollback = %+v", &s)
 	}
 	// The next statement runs in autocommit.
 	if err := s.Guard("app"); err != nil {
@@ -150,7 +150,7 @@ func TestCommitResetsEvenWhenTheServerFails(t *testing.T) {
 		t.Fatal("the server error must surface")
 	}
 	if s.Status != None {
-		t.Fatalf("a failed commit must still close the session: %+v", s)
+		t.Fatalf("a failed commit must still close the session: %+v", &s)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestBeginPropagatesTheOpenerError(t *testing.T) {
 		t.Fatal("want the opener error")
 	}
 	if s.Status != None {
-		t.Fatalf("a failed begin must leave autocommit: %+v", s)
+		t.Fatalf("a failed begin must leave autocommit: %+v", &s)
 	}
 }
 

@@ -126,3 +126,50 @@ func TestClearHistoryHonoursFilters(t *testing.T) {
 		t.Error("history survived a clear-all")
 	}
 }
+
+// AI 面的语句必须在历史里可辨识：MCP 工具调用标记 mcp、批准的助手提案标记
+// llm，用户手打的保持无标记（旧历史文件无该字段，向后兼容）。
+func TestHistorySourceAttribution(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	histPath := filepath.Join(t.TempDir(), "history.json")
+	app.historyPath = histPath
+	t.Cleanup(func() { _ = app.Disconnect("c1") })
+
+	if r := app.ExecuteQuery("c1", "SELECT id FROM t", ""); r.Error != "" {
+		t.Fatalf("user query: %s", r.Error)
+	}
+	if r := app.ExecuteQueryAs(HistorySourceMCP, "c1", "SELECT id FROM t", ""); r.Error != "" {
+		t.Fatalf("mcp query: %s", r.Error)
+	}
+	if r := app.ExecuteQueryAs(HistorySourceLLM, "c1", "SELECT id FROM t", ""); r.Error != "" {
+		t.Fatalf("llm query: %s", r.Error)
+	}
+
+	entries := app.History("c1", "", "", 100)
+	// The fixture's CREATE/INSERT run unmarked too; the assertion matches the
+	// shared "SELECT id" statement, of which there is one per source.
+	sources := map[string]int{}
+	for _, e := range entries {
+		if !strings.Contains(e.SQL, "SELECT id FROM t") {
+			if e.Source != HistorySourceUser {
+				t.Fatalf("a setup statement must stay unmarked: %+v", e)
+			}
+			continue
+		}
+		sources[e.Source]++
+	}
+	if sources[HistorySourceUser] != 1 || sources[HistorySourceMCP] != 1 || sources[HistorySourceLLM] != 1 {
+		t.Fatalf("sources = %v, want one of each", sources)
+	}
+
+	// 来源字段随文件往返（Fyne 客户端共享历史文件）。
+	app.writeHistory()
+	app2 := &App{historyPath: histPath}
+	app2.loadHistory()
+	for _, e := range app2.history {
+		if e.Source == HistorySourceMCP {
+			return
+		}
+	}
+	t.Fatal("the mcp source did not survive the file round trip")
+}

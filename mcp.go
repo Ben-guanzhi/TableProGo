@@ -109,7 +109,7 @@ func (c mcpCatalog) Columns(connID, database, schema, table string) ([]mcp.Colum
 func (c mcpCatalog) Query(connID, database, sql string, limit int) (*mcp.QueryResult, error) {
 	// A tool call is not a tab, so it runs in autocommit: an AI client must never
 	// find itself inside an editor's open transaction.
-	result := c.app.ExecuteQuery(connID, sql, database)
+	result := c.app.ExecuteQueryAs(HistorySourceMCP, connID, sql, database)
 	if result.Error != "" {
 		return nil, fmt.Errorf("%s", result.Error)
 	}

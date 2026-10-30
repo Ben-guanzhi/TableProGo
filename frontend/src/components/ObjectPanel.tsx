@@ -393,6 +393,12 @@ const HistoryList: React.FC<{
           <span className={entry.error ? 'text-danger' : 'text-success'}>
             {entry.error ? '失败' : '成功'}
           </span>
+          {entry.source === 'mcp' && (
+            <span className="px-1 rounded bg-raised text-secondary shrink-0">MCP</span>
+          )}
+          {entry.source === 'llm' && (
+            <span className="px-1 rounded bg-raised text-secondary shrink-0">AI</span>
+          )}
           <span className={`${monoClass} tabular-nums`}>{historyTime(entry.time)}</span>
           {entry.database && <span className="truncate">{entry.database}</span>}
           <span>{entry.rowCount} 行</span>

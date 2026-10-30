@@ -259,7 +259,15 @@ func pageOrderFrom(dbType string, columns []ColumnInfo, columnsErr error) string
 // returns NeedsConfirmation + Error with nothing executed. The UI confirms and
 // re-sends through ExecuteQueryConfirmed.
 func (a *App) ExecuteQuery(connID string, query string, database string) QueryResult {
-	return a.executeQuery("", connID, query, database, false)
+	return a.executeQuery(HistorySourceUser, "", connID, query, database, false)
+}
+
+// ExecuteQueryAs runs a statement attributed to source in the history audit:
+// the AI surfaces (MCP tool calls, approved assistant proposals) must be
+// distinguishable from statements the user typed. Safe Mode and transactions
+// behave exactly as in ExecuteQuery.
+func (a *App) ExecuteQueryAs(source string, connID string, query string, database string) QueryResult {
+	return a.executeQuery(source, "", connID, query, database, false)
 }
 
 // ExecuteQueryInTab is ExecuteQuery for a statement that belongs to a tab, so it
@@ -267,22 +275,22 @@ func (a *App) ExecuteQuery(connID string, query string, database string) QueryRe
 // The empty tab id means "no transaction", which is what a background statement
 // wants: it must not be captured by an editor's open transaction.
 func (a *App) ExecuteQueryInTab(connID, tabID string, query string, database string) QueryResult {
-	return a.executeQuery(tabID, connID, query, database, false)
+	return a.executeQuery(HistorySourceUser, tabID, connID, query, database, false)
 }
 
 // ExecuteQueryConfirmedInTab is ExecuteQueryInTab after the Safe Mode prompt.
 func (a *App) ExecuteQueryConfirmedInTab(connID, tabID string, query string, database string) QueryResult {
-	return a.executeQuery(tabID, connID, query, database, true)
+	return a.executeQuery(HistorySourceUser, tabID, connID, query, database, true)
 }
 
 // ExecuteQueryConfirmed is ExecuteQuery after the user acknowledged the Safe
 // Mode warning. It is a distinct entry point so skipping the prompt has to be
 // explicit in the caller's code, not a forgotten boolean.
 func (a *App) ExecuteQueryConfirmed(connID string, query string, database string) QueryResult {
-	return a.executeQuery("", connID, query, database, true)
+	return a.executeQuery(HistorySourceUser, "", connID, query, database, true)
 }
 
-func (a *App) executeQuery(tabID, connID string, query string, database string, force bool) QueryResult {
+func (a *App) executeQuery(source, tabID, connID string, query string, database string, force bool) QueryResult {
 	_, kvErr := a.kvConnection(connID)
 	if kvErr != nil {
 		// Safe Mode guards SQL statements; raw Redis commands have their own
@@ -309,7 +317,7 @@ func (a *App) executeQuery(tabID, connID string, query string, database string, 
 	// A failed statement aborts the transaction on most engines; the session has
 	// to remember that so the UI stops offering more.
 	session.Record(errorOf(result))
-	a.recordStatement(connID, database, query, result)
+	a.recordStatementFrom(source, connID, database, query, result)
 	return result
 }
 

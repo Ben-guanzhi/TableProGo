@@ -293,6 +293,10 @@ export interface HistoryEntry {
   affectedRows: number;
   executionTime: number;
   error?: string;
+  // Who ran it: empty = the user typing here, "mcp" = an MCP client's tool
+  // call, "llm" = an approved assistant proposal. The audit badge in the
+  // history list keys off it.
+  source?: string;
 }
 
 // One value typed into the grid. The column is named as the result named it.

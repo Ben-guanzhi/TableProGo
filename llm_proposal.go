@@ -111,7 +111,7 @@ func (a *App) AcceptProposal(id string) (QueryResult, error) {
 	// The statement is executed on the connection it named, in autocommit: a
 	// proposal is not part of any tab's transaction, and the user will see the
 	// result in the editor if they want to keep it.
-	return a.ExecuteQuery(proposal.Connection, proposal.SQL, proposal.Database), nil
+	return a.ExecuteQueryAs(HistorySourceLLM, proposal.Connection, proposal.SQL, proposal.Database), nil
 }
 
 // RejectProposal drops a proposed statement without running it.
