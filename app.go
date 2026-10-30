@@ -194,13 +194,23 @@ func passcodeFilePath() string { return userDataFilePath("passcode.json") }
 func historyFilePath() string { return userDataFilePath("history.json") }
 
 func NewApp() *App {
+	return newAppWithPaths("", "")
+}
+
+// newAppWithPaths is NewApp with the two overridable locations (connections
+// file and passcode store) taken from the CLI when given; the defaults are
+// the user-data-dir ones.
+func newAppWithPaths(configPath, passcodePath string) *App {
 	a := &App{
 		connections:   make(map[string]*Connection),
 		filePath:      connectionsFilePath(),
 		settingsPath:  settingsFilePath(),
-		passcodePath:  passcodeFilePath(),
+		passcodePath:  passcodePath,
 		historyPath:   historyFilePath(),
 		favoritesPath: favoritesFilePath(),
+	}
+	if configPath != "" {
+		a.filePath = configPath
 	}
 	a.loadFromFile()
 	a.loadSettings()
