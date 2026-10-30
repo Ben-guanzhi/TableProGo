@@ -1004,6 +1004,36 @@ function App() {
     }
   };
 
+  // 对象页的 EXPLAIN：结果进 objectResult（结构页自己的状态位），计划同样
+  // 不执行语句、不可写回。语句与主查询页共用同一后端。
+  const handleObjectExplainQuery = async (tab: Tab, sqlOverride?: string) => {
+    const ref = tab.tableRef;
+    const sql = sqlOverride ?? tab.objectQuery?.trim();
+    if (!ref || !sql) return;
+    const database = tabDatabase(tab);
+    const key = `${tab.id}|query`;
+    const seq = (objectSeq.current.get(key) ?? 0) + 1;
+    objectSeq.current.set(key, seq);
+    const stillCurrent = () => (objectSeq.current.get(key) ?? 0) === seq;
+    const patch = (next: Partial<Tab>) =>
+      setTabs(current => current.map(t => (t.id === tab.id ? { ...t, ...next } : t)));
+    patch({ objectResult: { loading: true }, objectComments: undefined });
+    try {
+      const result = await ExplainQuery(ref.connId, sql, database);
+      if (stillCurrent()) {
+        patch({
+          objectResult: { loading: false, data: result },
+          objectComments: undefined,
+          objectSource: null,
+        });
+      }
+    } catch (error) {
+      if (stillCurrent()) {
+        patch({ objectResult: { loading: false, error: (error as Error).message }, objectSource: null });
+      }
+    }
+  };
+
   // Clicking a history entry moves the statement to the query page without
   // running it, so the user still sees what is about to happen.
   const handleUseStatement = (tab: Tab, sql: string) => {
@@ -1594,6 +1624,7 @@ function App() {
                     )
                   }
                   onExecute={sql => handleObjectExecute(activeTabData, sql)}
+                  onExplain={sql => handleObjectExplainQuery(activeTabData, sql)}
                   onCancel={() => {
                     if (!activeConnection) return;
                     CancelQuery(activeConnection.id).catch(() => {});

@@ -10,6 +10,7 @@ interface ObjectQueryPageProps {
   sql: string;
   onSqlChange: (sql: string) => void;
   onExecute: (sql?: string) => void;
+  onExplain?: (sql?: string) => void;
   onCancel?: () => void;
   loading: boolean;
   isConnected: boolean;
@@ -40,6 +41,7 @@ const ObjectQueryPage: React.FC<ObjectQueryPageProps> = ({
   sql,
   onSqlChange,
   onExecute,
+  onExplain,
   onCancel,
   loading,
   isConnected,
@@ -73,6 +75,7 @@ const ObjectQueryPage: React.FC<ObjectQueryPageProps> = ({
           query={sql}
           onQueryChange={onSqlChange}
           onExecute={onExecute}
+          onExplain={onExplain}
           onCancel={onCancel}
           isConnected={isConnected}
           loading={loading}
