@@ -73,9 +73,19 @@ export async function runStreamed(
     rowCount: rows.length,
   });
   if (txActive && tabId) {
-    const result = (await ExecuteQueryInTab(connId, tabId, sql, database)) as unknown as QueryResult;
-    onPartial(result);
-    return result;
+    const first = (await ExecuteQueryInTab(connId, tabId, sql, database)) as unknown as QueryResult;
+    // Safe Mode may pause a write inside the transaction too: the answer is
+    // collected here exactly as on the non-tx path, and the confirmed
+    // variant re-runs inside the same tab transaction. Piping through
+    // confirmThenRun is a no-op for results that were not paused.
+    const final = await confirmThenRun(
+      first,
+      async () =>
+        (await ExecuteQueryInTabConfirmed(connId, tabId, sql, database)) as unknown as QueryResult,
+      confirm,
+    );
+    onPartial(final);
+    return final;
   }
   const done = await ExecuteQueryStream(connId, sql, database, {
     onColumns: next => {

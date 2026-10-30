@@ -54,6 +54,10 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 			}
 			res.Statements++
 		}
+		// SkipErrors bypasses the transaction path below, but the script is
+		// still the audit trail: record it with the same shape as the tx path.
+		a.recordStatement(req.ConnID, req.Database, strings.Join(statements, ";\n"),
+			QueryResult{AffectedRows: int64(res.Statements)})
 		return res, nil
 	}
 
@@ -66,6 +70,9 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 			}
 			res.Statements++
 		}
+		// Drivers without transaction support take the same audit shape.
+		a.recordStatement(req.ConnID, req.Database, strings.Join(statements, ";\n"),
+			QueryResult{AffectedRows: int64(res.Statements)})
 		return res, nil
 	}
 	tx, err := txDrv.Begin(ctx, dbcore.TxMode{})

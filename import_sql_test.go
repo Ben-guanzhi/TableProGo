@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -59,6 +60,18 @@ func TestImportSQLScriptSkipErrors(t *testing.T) {
 	}
 	if r := app.ExecuteQuery("c1", "SELECT id FROM sk ORDER BY id", ""); r.RowCount != 2 {
 		t.Fatalf("rows = %+v", r)
+	}
+	// SkipErrors bypasses the transaction path, but the script is still the
+	// audit trail: the history entry must land exactly as on the tx path.
+	// (The fixture records its own setup statements, so match by content.)
+	found := false
+	for _, e := range app.History("c1", "", "", 50) {
+		if strings.Contains(e.SQL, "INSERT INTO nope VALUES (2)") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("SkipErrors import not recorded in history")
 	}
 }
 
