@@ -447,6 +447,20 @@ export async function ApplyStructureEdit(req: {
   return post('/api/structure-edit', req);
 }
 
+// The Safe Mode pause comes back structured (needsConfirmation + reason);
+// the dialog confirms and re-sends through this route.
+export async function ApplyStructureEditConfirmed(req: {
+  connId: string;
+  database: string;
+  schema: string;
+  table: string;
+  columns: ColumnEdit[];
+  indexes?: IndexEdit[];
+  foreignKeys?: ForeignKeyEdit[];
+}): Promise<StructureEditResult> {
+  return post('/api/structure-edit-confirmed', req);
+}
+
 // objectType tells the backend whether to read a view definition or the
 // table-only extras (CHECK constraints), so one structure endpoint serves both.
 export async function GetTableStructure(

@@ -602,8 +602,24 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/structure-preview", 400, func(a *App, body StructureEditRequest) (any, error) {
 		return a.PreviewStructureEdit(body)
 	})
+	// A Safe Mode pause is structured (like /api/table-action): the UI
+	// confirms and re-sends through the -confirmed route.
 	post(a, mux, "/api/structure-edit", 400, func(a *App, body StructureEditRequest) (any, error) {
-		return a.ApplyStructureEdit(body)
+		res, err := a.ApplyStructureEdit(body)
+		if err != nil {
+			if reason, paused := isNeedsConfirmation(err); paused {
+				return map[string]any{
+					"needsConfirmation": true,
+					"reason":            reason,
+					"statements":        res.Statements,
+				}, nil
+			}
+			return nil, err
+		}
+		return res, nil
+	})
+	post(a, mux, "/api/structure-edit-confirmed", 400, func(a *App, body StructureEditRequest) (any, error) {
+		return a.ApplyStructureEditConfirmed(body)
 	})
 	post(a, mux, "/api/trigger-definition", 400, func(a *App, body tableRefRequest) (any, error) {
 		def, err := a.GetTriggerDefinition(body.ConnID, body.Database, body.Schema, body.Table)

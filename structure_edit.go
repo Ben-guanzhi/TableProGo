@@ -313,6 +313,17 @@ func (a *App) PreviewStructureEdit(req StructureEditRequest) (StructureEditResul
 // ApplyStructureEdit executes the rendered statements in one transaction, each
 // through the Safe Mode guard the same way a typed DDL runs.
 func (a *App) ApplyStructureEdit(req StructureEditRequest) (StructureEditResult, error) {
+	return a.applyStructureEdit(req, false)
+}
+
+// ApplyStructureEditConfirmed is ApplyStructureEdit after the user
+// acknowledged the Safe Mode pause — a distinct entry point (like
+// TableActionConfirmed) so skipping the prompt is explicit in the caller.
+func (a *App) ApplyStructureEditConfirmed(req StructureEditRequest) (StructureEditResult, error) {
+	return a.applyStructureEdit(req, true)
+}
+
+func (a *App) applyStructureEdit(req StructureEditRequest, force bool) (StructureEditResult, error) {
 	res, err := a.buildStructureEdits(req)
 	if err != nil {
 		return res, err
@@ -325,7 +336,7 @@ func (a *App) ApplyStructureEdit(req StructureEditRequest) (StructureEditResult,
 		if guard := guardWrite(mode, statement); guard.Blocked {
 			res.Warnings = append(res.Warnings, guard.Reason)
 			return res, fmt.Errorf("%s", guard.Reason)
-		} else if guard.NeedsConfirmation {
+		} else if guard.NeedsConfirmation && !force {
 			// confirmWrites covers structure DDL too — the same pause a
 			// table action takes, not a silent straight-to-execution path.
 			res.Warnings = append(res.Warnings, guard.Reason)

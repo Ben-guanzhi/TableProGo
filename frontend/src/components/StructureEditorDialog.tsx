@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { FiPlus, FiTrash2, FiX } from 'react-icons/fi';
-import { ColumnEdit, ApplyStructureEdit, PreviewStructureEdit } from '../api';
+import { ColumnEdit, ApplyStructureEdit, ApplyStructureEditConfirmed, PreviewStructureEdit } from '../api';
 import type { TableRef } from '../types';
 import { useDialog } from '../dialog';
 import {
@@ -94,10 +94,24 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
     }
   };
 
-  const runApply = async () => {
+  // Safe Mode 的 confirmWrites 暂停：第一次"执行"收到 needsConfirmation，
+  // 再次点击走 confirmed 路由（按钮文案随之变化）。
+  const [pendingReason, setPendingReason] = useState<string | null>(null);
+  const runApply = async (confirmed = false) => {
     setBusy(true);
     try {
-      const res = await ApplyStructureEdit(payload);
+      const res = await (confirmed ? ApplyStructureEditConfirmed(payload) : ApplyStructureEdit(payload));
+      // Safe Mode's confirmWrites pause comes back structured (nothing ran):
+      // surface the reason and let the user confirm for a re-send through the
+      // confirmed route — mirroring the table-action dialog.
+      if ((res as unknown as { needsConfirmation?: boolean }).needsConfirmation) {
+        const reason = (res as unknown as { reason: string }).reason;
+        setPreview(res);
+        setPendingReason(reason);
+        toast(reason, { duration: 10000, icon: '⚠️' });
+        return;
+      }
+      setPendingReason(null);
       setPreview(res);
       toast.success(`结构已更新（${res.statements.length} 条语句）`);
       onApplied();
@@ -457,11 +471,17 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
           </button>
           <button
             className="px-4 py-2 rounded text-sm bg-accent hover:bg-accent-hover text-on-accent disabled:opacity-40"
-            onClick={() => void runApply()}
+            onClick={() => void runApply(pendingReason !== null)}
             disabled={busy || !preview || preview.statements.length === 0}
-            title={preview?.statements.length === 0 ? '没有可执行的改动' : '在一个事务里执行这些语句'}
+            title={
+              pendingReason !== null
+                ? 'Safe Mode 要求确认：再次点击执行这些语句'
+                : preview?.statements.length === 0
+                  ? '没有可执行的改动'
+                  : '在一个事务里执行这些语句'
+            }
           >
-            执行
+            {pendingReason !== null ? '确认执行' : '执行'}
           </button>
         </div>
       </div>

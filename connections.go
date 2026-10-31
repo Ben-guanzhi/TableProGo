@@ -421,6 +421,28 @@ func (a *App) Connect(id string) error {
 		a.forgetSession(tabID)
 	}
 	a.connectionsMu.Lock()
+	// A concurrent DeleteConnection may have removed the id while the dial
+	// ran: committing here would resurrect a ghost connection the UI can no
+	// longer reach — drop our dial instead.
+	stillWanted := false
+	for i := range a.savedConnections {
+		if a.savedConnections[i].ID == id {
+			stillWanted = true
+			break
+		}
+	}
+	if !stillWanted {
+		if conn.KV != nil {
+			conn.KV.Close()
+		}
+		if conn.DB != nil {
+			conn.DB.Close()
+		}
+		conn.closePlugin()
+		conn.tunnel.Close()
+		a.connectionsMu.Unlock()
+		return nil
+	}
 	if existing, ok := a.connections[id]; ok {
 		if existing.DB != nil {
 			existing.DB.Close()
