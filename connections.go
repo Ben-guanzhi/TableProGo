@@ -307,9 +307,12 @@ func (c *Connection) dialTarget() (string, int) {
 }
 
 func (a *App) Connect(id string) error {
-	a.connectionsMu.Lock()
-	defer a.connectionsMu.Unlock()
-
+	// Snapshot the config and open everything OUTSIDE the map lock: the SSH
+	// dial plus the 10s reachability ping used to hold the write lock, and
+	// every RLock'd API (connection(), GetConnections, SearchObjects…)
+	// froze for the whole round trip. The commit at the bottom re-takes the
+	// lock and tears down whatever previous connection this replaces.
+	a.connectionsMu.RLock()
 	var config *ConnectionConfig
 	for i := range a.savedConnections {
 		if a.savedConnections[i].ID == id {
@@ -317,21 +320,9 @@ func (a *App) Connect(id string) error {
 			break
 		}
 	}
+	a.connectionsMu.RUnlock()
 	if config == nil {
 		return fmt.Errorf("invalid connection id: %s", id)
-	}
-
-	if existing, ok := a.connections[id]; ok {
-		if existing.DB != nil {
-			existing.DB.Close()
-		}
-		existing.closeKV()
-		existing.closePools()
-		existing.closePlugin()
-		// Same reason as Disconnect: a manager left behind would fail its next
-		// statement with "database is closed" against the new connection.
-		closeTxns(id)
-		existing.tunnel.Close()
 	}
 
 	conn := &Connection{
@@ -409,8 +400,23 @@ func (a *App) Connect(id string) error {
 		conn.DB = db
 	}
 
+	// Commit: take the write lock and tear down whatever previous
+	// connection this replaces — same reasons as Disconnect (a manager left
+	// behind would fail its next statement with "database is closed").
+	a.connectionsMu.Lock()
+	if existing, ok := a.connections[id]; ok {
+		if existing.DB != nil {
+			existing.DB.Close()
+		}
+		existing.closeKV()
+		existing.closePools()
+		existing.closePlugin()
+		closeTxns(id)
+		existing.tunnel.Close()
+	}
 	a.connections[id] = conn
 	a.currentConnID = id
+	a.connectionsMu.Unlock()
 
 	return nil
 }
