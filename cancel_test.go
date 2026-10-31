@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -11,16 +12,36 @@ import (
 func TestCancelQueryReportsRunning(t *testing.T) {
 	app := &App{}
 	_, done := app.beginRun("c1")
-	if got := app.CancelQuery("c1"); got != 1 {
+	if got := app.CancelQuery("c1", ""); got != 1 {
 		t.Fatalf("CancelQuery = %d, want 1", got)
 	}
 	done()
-	if got := app.CancelQuery("c1"); got != 0 {
+	if got := app.CancelQuery("c1", ""); got != 0 {
 		t.Fatalf("after done, CancelQuery = %d, want 0", got)
 	}
 	// Cancelling a connection with nothing running is a no-op, not a panic.
-	if got := app.CancelQuery("nope"); got != 0 {
+	if got := app.CancelQuery("nope", ""); got != 0 {
 		t.Fatalf("unknown connection = %d", got)
+	}
+}
+
+// TestCancelQueryScopedToTab pins the tab scoping: one tab's cancel button
+// names its tab, so a long query in a neighbouring tab sharing the connection
+// must survive (pre-fix, CancelQuery killed every run on the connection).
+func TestCancelQueryScopedToTab(t *testing.T) {
+	app := &App{}
+	_, doneA := app.beginRunIn(context.Background(), "c1", "tabA")
+	_, doneB := app.beginRunIn(context.Background(), "c1", "tabB")
+	defer doneB()
+
+	if got := app.CancelQuery("c1", "tabA"); got != 1 {
+		t.Fatalf("scoped cancel = %d, want 1", got)
+	}
+	doneA()
+	// tabB's run is untouched by tabA's cancel: its entry is still in the
+	// registry (done() below removes it), and cancelling tabB finds it.
+	if got := app.CancelQuery("c1", "tabB"); got != 1 {
+		t.Fatalf("neighbouring tab cancelled = %d, want its run alive", got)
 	}
 }
 
@@ -68,7 +89,7 @@ func TestLiveCancelStopsStatement(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	cancelled := 0
 	for time.Now().Before(deadline) {
-		if cancelled = app.CancelQuery("c1"); cancelled > 0 {
+		if cancelled = app.CancelQuery("c1", ""); cancelled > 0 {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

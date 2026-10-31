@@ -305,7 +305,7 @@ func (a *App) executeQuery(source, tabID, connID string, query string, database 
 	if err := session.Guard(database); err != nil {
 		return QueryResult{Error: err.Error()}
 	}
-	ctx, done := a.beginRun(connID)
+	ctx, done := a.beginRunIn(context.Background(), connID, tabID)
 	defer done()
 	var result QueryResult
 	if kvErr == nil {
@@ -519,23 +519,41 @@ func runDriverStatement(ctx context.Context, drv dbcore.SQLDriver, query string,
 
 // beginRun registers a cancellable statement for connID. The returned done
 // removes it; CancelQuery finds it by connection.
-func (a *App) beginRun(connID string) (context.Context, func()) {
-	return a.beginRunWith(context.Background(), connID)
+// runEntry pairs a run's cancel with the tab that owns it: the cancel button
+// must stop ITS statement, not every statement sharing the connection — one
+// tab's cancel used to kill a neighbouring tab's long query too.
+type runEntry struct {
+	cancel context.CancelFunc
+	tabID  string
 }
 
-// beginRunWith is beginRun with a parent context, so a streaming HTTP request
-// also stops when the client disconnects.
+func (a *App) beginRun(connID string) (context.Context, func()) {
+	return a.beginRunIn(context.Background(), connID, "")
+}
+
+// beginRunIn is beginRun with the owning tab recorded; tabID is empty for
+// connection-wide work (backup, compare, catalog refresh).
+func (a *App) beginRunIn(parent context.Context, connID, tabID string) (context.Context, func()) {
+	return a.beginRunWithTab(parent, connID, tabID)
+}
+
+// beginRunWith is beginRunWithTab with no parent deadline semantics change —
+// kept for the streaming HTTP path.
 func (a *App) beginRunWith(parent context.Context, connID string) (context.Context, func()) {
+	return a.beginRunWithTab(parent, connID, "")
+}
+
+func (a *App) beginRunWithTab(parent context.Context, connID, tabID string) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(parent)
 	id := a.runSeq.Add(1)
 	a.runsMu.Lock()
 	if a.runs == nil {
-		a.runs = make(map[string]map[int64]context.CancelFunc)
+		a.runs = make(map[string]map[int64]*runEntry)
 	}
 	if a.runs[connID] == nil {
-		a.runs[connID] = make(map[int64]context.CancelFunc)
+		a.runs[connID] = make(map[int64]*runEntry)
 	}
-	a.runs[connID][id] = cancel
+	a.runs[connID][id] = &runEntry{cancel: cancel, tabID: tabID}
 	a.runsMu.Unlock()
 	return ctx, func() {
 		a.runsMu.Lock()
@@ -550,17 +568,23 @@ func (a *App) beginRunWith(parent context.Context, connID string) (context.Conte
 	}
 }
 
-// CancelQuery stops every statement still running on connID and reports how
-// many were cancelled. Cancelling a context is what makes the driver abort the
-// statement server-side (pgx/go-sql-driver both honor it); the connection pool
-// discards the broken connection on its own.
-func (a *App) CancelQuery(connID string) int {
+// CancelQuery stops the statements still running on connID and reports how
+// many were cancelled. An empty tabID means every run on the connection; a
+// tabID narrows it to that tab's runs — the editor's cancel button names its
+// tab so a long query in a neighbouring tab survives. Cancelling a context is
+// what makes the driver abort the statement server-side (pgx/go-sql-driver
+// both honor it); the connection pool discards the broken connection on its own.
+func (a *App) CancelQuery(connID, tabID string) int {
 	a.runsMu.Lock()
 	defer a.runsMu.Unlock()
 	set := a.runs[connID]
-	n := len(set)
-	for _, cancel := range set {
-		cancel()
+	n := 0
+	for _, e := range set {
+		if tabID != "" && e.tabID != tabID {
+			continue
+		}
+		e.cancel()
+		n++
 	}
 	// Do not delete the map here: each cancelled run's done() removes its entry,
 	// and deleting the map first would race with those calls.

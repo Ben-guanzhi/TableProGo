@@ -656,10 +656,11 @@ export async function ExecuteQueryInTabConfirmed(
   return post('/api/execute-in-tab-confirmed', { connId, tabId, query, database });
 }
 
-// CancelQuery asks the backend to abort every statement still running on the
-// connection, which cancels its context and makes the driver abort server-side.
-export async function CancelQuery(connId: string): Promise<{ cancelled: number }> {
-  return post('/api/cancel-query', { connId });
+// CancelQuery aborts the statements still running for the connection. A tabId
+// narrows it to that tab's statement — one tab's cancel must not kill a
+// neighbouring tab's long query. Empty tabId keeps the connection-wide sweep.
+export async function CancelQuery(connId: string, tabId = ''): Promise<{ cancelled: number }> {
+  return post('/api/cancel-query', { connId, tabId });
 }
 
 export interface ImportOptions {

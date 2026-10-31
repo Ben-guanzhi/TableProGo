@@ -1714,7 +1714,7 @@ function App() {
                     // Stop the server-side statement, then clear the spinner:
                     // bumping the tab's sequence makes the trailing stream
                     // events no-ops, so the rows already painted stay visible.
-                    CancelQuery(activeConnection.id).catch(() => {});
+                    CancelQuery(activeConnection.id, activeTabData.id).catch(() => {});
                     cancelQuery(activeTabData.id);
                   }}
                   isConnected={!!activeConnection}

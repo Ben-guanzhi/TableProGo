@@ -150,6 +150,7 @@ type passcodeRequest struct {
 
 type connIDRequest struct {
 	ConnID string `json:"connId"`
+	TabID  string `json:"tabId"`
 }
 
 type connDatabaseRequest struct {
@@ -769,7 +770,7 @@ func (a *App) routes() *http.ServeMux {
 		return a.ExecuteQueryConfirmedInTab(body.ConnID, body.TabID, body.Query, body.Database), nil
 	})
 	post(a, mux, "/api/cancel-query", 400, func(a *App, body connIDRequest) (any, error) {
-		return map[string]int{"cancelled": a.CancelQuery(body.ConnID)}, nil
+		return map[string]int{"cancelled": a.CancelQuery(body.ConnID, body.TabID)}, nil
 	})
 	post(a, mux, "/api/import", 400, func(a *App, body ImportRequest) (any, error) {
 		return a.ImportFile(body)

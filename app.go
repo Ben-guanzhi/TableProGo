@@ -57,7 +57,7 @@ type App struct {
 	// starts the next statement before the previous returns), so each keeps a
 	// set rather than a single handle. CancelQuery drains it.
 	runsMu sync.Mutex
-	runs   map[string]map[int64]context.CancelFunc
+	runs   map[string]map[int64]*runEntry
 	runSeq atomic.Int64
 
 	// mcpConfirmer asks the UI to approve one MCP write (mcp.go). Nil means the MCP
