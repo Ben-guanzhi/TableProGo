@@ -325,6 +325,11 @@ func (a *App) ApplyStructureEdit(req StructureEditRequest) (StructureEditResult,
 		if guard := guardWrite(mode, statement); guard.Blocked {
 			res.Warnings = append(res.Warnings, guard.Reason)
 			return res, fmt.Errorf("%s", guard.Reason)
+		} else if guard.NeedsConfirmation {
+			// confirmWrites covers structure DDL too — the same pause a
+			// table action takes, not a silent straight-to-execution path.
+			res.Warnings = append(res.Warnings, guard.Reason)
+			return res, needsConfirmationError{reason: guard.Reason}
 		}
 	}
 	conn, err := a.connection(req.ConnID)

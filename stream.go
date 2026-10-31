@@ -120,10 +120,10 @@ func (a *App) StreamQuery(ctx context.Context, connID, query, database string, e
 	truncated := false
 	for rows.Next() {
 		if runCtx.Err() != nil {
-			return a.finishStream(connID, database, query, start, runCtx.Err(), emitted, false, emit)
+			return a.finishStream(connID, database, query, start, runCtx.Err(), emitted, truncated, emit)
 		}
 		if err := rows.Scan(ptrs...); err != nil {
-			return a.finishStream(connID, database, query, start, err, emitted, false, emit)
+			return a.finishStream(connID, database, query, start, err, emitted, truncated, emit)
 		}
 		if limit > 0 && probe != query && emitted+len(batch) >= limit {
 			// The cap is ours (the probe added it): stop one past the limit and
@@ -186,7 +186,9 @@ func (a *App) finishStream(connID, database, query string, start time.Time, err 
 		ExecutionTime: time.Since(start).Seconds(),
 	}
 	if err != nil {
-		event.Error = err.Error()
+		// Same translation the buffered path applies: one statement must not
+		// report differently depending on which entry ran it.
+		event.Error = friendlyDBError(err)
 	}
 	a.recordStatement(connID, database, query, QueryResult{
 		RowCount: rowCount, Truncated: truncated, Error: event.Error,
