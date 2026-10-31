@@ -175,6 +175,21 @@ func (a *App) TestConnection(config ConnectionConfig) error {
 		host, port = localHost, localPort
 	}
 
+	if spec, isPlugin := plugins.lookup(config.Type); isPlugin {
+		// Test eagerly starts the plugin child and shuts it down: "test"
+		// means a bad path or a plugin that will not run surfaces HERE, not
+		// at the first query after the UI already said connected.
+		host, err := plugindriver.StartConn(context.Background(), spec.Path, nil)
+		if err != nil {
+			return fmt.Errorf("connection failed: %w", err)
+		}
+		if string(host.Kind()) != spec.Kind && spec.Kind != "" {
+			_ = host.Close()
+			return fmt.Errorf("plugin %s speaks %q, but it is registered as %q", spec.Path, host.Kind(), spec.Kind)
+		}
+		_ = host.Close()
+		return nil
+	}
 	if config.Type == "redis" {
 		kvConfig := config
 		kvConfig.Host, kvConfig.Port = host, port
@@ -337,6 +352,9 @@ func (a *App) Connect(id string) error {
 		if config.Type == "sqlite" {
 			return fmt.Errorf("ssh: SQLite is a local file and cannot use a tunnel")
 		}
+		if _, isPlugin := plugins.lookup(config.Type); isPlugin {
+			return fmt.Errorf("ssh: 插件引擎自带连接逻辑，隧道目标无法传达给它")
+		}
 		tun, host, port, err := openSSHTunnel(config.SSH, config.Host, config.Port)
 		if err != nil {
 			return fmt.Errorf("ssh tunnel failed: %w", err)
@@ -363,6 +381,12 @@ func (a *App) Connect(id string) error {
 		conn.kvDefault, _ = redisDBIndex(config.Database)
 		conn.kvDB = conn.kvDefault
 		conn.kvDBSet = true
+	} else if _, isPlugin := plugins.lookup(config.Type); isPlugin {
+		// Plugin engines dial nothing at connect: the child process starts
+		// lazily on first use (isConnected deliberately checks the
+		// registration, not the running process — requiring it here would
+		// race the very call that starts it), and the plugin owns the engine
+		// coordinates. conn.DB stays nil; pluginConnection() keys on that.
 	} else {
 		host, port := conn.dialTarget()
 		db, err := createConnectionAt(*config, host, port)

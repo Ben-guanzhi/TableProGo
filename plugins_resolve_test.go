@@ -38,6 +38,7 @@ func TestPluginBeatsTheBuiltinEngine(t *testing.T) {
 	// Register a plugin for sqlite — an engine this binary *does* compile in.
 	// The registered plugin must win, because the user asked for it.
 	plugins.register("sqlite", registeredPluginPath(t))
+	t.Cleanup(func() { plugins.unregister("sqlite") })
 
 	spec, ok := pluginSpecFor("sqlite")
 	if !ok {
@@ -99,6 +100,7 @@ func TestUnknownEngineHasNeither(t *testing.T) {
 // plugin-backed.
 func TestRegisteredPluginsListsWhatIsThere(t *testing.T) {
 	plugins.register("listed-engine", registeredPluginPath(t))
+	t.Cleanup(func() { plugins.unregister("listed-engine") })
 	found := false
 	for _, engineType := range RegisteredPlugins() {
 		if engineType == "listed-engine" {
@@ -114,6 +116,7 @@ func TestRegisteredPluginsListsWhatIsThere(t *testing.T) {
 // built-in one: the user chose it, and a quiet fallback would hide the reason.
 func TestAFailingPluginIsReported(t *testing.T) {
 	plugins.register("broken-engine", filepath.Join(t.TempDir(), "does-not-exist.exe"))
+	t.Cleanup(func() { plugins.unregister("broken-engine") })
 	conn := &Connection{ID: "res4", Name: "res", Type: "broken-engine", Database: "main"}
 
 	spec, ok := pluginSpecFor("broken-engine")

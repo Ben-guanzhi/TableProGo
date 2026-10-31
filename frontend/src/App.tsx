@@ -1394,7 +1394,10 @@ function App() {
         const tab = tabs[Number(key) - 1];
         if (tab) {
           event.preventDefault();
-          setActiveTab(tab.id);
+          // Route through switchToTab like a mouse switch: a direct
+          // setActiveTab silently discarded unapplied edits on the tab being
+          // left, while the same click asked for confirmation.
+          switchToTab(tab.id);
         }
       }
     };

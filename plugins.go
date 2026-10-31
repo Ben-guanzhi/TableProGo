@@ -88,6 +88,16 @@ func (r *pluginRegistry) register(typ, path string) {
 	r.specs[typ] = pluginSpec{Path: path, Kind: typ}
 }
 
+// unregister drops one registration. Test isolation: the registry is
+// process-global and Go runs tests in one process, so a test that overrides
+// a built-in engine type must clean up or every later test in the binary
+// sees the override.
+func (r *pluginRegistry) unregister(typ string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.specs, typ)
+}
+
 // startPlugin launches the plugin for a connection and keeps it on the Connection.
 // The process lives as long as the connection, so browsing does not pay a launch per
 // keystroke.

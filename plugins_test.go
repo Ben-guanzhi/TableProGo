@@ -130,6 +130,7 @@ func buildFakeEnginePlugin(t *testing.T) {
 		t.Fatalf("build plugin: %v\n%s", err, out)
 	}
 	plugins.register("fakeengine", binary)
+	t.Cleanup(func() { plugins.unregister("fakeengine") })
 }
 
 // A plugin connection has no *sql.DB, so the whole catalog path has to work from the
