@@ -110,6 +110,11 @@ const (
 
 // Without a usable cursor the page is read exactly as it always was.
 func (a *App) previewPage(connID string, database string, schema string, table string, limit int, offset int, filters []TableFilter, after []string, before []string) QueryResult {
+	// Register the run: without it the page read ran on context.Background()
+	// and no cancel could reach it, unlike the query editor's statements on
+	// the same connection.
+	ctx, done := a.beginRun(connID)
+	defer done()
 	conn, err := a.connection(connID)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
@@ -195,7 +200,7 @@ func (a *App) previewPage(connID string, database string, schema string, table s
 		return QueryResult{Error: err.Error()}
 	}
 
-	result := runSelect(db, query, time.Now(), cursorArgs...)
+	result := runSelectCtx(ctx, db, query, cursorArgs...)
 	if result.Error != "" {
 		return result
 	}
