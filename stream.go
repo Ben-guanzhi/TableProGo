@@ -45,7 +45,7 @@ type StreamEvent struct {
 // aborts the stream (a client that went away stops the work), and ctx cancels
 // the statement as well — the HTTP handler passes r.Context() so a closed
 // connection stops the server-side query instead of reading to the end.
-func (a *App) StreamQuery(ctx context.Context, connID, query, database string, emit func(StreamEvent) error) error {
+func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database string, emit func(StreamEvent) error) error {
 	// Safe Mode applies before anything runs; the client sees the same verdict
 	// shape as the buffered endpoint.
 	if _, err := a.kvConnection(connID); err != nil {
@@ -62,7 +62,7 @@ func (a *App) StreamQuery(ctx context.Context, connID, query, database string, e
 		return a.streamBuffered(connID, query, database, emit)
 	}
 
-	runCtx, done := a.beginRunWith(ctx, connID)
+	runCtx, done := a.beginRunWithTab(ctx, connID, tabID)
 	defer done()
 	start := time.Now()
 

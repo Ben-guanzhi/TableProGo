@@ -95,7 +95,7 @@ func (a *App) QueryColumns(connID string, query string, database string) ([]Colu
 // Preview reads the first rows of a table so the sidebar can show data without
 // the user writing a query, narrowed by the filter bar when it holds any.
 func (a *App) Preview(connID string, database string, schema string, table string, limit int, offset int, filters []TableFilter) QueryResult {
-	return a.previewPage(connID, database, schema, table, limit, offset, filters, nil, nil)
+	return a.previewPage(connID, "", database, schema, table, limit, offset, filters, nil, nil)
 }
 
 // previewPage reads one page of an object. A cursor - the key of a page already
@@ -109,11 +109,11 @@ const (
 )
 
 // Without a usable cursor the page is read exactly as it always was.
-func (a *App) previewPage(connID string, database string, schema string, table string, limit int, offset int, filters []TableFilter, after []string, before []string) QueryResult {
-	// Register the run: without it the page read ran on context.Background()
-	// and no cancel could reach it, unlike the query editor's statements on
-	// the same connection.
-	ctx, done := a.beginRun(connID)
+func (a *App) previewPage(connID, tabID, database string, schema string, table string, limit int, offset int, filters []TableFilter, after []string, before []string) QueryResult {
+	// Register the run scoped to the tab: without it the page read ran on
+	// context.Background() and no cancel could reach it, unlike the query
+	// editor's statements on the same connection.
+	ctx, done := a.beginRunIn(context.Background(), connID, tabID)
 	defer done()
 	conn, err := a.connection(connID)
 	if err != nil {

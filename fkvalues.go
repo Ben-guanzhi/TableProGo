@@ -176,6 +176,10 @@ func (a *App) ForeignKeyValues(connID, database, schema, table, column string, l
 		return ForeignKeyCandidates{}, err
 	}
 
+	if pluginConnection(conn) {
+		return ForeignKeyCandidates{}, fmt.Errorf("该操作暂不支持插件引擎连接")
+	}
+
 	db := conn.DB
 	if conn.Type == "postgresql" {
 		if db, err = a.poolFor(conn, database); err != nil {

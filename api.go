@@ -87,7 +87,7 @@ func (a *App) serveExecuteStream(w http.ResponseWriter, r *http.Request) {
 	}
 	// A client that disconnects cancels the statement: the request context is
 	// the parent of the run context, and the emit error stops the loop.
-	streamErr := a.StreamQuery(r.Context(), body.ConnID, body.Query, body.Database, emit)
+	streamErr := a.StreamQuery(r.Context(), body.ConnID, body.TabID, body.Query, body.Database, emit)
 	if streamErr != nil {
 		_ = emit(StreamEvent{Type: "error", Error: streamErr.Error()})
 	}
@@ -190,6 +190,9 @@ type queryRequest struct {
 	ConnID   string `json:"connId"`
 	Query    string `json:"query"`
 	Database string `json:"database"`
+	// TabID scopes the run so /api/cancel-query can stop THIS tab's
+	// statement without touching a neighbouring tab's (wave 34 semantics).
+	TabID string `json:"tabId"`
 }
 
 // llmAskRequest is one question for the assistant.
@@ -226,6 +229,9 @@ type tabQueryRequest struct {
 
 type previewRequest struct {
 	ConnID   string        `json:"connId"`
+	// TabID scopes the page read so /api/cancel-query can stop THIS tab's
+	// preview without touching a neighbouring tab's query.
+	TabID    string        `json:"tabId"`
 	Database string        `json:"database"`
 	Schema   string        `json:"schema"`
 	Table    string        `json:"table"`
@@ -509,7 +515,7 @@ func (a *App) routes() *http.ServeMux {
 		return a.ApplySync(body)
 	})
 	post(a, mux, "/api/preview", 400, func(a *App, body previewRequest) (any, error) {
-		return a.previewPage(body.ConnID, body.Database, body.Schema, body.Table,
+		return a.previewPage(body.ConnID, body.TabID, body.Database, body.Schema, body.Table,
 			body.Limit, body.Offset, body.Filters, body.After, body.Before), nil
 	})
 	post(a, mux, "/api/fk-values", 400, func(a *App, body fkValuesRequest) (any, error) {

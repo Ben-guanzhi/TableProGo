@@ -299,9 +299,11 @@ export async function PreviewTable(
   offset = 0,
   filters: SqlFilter[] = [],
   cursor: PreviewCursor = {},
+  tabId = '',
 ): Promise<any> {
   return post('/api/preview', {
     ...ref,
+    tabId,
     limit,
     offset,
     filters,
@@ -719,11 +721,12 @@ export async function ExecuteQueryStream(
   query: string,
   database = '',
   handlers: StreamHandlers = {},
+  tabId = '',
 ): Promise<StreamEvent> {
   const res = await fetch(`${BASE}/api/execute-stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
-    body: JSON.stringify({ connId, query, database }),
+    body: JSON.stringify({ connId, query, database, tabId }),
   });
   if (!res.ok || !res.body) {
     throw new Error(`stream failed: HTTP ${res.status}`);

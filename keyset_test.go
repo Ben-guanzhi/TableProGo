@@ -193,7 +193,7 @@ func TestCursorWalkMatchesOffsetWalk(t *testing.T) {
 	var byCursor []string
 	after := []string(nil)
 	for page := 1; page <= 4; page++ {
-		result := a.previewPage(conn.ID, conn.Database, "", "items", limit, (page-1)*limit, nil, after, nil)
+		result := a.previewPage(conn.ID, "", conn.Database, "", "items", limit, (page-1)*limit, nil, after, nil)
 		byCursor = append(byCursor, pageIDs(t, result))
 		if len(result.EndCursor) != 1 || len(result.StartCursor) != 1 {
 			t.Fatalf("page %d cursors: %v / %v", page, result.StartCursor, result.EndCursor)
@@ -225,14 +225,14 @@ func TestBackwardSeekReturnsThePreviousPage(t *testing.T) {
 	}
 	a := searchApp(conn)
 
-	first := a.previewPage(conn.ID, conn.Database, "", "items", 3, 0, nil, nil, nil)
-	page2 := a.previewPage(conn.ID, conn.Database, "", "items", 3, 3, nil, first.EndCursor, nil)
-	page3 := a.previewPage(conn.ID, conn.Database, "", "items", 3, 6, nil, page2.EndCursor, nil)
+	first := a.previewPage(conn.ID, "", conn.Database, "", "items", 3, 0, nil, nil, nil)
+	page2 := a.previewPage(conn.ID, "", conn.Database, "", "items", 3, 3, nil, first.EndCursor, nil)
+	page3 := a.previewPage(conn.ID, "", conn.Database, "", "items", 3, 6, nil, page2.EndCursor, nil)
 	if got := pageIDs(t, page3); got != "7,8,9" {
 		t.Fatalf("page 3: %s", got)
 	}
 
-	backTo2 := a.previewPage(conn.ID, conn.Database, "", "items", 3, 3, nil, nil, page3.StartCursor)
+	backTo2 := a.previewPage(conn.ID, "", conn.Database, "", "items", 3, 3, nil, nil, page3.StartCursor)
 	if got, want := pageIDs(t, backTo2), "4,5,6"; got != want {
 		t.Errorf("previous page: got %s want %s", got, want)
 	}
@@ -242,7 +242,7 @@ func TestBackwardSeekReturnsThePreviousPage(t *testing.T) {
 	if strings.Join(backTo2.EndCursor, ",") != strings.Join(page2.EndCursor, ",") {
 		t.Errorf("cursors after stepping back: %v vs %v", backTo2.EndCursor, page2.EndCursor)
 	}
-	backTo1 := a.previewPage(conn.ID, conn.Database, "", "items", 3, 0, nil, nil, backTo2.StartCursor)
+	backTo1 := a.previewPage(conn.ID, "", conn.Database, "", "items", 3, 0, nil, nil, backTo2.StartCursor)
 	if got := pageIDs(t, backTo1); got != "1,2,3" {
 		t.Errorf("two steps back: %s", got)
 	}
@@ -259,7 +259,7 @@ func TestTextKeySeekSurvivesAwkwardValues(t *testing.T) {
 	var byCursor []string
 	after := []string(nil)
 	for page := 1; page <= 4; page++ {
-		result := a.previewPage(conn.ID, conn.Database, "", "tags", 2, (page-1)*2, nil, after, nil)
+		result := a.previewPage(conn.ID, "", conn.Database, "", "tags", 2, (page-1)*2, nil, after, nil)
 		if len(result.Rows) == 0 {
 			break
 		}
@@ -310,7 +310,7 @@ func TestCompositeKeySeekMatchesOffset(t *testing.T) {
 	var byCursor []string
 	after := []string(nil)
 	for page := 1; page <= 6; page++ {
-		result := a.previewPage(conn.ID, conn.Database, "", "comp", 2, (page-1)*2, nil, after, nil)
+		result := a.previewPage(conn.ID, "", conn.Database, "", "comp", 2, (page-1)*2, nil, after, nil)
 		if len(result.Rows) == 0 {
 			break
 		}
@@ -339,8 +339,8 @@ func TestCompositeKeySeekMatchesOffset(t *testing.T) {
 	}
 
 	// And one step back over a composite key.
-	third := a.previewPage(conn.ID, conn.Database, "", "comp", 2, 4, nil, nil, nil)
-	back := a.previewPage(conn.ID, conn.Database, "", "comp", 2, 2, nil, nil, third.StartCursor)
+	third := a.previewPage(conn.ID, "", conn.Database, "", "comp", 2, 4, nil, nil, nil)
+	back := a.previewPage(conn.ID, "", conn.Database, "", "comp", 2, 2, nil, nil, third.StartCursor)
 	if pageIDs(t, back) != byOffset[1] {
 		t.Errorf("composite step back: %s want %s", pageIDs(t, back), byOffset[1])
 	}
@@ -364,7 +364,7 @@ func TestKeylessAndUnseekablePagesFallBackToOffset(t *testing.T) {
 	a := searchApp(conn)
 
 	for _, table := range []string{"keyless", "realkey", "datekey"} {
-		result := a.previewPage(conn.ID, conn.Database, "", table, 2, 2, nil, []string{"anything"}, nil)
+		result := a.previewPage(conn.ID, "", conn.Database, "", table, 2, 2, nil, []string{"anything"}, nil)
 		if result.Error != "" {
 			t.Fatalf("%s: %s", table, result.Error)
 		}
@@ -381,7 +381,7 @@ func TestKeylessAndUnseekablePagesFallBackToOffset(t *testing.T) {
 
 	// A key the walk could use, but a cursor of the wrong shape: the OFFSET page
 	// is still the right answer, and it hands back a cursor of its own.
-	broken := a.previewPage(conn.ID, conn.Database, "", "keyed", 2, 2, nil, []string{"not a number"}, nil)
+	broken := a.previewPage(conn.ID, "", conn.Database, "", "keyed", 2, 2, nil, []string{"not a number"}, nil)
 	if broken.Error != "" {
 		t.Fatalf("keyed with a broken cursor: %s", broken.Error)
 	}
@@ -408,7 +408,7 @@ func TestCursorSeeksInsideAFilteredPage(t *testing.T) {
 	a := searchApp(conn)
 	filters := []TableFilter{{Column: "kind", Op: filterEq, Value: "even"}}
 	preview := func(offset int, after, before []string) QueryResult {
-		return a.previewPage(conn.ID, conn.Database, "", "items", 2, offset, filters, after, before)
+		return a.previewPage(conn.ID, "", conn.Database, "", "items", 2, offset, filters, after, before)
 	}
 
 	var byCursor []string

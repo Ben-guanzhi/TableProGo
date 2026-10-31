@@ -11,7 +11,7 @@ import (
 func collectStream(t *testing.T, app *App, query string) []StreamEvent {
 	t.Helper()
 	var events []StreamEvent
-	err := app.StreamQuery(context.Background(), "c1", query, "", func(ev StreamEvent) error {
+	err := app.StreamQuery(context.Background(), "c1", "", query, "", func(ev StreamEvent) error {
 		events = append(events, ev)
 		return nil
 	})
@@ -155,7 +155,7 @@ func TestLiveStreamCancelStopsEarly(t *testing.T) {
 
 	rowsSeen := 0
 	start := time.Now()
-	err := app.StreamQuery(ctx, "c1", "SELECT i FROM generate_series(1,1000000) i", "", func(ev StreamEvent) error {
+	err := app.StreamQuery(ctx, "c1", "", "SELECT i FROM generate_series(1,1000000) i", "", func(ev StreamEvent) error {
 		rowsSeen += len(ev.Rows)
 		if rowsSeen >= streamBatchSize {
 			cancel() // client-side abort after the first batch
@@ -177,7 +177,7 @@ func TestLiveStreamLargeResultTruncates(t *testing.T) {
 	app := newLivePGApp(t)
 	app.settings.ResultLimit = 1000
 	var events []StreamEvent
-	if err := app.StreamQuery(context.Background(), "c1", "SELECT i FROM generate_series(1,5000) i", "", func(ev StreamEvent) error {
+	if err := app.StreamQuery(context.Background(), "c1", "", "SELECT i FROM generate_series(1,5000) i", "", func(ev StreamEvent) error {
 		events = append(events, ev)
 		return nil
 	}); err != nil {

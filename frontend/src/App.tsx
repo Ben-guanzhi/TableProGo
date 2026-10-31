@@ -648,7 +648,7 @@ function App() {
     const filters = tab.dataFilters ?? [];
     try {
       const [result, columns] = await Promise.all([
-        PreviewTable(ref, pageSize, (page - 1) * pageSize, filters, tab.dataRequest ?? {}) as Promise<unknown> as Promise<QueryResult>,
+        PreviewTable(ref, pageSize, (page - 1) * pageSize, filters, tab.dataRequest ?? {}, tab.id) as Promise<unknown> as Promise<QueryResult>,
         settings.showColumnComments
           ? GetColumns(ref.connId, ref.database, ref.schema, ref.table).catch(() => [])
           : Promise.resolve([]),
@@ -1640,7 +1640,7 @@ function App() {
                   onExplain={sql => handleObjectExplainQuery(activeTabData, sql)}
                   onCancel={() => {
                     if (!activeConnection) return;
-                    CancelQuery(activeConnection.id).catch(() => {});
+                    CancelQuery(activeConnection.id, activeTabData.id).catch(() => {});
                     cancelObjectQuery(activeTabData.id);
                   }}
                   loading={!!activeTabData.objectResult?.loading}

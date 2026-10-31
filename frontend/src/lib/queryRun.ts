@@ -87,16 +87,24 @@ export async function runStreamed(
     onPartial(final);
     return final;
   }
-  const done = await ExecuteQueryStream(connId, sql, database, {
-    onColumns: next => {
-      columns = next;
-      onPartial(partial());
+  const done = await ExecuteQueryStream(
+    connId,
+    sql,
+    database,
+    {
+      onColumns: next => {
+        columns = next;
+        onPartial(partial());
+      },
+      onRows: batch => {
+        rows = rows.concat(batch);
+        onPartial(partial());
+      },
     },
-    onRows: batch => {
-      rows = rows.concat(batch);
-      onPartial(partial());
-    },
-  });
+    // The run registers under this tab's id: /api/cancel-query with a tabId
+    // stops exactly this statement, not a neighbouring tab's.
+    tabId,
+  );
   if (done.type === 'error' && done.needsConfirmation) {
     const paused: QueryResult = { ...emptyResult(), error: done.error, needsConfirmation: true };
     const answer = confirmThenRun(

@@ -162,6 +162,10 @@ func searchOneTable(ctx context.Context, a *App, conn *Connection, database stri
 		return QueryResult{}, err
 	}
 
+	if pluginConnection(conn) {
+		return QueryResult{}, fmt.Errorf("该操作暂不支持插件引擎连接")
+	}
+
 	db := conn.DB
 	if conn.Type == "postgresql" {
 		// Cross-database search needs a session bound to that database.

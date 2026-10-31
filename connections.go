@@ -313,14 +313,25 @@ func (a *App) Connect(id string) error {
 	// froze for the whole round trip. The commit at the bottom re-takes the
 	// lock and tears down whatever previous connection this replaces.
 	a.connectionsMu.RLock()
-	var config *ConnectionConfig
+	var found *ConnectionConfig
 	for i := range a.savedConnections {
 		if a.savedConnections[i].ID == id {
-			config = &a.savedConnections[i]
+			found = &a.savedConnections[i]
 			break
 		}
 	}
+	// Value copy: the pointer would be dereferenced for the whole dial below,
+	// after RUnlock — UpdateConnection writes the same element in place and
+	// DeleteConnection shifts the slice, so the snapshot must not alias it.
+	var configVal ConnectionConfig
+	if found != nil {
+		configVal = *found
+	}
 	a.connectionsMu.RUnlock()
+	var config *ConnectionConfig
+	if found != nil {
+		config = &configVal
+	}
 	if config == nil {
 		return fmt.Errorf("invalid connection id: %s", id)
 	}
@@ -402,7 +413,13 @@ func (a *App) Connect(id string) error {
 
 	// Commit: take the write lock and tear down whatever previous
 	// connection this replaces — same reasons as Disconnect (a manager left
-	// behind would fail its next statement with "database is closed").
+	// behind would fail its next statement with "database is closed"). The
+	// tab sessions go too: their transaction rows were rolled back by the
+	// manager swap, and keeping them Active made the next statement fail
+	// with "transaction not found" and the session badge lie.
+	for _, tabID := range a.forgetSessionTabsFor(id) {
+		a.forgetSession(tabID)
+	}
 	a.connectionsMu.Lock()
 	if existing, ok := a.connections[id]; ok {
 		if existing.DB != nil {

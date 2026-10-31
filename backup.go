@@ -72,6 +72,10 @@ func (a *App) Backup(req BackupRequest) (BackupResult, error) {
 		res.Error = "备份需要输出文件路径"
 		return res, fmt.Errorf("%s", res.Error)
 	}
+	if pluginConnection(conn) {
+		res.Error = "插件引擎连接不支持原生备份工具"
+		return res, fmt.Errorf("%s", res.Error)
+	}
 	if !nativeBackupSupported(conn.Type) {
 		res.Error = fmt.Sprintf("引擎 %s 无官方单文件 dump 工具（SQLite 是单文件库；SQL Server/Oracle 的备份是服务端操作），此对话仅支持 PostgreSQL/MySQL", conn.Type)
 		return res, fmt.Errorf("%s", res.Error)
