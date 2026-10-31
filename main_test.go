@@ -12,10 +12,10 @@ func TestParseFlags(t *testing.T) {
 	defer func() { os.Args = orig }()
 
 	cases := []struct {
-		name  string
-		args  []string
-		mcp   bool
-		port  int
+		name   string
+		args   []string
+		mcp    bool
+		port   int
 		config string
 	}{
 		{"plain", []string{"tablepro-go"}, false, 0, ""},

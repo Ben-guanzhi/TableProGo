@@ -531,7 +531,13 @@ function App() {
 
       setTabs(current => current.map(t =>
         t.id === tabId
-          ? { ...t, database, result, comments, source, loading: false, isDirty: false }
+          ? {
+              ...t, database, result, comments, source, loading: false,
+              // A keystroke during streaming set isDirty on the live tab;
+              // forcing false here would mark edited text as clean. Dirty
+              // survives only when the editor text diverged from what ran.
+              isDirty: t.isDirty && t.query !== sql,
+            }
           : t
       ));
     } catch (error) {

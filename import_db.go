@@ -296,6 +296,9 @@ func (w *importWriter) write(chunk [][]*string, firstRow int) error {
 					continue
 				}
 				w.res.Rows++
+				// Each retried row is its own statement: without this the
+				// summary undercounts executed statements in skipErrors mode.
+				w.res.Statements++
 			}
 			continue
 		}
