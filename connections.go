@@ -392,6 +392,14 @@ func (a *App) Connect(id string) error {
 }
 
 func (a *App) Disconnect(connID string) error {
+	// Roll back and forget this connection's tab sessions while the pools are
+	// still alive: after teardown a rollback just fails, and the stale
+	// entries made post-reconnect statements fail with "transaction not
+	// found". Runs before connectionsMu — forgetSession reads the connection
+	// map through it.
+	for _, tabID := range a.forgetSessionTabsFor(connID) {
+		a.forgetSession(tabID)
+	}
 	a.connectionsMu.Lock()
 	defer a.connectionsMu.Unlock()
 

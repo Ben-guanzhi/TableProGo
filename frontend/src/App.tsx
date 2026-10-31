@@ -89,6 +89,7 @@ import {
   BeginTransaction,
   CommitTransaction,
   ExecuteQueryInTab,
+  ForgetTxSession,
   RollbackTransaction,
 } from './api';
 import { defaultSettings, saveSettings, useLoadSettings, useSettingsEffect } from './lib/useSettings';
@@ -337,6 +338,9 @@ function App() {
 
   const closeTabForReal = (tabId: string) => {
     pendingEdits.current.delete(tabId);
+    // The backend rolls back and forgets the tab's transaction session;
+    // fire-and-forget: tab closing must not block on a network round-trip.
+    ForgetTxSession(tabId).catch(() => {});
     const newTabs = tabs.filter(t => t.id !== tabId);
     setTabs(newTabs);
     if (activeTab === tabId) {

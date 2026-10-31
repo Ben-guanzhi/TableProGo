@@ -148,6 +148,26 @@ func (a *App) sessionOf(tabID string) *txn.Session {
 	return s
 }
 
+// ForgetTxSession is the tab-close entry point (api.go /api/tx-forget):
+// forgetSession was fully implemented but had zero callers, so closing a tab
+// left its transaction running server-side until disconnect.
+func (a *App) ForgetTxSession(tabID string) {
+	a.forgetSession(tabID)
+}
+
+// forgetSessionTabsFor lists the tab IDs whose session belongs to connID.
+func (a *App) forgetSessionTabsFor(connID string) []string {
+	a.txSessionsMu.Lock()
+	defer a.txSessionsMu.Unlock()
+	var out []string
+	for tabID, s := range a.txSessions {
+		if s.ConnectionID() == connID {
+			out = append(out, tabID)
+		}
+	}
+	return out
+}
+
 // forgetSession drops a tab's transaction state (the tab was closed). An open
 // transaction is rolled back first: closing a tab must not leave one running.
 func (a *App) forgetSession(tabID string) {

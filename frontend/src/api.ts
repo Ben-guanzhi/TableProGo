@@ -631,6 +631,12 @@ export async function TransactionStatus(tabId: string): Promise<string> {
   return (res as { status: string }).status;
 }
 
+// ForgetTxSession rolls back and drops a tab's transaction state on tab
+// close — without it the server-side transaction hung until disconnect.
+export async function ForgetTxSession(tabId: string): Promise<void> {
+  await post('/api/tx-forget', { connId: '', tabId, database: '' });
+}
+
 // ExecuteQueryInTab runs a statement inside the tab's transaction when it has one.
 export async function ExecuteQueryInTab(
   connId: string,

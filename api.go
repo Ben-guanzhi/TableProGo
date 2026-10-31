@@ -755,6 +755,13 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/tx-status", 400, func(a *App, body txRequest) (any, error) {
 		return map[string]string{"status": a.TransactionStatus(body.TabID)}, nil
 	})
+	// Tab close: roll back any transaction the tab still holds and drop its
+	// session state — without this a server-side transaction hung until
+	// disconnect, holding locks and its dedicated connection.
+	post(a, mux, "/api/tx-forget", 400, func(a *App, body txRequest) (any, error) {
+		a.ForgetTxSession(body.TabID)
+		return map[string]string{"status": "ok"}, nil
+	})
 	post(a, mux, "/api/execute-in-tab", 400, func(a *App, body tabQueryRequest) (any, error) {
 		return a.ExecuteQueryInTab(body.ConnID, body.TabID, body.Query, body.Database), nil
 	})
