@@ -436,10 +436,20 @@ type (
 )
 
 func resolveSchema(conn *Connection, database, schema string) string {
+	// An explicit schema wins: the sidebar and structure panel pass the
+	// schema the user actually navigated to (PG 非 public、MSSQL 非 dbo)，
+	// and clobbering it read same-named tables from the default schema.
+	// The defaults below are for callers that legitimately have no schema.
 	switch conn.Type {
 	case "sqlserver":
+		if schema != "" {
+			return schema
+		}
 		return "dbo"
 	case "postgresql":
+		if schema != "" {
+			return schema
+		}
 		return "public"
 	case "mysql":
 		return database

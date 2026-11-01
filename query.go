@@ -635,6 +635,16 @@ func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 func cellValue(v dbcore.Value) interface{} {
 	switch v.Kind {
 	case dbcore.ValInt:
+		// Beyond Number.MAX_SAFE_INTEGER a JSON number rounds through the
+		// browser's res.json() — the grid would display AND edit-save a
+		// different value, and key predicates built from the rounded cell
+		// hit the wrong row. Snowflake-style IDs live exactly there. Cross
+		// as exact digit text (the string round-trips through
+		// exactNumberLiteral on the save path); the grid's numeric ordering
+		// already handles numeric strings.
+		if v.I > 1<<53 || v.I < -(1<<53) {
+			return strconv.FormatInt(v.I, 10)
+		}
 		return v.I
 	case dbcore.ValFloat:
 		return v.F
