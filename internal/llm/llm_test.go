@@ -17,6 +17,8 @@ type fakeProvider struct {
 	replies []string
 	// requests records the decoded request bodies.
 	requests []map[string]interface{}
+	// headers records the request headers, in order.
+	headers []http.Header
 	// status overrides the response code.
 	status int
 	// server is the running test server.
@@ -30,6 +32,7 @@ func newFakeProvider(t *testing.T, replies ...string) *fakeProvider {
 		var body map[string]interface{}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		p.requests = append(p.requests, body)
+		p.headers = append(p.headers, r.Header.Clone())
 		if p.status != 0 {
 			w.WriteHeader(p.status)
 			fmt.Fprint(w, `{"error":{"message":"refused"}}`)
@@ -261,8 +264,30 @@ func TestAnthropicToolCall(t *testing.T) {
 	}
 }
 
+func TestAnthropicAuthHeaders(t *testing.T) {
+	// Anthropic's gateway signs with x-api-key and pins anthropic-version;
+	// a bearer Authorization header is rejected. The old transport sent
+	// only the bearer token, so every Anthropic call failed at the gateway.
+	provider := newFakeProvider(t, `{"content":[{"type":"text","text":"ok"}]}`)
+	client := New(Config{Provider: "anthropic", BaseURL: provider.server.URL, APIKey: "sk-test", Model: "m", Enabled: true})
+	_, err := client.Ask(context.Background(), "sys", []Message{{Role: "user", Content: "x"}}, nil, nil)
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	h := provider.headers[0]
+	if h.Get("x-api-key") != "sk-test" {
+		t.Fatalf("x-api-key = %q, want sk-test", h.Get("x-api-key"))
+	}
+	if h.Get("anthropic-version") != "2023-06-01" {
+		t.Fatalf("anthropic-version = %q, want 2023-06-01", h.Get("anthropic-version"))
+	}
+	if got := h.Get("Authorization"); got != "" {
+		t.Fatalf("Anthropic must not get a bearer token, got %q", got)
+	}
+}
+
 func TestGoogleAnswer(t *testing.T) {
-	provider := newFakeProvider(t, `{"candidates":[{"content":{"role":"model","parts":["hello ","world"]},"finishReason":"STOP"}]}`)
+	provider := newFakeProvider(t, `{"candidates":[{"content":{"role":"model","parts":[{"text":"hello "},{"text":"world"}]},"finishReason":"STOP"}]}`)
 	client := New(Config{Provider: "google", BaseURL: provider.server.URL, APIKey: "k", Model: "gemini-x", Enabled: true})
 	resp, err := client.Ask(context.Background(), "sys", []Message{{Role: "user", Content: "x"}}, nil, nil)
 	if err != nil {
@@ -270,6 +295,32 @@ func TestGoogleAnswer(t *testing.T) {
 	}
 	if resp.Text != "hello world" {
 		t.Fatalf("text = %q", resp.Text)
+	}
+}
+
+func TestGoogleFunctionCall(t *testing.T) {
+	// A functionCall part must surface as a tool call, not as answer text:
+	// the old string-array shape could not carry it at all. The fake repeats
+	// its last reply, so the second reply is the model's final answer.
+	provider := newFakeProvider(t,
+		`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"run_query","args":{"sql":"SELECT 1"}}}]},"finishReason":"STOP"}]}`,
+		`{"candidates":[{"content":{"role":"model","parts":[{"text":"7 rows"}]},"finishReason":"STOP"}]}`)
+	client := New(Config{Provider: "google", BaseURL: provider.server.URL, APIKey: "k", Model: "gemini-x", Enabled: true})
+	ran := false
+	resp, err := client.Ask(context.Background(), "sys", []Message{{Role: "user", Content: "count rows"}},
+		[]Tool{{Name: "run_query"}},
+		func(ctx context.Context, name string, args map[string]interface{}) (string, error) {
+			ran = name == "run_query" && args["sql"] == "SELECT 1"
+			return "7 rows", nil
+		})
+	if err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !ran {
+		t.Fatalf("the functionCall part did not reach the runner")
+	}
+	if resp.Text != "7 rows" {
+		t.Fatalf("text = %q, want the second-round answer", resp.Text)
 	}
 }
 

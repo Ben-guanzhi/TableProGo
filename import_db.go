@@ -144,7 +144,7 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
-	ctx, done := a.beginRun(req.ConnID)
+	ctx, done := a.beginRunIn(context.Background(), req.ConnID, "import")
 	defer done()
 
 	if opts.Mode == "truncate" {

@@ -385,7 +385,7 @@ export default function CompareView({ connections, connectedIds, initialSource, 
           {applying && (
             <button
               className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs border border-line text-secondary hover:text-ink hover:bg-raised"
-              onClick={() => CancelQuery(target.connId).catch(() => {})}
+              onClick={() => CancelQuery(target.connId, "apply").catch(() => {})}
             >
               取消
             </button>

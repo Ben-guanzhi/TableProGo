@@ -75,7 +75,7 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 		return ERSchema{}, err
 	}
 
-	ctx, done := a.beginRun(connID)
+	ctx, done := a.beginRunIn(context.Background(), connID, "er")
 	defer done()
 	found, err := drv.ListTables(ctx, listSchema)
 	if err != nil {

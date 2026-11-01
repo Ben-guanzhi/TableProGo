@@ -303,7 +303,7 @@ const ERDiagram: React.FC<Props> = ({ connId, database, schema, title, theme }) 
           读取结构关系…
           <button
             className="px-2 py-0.5 rounded border border-line text-2xs text-secondary hover:text-ink hover:bg-raised"
-            onClick={() => CancelQuery(connId).catch(() => {})}
+            onClick={() => CancelQuery(connId, "er").catch(() => {})}
           >
             取消
           </button>

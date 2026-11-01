@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -231,7 +232,7 @@ func (a *App) ApplySync(req ApplySyncRequest) (ApplySyncResult, error) {
 		return ApplySyncResult{}, err
 	}
 
-	ctx, done := a.beginRun(plan.target.ConnID)
+	ctx, done := a.beginRunIn(context.Background(), plan.target.ConnID, "apply")
 	defer done()
 	var executed []string
 	for _, s := range statements {

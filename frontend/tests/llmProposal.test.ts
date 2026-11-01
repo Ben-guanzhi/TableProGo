@@ -40,7 +40,9 @@ test('the waiting proposals are read', async () => {
 
 test('accepting sends the id and reports the result', async () => {
   calls.length = 0;
-  nextResponse = { result: { RowCount: 3, Error: '' } };
+  // The backend serializes QueryResult with lowercase field names
+  // (rowCount/error) — the mock must match the real contract.
+  nextResponse = { result: { rowCount: 3, error: '' } };
   const result = await AcceptLlmProposal('prop-1');
   assert.equal(calls.length, 1);
   assert.match(calls[0].path, /\/api\/llm\/proposal\/accept$/);
@@ -50,7 +52,7 @@ test('accepting sends the id and reports the result', async () => {
 });
 
 test('a refused statement comes back as an error the panel can show', async () => {
-  nextResponse = { result: { Error: 'Safe Mode blocked this statement' } };
+  nextResponse = { result: { error: 'Safe Mode blocked this statement' } };
   const result = await AcceptLlmProposal('prop-2');
   assert.match(result.error ?? '', /Safe Mode/);
 });

@@ -79,7 +79,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
           <h2 id="import-dialog-title" className="text-lg font-semibold">
             导入数据 → {target.table}
           </h2>
-          <button className="text-secondary hover:text-ink" onClick={onClose} aria-label="关闭对话框">
+          <button className="text-secondary hover:text-ink" onClick={() => { if (!running) onClose(); }} aria-label="关闭对话框">
             <FiX size={20} />
           </button>
         </div>
@@ -206,7 +206,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
               <button
                 type="button"
                 className="px-4 py-2 rounded text-sm border border-line text-secondary hover:text-ink hover:bg-raised"
-                onClick={() => CancelQuery(target.connId).catch(() => {})}
+                onClick={() => CancelQuery(target.connId, "import").catch(() => {})}
               >
                 取消
               </button>

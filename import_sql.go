@@ -4,6 +4,7 @@ package main
 // internal/sqlscript; this file runs the statements through the kernel driver.
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -40,7 +41,7 @@ func (a *App) ImportSQLScript(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
-	ctx, done := a.beginRun(req.ConnID)
+	ctx, done := a.beginRunIn(context.Background(), req.ConnID, "import")
 	defer done()
 
 	if req.Options.SkipErrors {

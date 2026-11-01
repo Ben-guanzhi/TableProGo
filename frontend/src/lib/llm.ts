@@ -80,8 +80,10 @@ export async function LoadLlmProposals(): Promise<LlmProposal[]> {
 export async function AcceptLlmProposal(id: string): Promise<{ error?: string; rowCount?: number }> {
   const res = await post('/api/llm/proposal/accept', { id });
   const result = res?.result ?? {};
-  const error = typeof result.Error === 'string' && result.Error ? result.Error : undefined;
-  return { error, rowCount: result.RowCount };
+  // The QueryResult JSON uses lowercase field names (rowCount/error) —
+  // reading PascalCase here silently swallowed every Safe Mode refusal.
+  const error = typeof result.error === 'string' && result.error ? result.error : undefined;
+  return { error, rowCount: result.rowCount };
 }
 
 // RejectLlmProposal drops a proposed statement without running it.

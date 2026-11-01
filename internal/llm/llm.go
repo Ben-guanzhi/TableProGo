@@ -300,7 +300,7 @@ func (c *Client) completeOpenAI(ctx context.Context, system string, messages []M
 		})
 	}
 
-	body, status, err := doJSON(ctx, c.http, c.cfg.BaseURL+"/chat/completions", c.cfg.APIKey, payload)
+	body, status, err := doJSON(ctx, c.http, c.cfg.BaseURL+"/chat/completions", c.cfg.APIKey, payload, nil)
 	if err != nil {
 		return Response{}, err
 	}
@@ -390,7 +390,12 @@ func (c *Client) completeAnthropic(ctx context.Context, system string, messages 
 		})
 	}
 
-	body, status, err := doJSON(ctx, c.http, c.cfg.BaseURL+"/messages", c.cfg.APIKey, payload)
+	// Anthropic signs with x-api-key (not a bearer token) and pins the API
+	// version; the Authorization header above would be rejected by its gateway.
+	body, status, err := doJSON(ctx, c.http, c.cfg.BaseURL+"/messages", "", payload, map[string]string{
+		"x-api-key":          c.cfg.APIKey,
+		"anthropic-version":  "2023-06-01",
+	})
 	if err != nil {
 		return Response{}, err
 	}
@@ -429,8 +434,19 @@ type gemRequest struct {
 }
 
 type gemContent struct {
-	Role  string   `json:"role,omitempty"`
-	Parts []string `json:"parts"`
+	Role  string     `json:"role,omitempty"`
+	Parts []gemPart `json:"parts"`
+}
+
+// gemPart is one piece of a Gemini content block. Text carries the message;
+// a function call comes back as a part with FunctionCall set — the API does
+// not put tool calls anywhere else in the response.
+type gemPart struct {
+	Text         string `json:"text,omitempty"`
+	FunctionCall *struct {
+		Name string          `json:"name"`
+		Args json.RawMessage `json:"args"`
+	} `json:"functionCall,omitempty"`
 }
 
 type gemTool struct {
@@ -454,14 +470,14 @@ type gemResponse struct {
 func (c *Client) completeGoogle(ctx context.Context, system string, messages []Message, tools []Tool) (Response, error) {
 	payload := gemRequest{}
 	if system != "" {
-		payload.SystemInstruction = &gemContent{Parts: []string{system}}
+		payload.SystemInstruction = &gemContent{Parts: []gemPart{{Text: system}}}
 	}
 	for _, m := range messages {
 		role := "user"
 		if m.Role == "assistant" {
 			role = "model"
 		}
-		payload.Contents = append(payload.Contents, gemContent{Role: role, Parts: []string{m.Content}})
+		payload.Contents = append(payload.Contents, gemContent{Role: role, Parts: []gemPart{{Text: m.Content}}})
 	}
 	if len(tools) > 0 {
 		decl := gemTool{}
@@ -476,7 +492,7 @@ func (c *Client) completeGoogle(ctx context.Context, system string, messages []M
 	}
 
 	url := c.cfg.BaseURL + "/models/" + c.cfg.Model + ":generateContent"
-	body, status, err := doJSON(ctx, c.http, url, c.cfg.APIKey, payload)
+	body, status, err := doJSON(ctx, c.http, url, c.cfg.APIKey, payload, nil)
 	if err != nil {
 		return Response{}, err
 	}
@@ -495,15 +511,32 @@ func (c *Client) completeGoogle(ctx context.Context, system string, messages []M
 	}
 	out := Response{StopReason: parsed.Candidates[0].Finish}
 	for _, part := range parsed.Candidates[0].Content.Parts {
-		out.Text += part
+		if part.Text != "" {
+			out.Text += part.Text
+		}
+		if part.FunctionCall != nil {
+			args := map[string]interface{}{}
+			if len(part.FunctionCall.Args) > 0 {
+				_ = json.Unmarshal(part.FunctionCall.Args, &args)
+			}
+			out.ToolCalls = append(out.ToolCalls, ToolCall{
+				Name:      part.FunctionCall.Name,
+				Arguments: args,
+			})
+		}
+	}
+	if len(out.ToolCalls) > 0 && out.StopReason == "" {
+		out.StopReason = "tool_calls"
 	}
 	return out, nil
 }
 
 // ---------- transport ----------
 
-// doJSON posts a JSON body and returns the response body and status.
-func doJSON(ctx context.Context, client *http.Client, url, apiKey string, payload interface{}) ([]byte, int, error) {
+// doJSON posts a JSON body and returns the response body and status. extra
+// carries provider-specific headers (Anthropic signs with x-api-key, not a
+// bearer token).
+func doJSON(ctx context.Context, client *http.Client, url, apiKey string, payload interface{}, extra map[string]string) ([]byte, int, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return nil, 0, fmt.Errorf("encode the request: %w", err)
@@ -515,6 +548,9 @@ func doJSON(ctx context.Context, client *http.Client, url, apiKey string, payloa
 	req.Header.Set("Content-Type", "application/json")
 	if apiKey != "" {
 		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	for k, v := range extra {
+		req.Header.Set(k, v)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
