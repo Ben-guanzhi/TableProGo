@@ -80,6 +80,44 @@ func countProbe(t *testing.T, a *App, conn *Connection) int {
 	return int(res.Rows[0][0].I)
 }
 
+// The streamed path must read through the transaction like the buffered one:
+// the stream sees the transaction's uncommitted row, a pool read outside the
+// transaction does not, and the row lands only after commit.
+func TestStreamInsideTransaction(t *testing.T) {
+	a, conn := setupTxApp(t)
+
+	if _, err := a.BeginTransaction(conn.ID, "tabStream", ""); err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	if r := a.ExecuteQueryInTab(conn.ID, "tabStream", `INSERT INTO tx_probe (id) VALUES (100)`, ""); r.Error != "" {
+		t.Fatalf("insert: %s", r.Error)
+	}
+	var events []StreamEvent
+	if err := a.StreamQuery(context.Background(), conn.ID, "tabStream", `SELECT count(*) FROM tx_probe`, "", func(ev StreamEvent) error {
+		events = append(events, ev)
+		return nil
+	}); err != nil {
+		t.Fatalf("stream: %v", err)
+	}
+	done := events[len(events)-1]
+	if done.Type != "done" || done.Error != "" {
+		t.Fatalf("stream done = %+v", done)
+	}
+	if rows := streamLastRows(events); len(rows) != 1 || rows[0][0] != int64(1) {
+		t.Fatalf("stream count inside tx = %v, want 1", rows)
+	}
+	// Outside the transaction the row is invisible until commit.
+	if got := countProbe(t, a, conn); got != 0 {
+		t.Fatalf("an uncommitted row was visible to a pool read: %d", got)
+	}
+	if _, err := a.CommitTransaction(conn.ID, "tabStream"); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+	if got := countProbe(t, a, conn); got != 1 {
+		t.Fatalf("after commit count = %d, want 1", got)
+	}
+}
+
 func TestTransactionHoldsRowsUntilCommit(t *testing.T) {
 	a, conn := setupTxApp(t)
 

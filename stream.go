@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/dbcore/dbcore"
@@ -58,8 +59,24 @@ func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database st
 	if err != nil {
 		return emit(StreamEvent{Type: "error", Error: err.Error()})
 	}
+	// A tab with an open transaction runs inside it, and is told when the
+	// transaction is bound to another database rather than silently escaping
+	// it — same rule as the buffered path, which would otherwise stream a
+	// read that sees pre-transaction state while the UI shows an open tx.
+	session := a.txSession(tabID)
+	if err := session.Guard(database); err != nil {
+		return emit(StreamEvent{Type: "error", Error: err.Error()})
+	}
 	if !dbcore.IsReadQuery(query) {
-		return a.streamBuffered(connID, query, database, emit)
+		return a.streamBuffered(connID, tabID, query, database, emit)
+	}
+	// A plugin-backed connection has no *sql.DB to stream from (the child
+	// process holds the handle); its read statements go through the buffered
+	// path, which already routes plugin connections via execDriver →
+	// pluginDriver. Without this branch every SELECT on a plugin engine failed
+	// with "not connected".
+	if pluginConnection(conn) {
+		return a.streamBuffered(connID, tabID, query, database, emit)
 	}
 
 	runCtx, done := a.beginRunWithTab(ctx, connID, tabID)
@@ -68,7 +85,14 @@ func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database st
 
 	db, err := a.queryPool(conn, database)
 	if err != nil {
-		return emit(StreamEvent{Type: "error", Error: err.Error()})
+		return a.finishStream(connID, tabID, database, query, start, err, 0, false, emit)
+	}
+	// The tab's transaction, if one is open: the streamed statement runs on the
+	// transaction's own handle, so it sees the transaction's writes and is
+	// governed by its commit.
+	txID := ""
+	if session.HasTx() {
+		txID = session.TxID()
 	}
 	limit := a.GetSettings().ResultLimit
 	fetch := limit
@@ -77,15 +101,32 @@ func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database st
 	}
 	probe := withRowLimit(query, conn.Type, fetch)
 
-	rows, err := db.QueryContext(runCtx, probe)
-	if err != nil {
-		return a.finishStream(connID, database, query, start, err, 0, false, emit)
+	// One release path for both handles: the transactional one returns the
+	// tx entry to the registry on Close, the pool one just closes the rows.
+	var rows *sql.Rows
+	var release func() error
+	if txID != "" {
+		m, mErr := a.txManagerFor(conn, database)
+		if mErr != nil {
+			return a.finishStream(connID, tabID, database, query, start, mErr, 0, false, emit)
+		}
+		txRows, qErr := m.QueryInTx(runCtx, txID, probe)
+		if qErr != nil {
+			return a.finishStream(connID, tabID, database, query, start, qErr, 0, false, emit)
+		}
+		rows, release = txRows.Rows, txRows.Close
+	} else {
+		rows, err = db.QueryContext(runCtx, probe)
+		if err != nil {
+			return a.finishStream(connID, tabID, database, query, start, err, 0, false, emit)
+		}
+		release = rows.Close
 	}
-	defer rows.Close()
+	defer release()
 
 	columns, err := rows.Columns()
 	if err != nil {
-		return a.finishStream(connID, database, query, start, err, 0, false, emit)
+		return a.finishStream(connID, tabID, database, query, start, err, 0, false, emit)
 	}
 	columnTypes, _ := rows.ColumnTypes()
 	colInfos := make([]Column, len(columns))
@@ -120,10 +161,10 @@ func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database st
 	truncated := false
 	for rows.Next() {
 		if runCtx.Err() != nil {
-			return a.finishStream(connID, database, query, start, runCtx.Err(), emitted, truncated, emit)
+			return a.finishStream(connID, tabID, database, query, start, runCtx.Err(), emitted, truncated, emit)
 		}
 		if err := rows.Scan(ptrs...); err != nil {
-			return a.finishStream(connID, database, query, start, err, emitted, truncated, emit)
+			return a.finishStream(connID, tabID, database, query, start, err, emitted, truncated, emit)
 		}
 		if limit > 0 && probe != query && emitted+len(batch) >= limit {
 			// The cap is ours (the probe added it): stop one past the limit and
@@ -153,15 +194,17 @@ func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database st
 		emitted += len(batch)
 	}
 	if err := rows.Err(); err != nil {
-		return a.finishStream(connID, database, query, start, err, emitted, truncated, emit)
+		return a.finishStream(connID, tabID, database, query, start, err, emitted, truncated, emit)
 	}
-	return a.finishStream(connID, database, query, start, nil, emitted, truncated, emit)
+	return a.finishStream(connID, tabID, database, query, start, nil, emitted, truncated, emit)
 }
 
 // streamBuffered sends a non-streamable statement (write, KV command) through
-// the buffered path as one columns + one rows + done sequence.
-func (a *App) streamBuffered(connID, query, database string, emit func(StreamEvent) error) error {
-	result := a.ExecuteQuery(connID, query, database)
+// the buffered path as one columns + one rows + done sequence. It runs as the
+// tab's own statement (ExecuteQueryInTab), so an open transaction on the tab
+// governs it exactly as it governs the buffered endpoint.
+func (a *App) streamBuffered(connID, tabID, query, database string, emit func(StreamEvent) error) error {
+	result := a.ExecuteQueryInTab(connID, tabID, query, database)
 	if len(result.Columns) > 0 {
 		if err := emit(StreamEvent{Type: "columns", Columns: result.Columns}); err != nil {
 			return err
@@ -179,8 +222,10 @@ func (a *App) streamBuffered(connID, query, database string, emit func(StreamEve
 }
 
 // finishStream emits the terminal event and records history, so a streamed
-// statement shows up in the history list exactly like a buffered one.
-func (a *App) finishStream(connID, database, query string, start time.Time, err error, rowCount int, truncated bool, emit func(StreamEvent) error) error {
+// statement shows up in the history list exactly like a buffered one. A failed
+// statement also marks the tab's transaction, so the UI stops offering more
+// (same rule the buffered path applies).
+func (a *App) finishStream(connID, tabID, database, query string, start time.Time, err error, rowCount int, truncated bool, emit func(StreamEvent) error) error {
 	event := StreamEvent{
 		Type: "done", RowCount: rowCount, Truncated: truncated,
 		ExecutionTime: time.Since(start).Seconds(),
@@ -189,6 +234,7 @@ func (a *App) finishStream(connID, database, query string, start time.Time, err 
 		// Same translation the buffered path applies: one statement must not
 		// report differently depending on which entry ran it.
 		event.Error = friendlyDBError(err)
+		a.txSession(tabID).Record(errorOf(QueryResult{Error: event.Error}))
 	}
 	a.recordStatement(connID, database, query, QueryResult{
 		RowCount: rowCount, Truncated: truncated, Error: event.Error,
