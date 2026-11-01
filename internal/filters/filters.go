@@ -13,6 +13,7 @@ import (
 	"github.com/dbcore/dbcore/sqltext"
 
 	"tablepro-go/internal/catalogmodel"
+	"tablepro-go/internal/changes"
 )
 
 // Condition is one condition of the filter bar: a column, how it is compared,
@@ -147,7 +148,18 @@ func valueLiteral(dbType, colType, value string) (string, error) {
 		if trimmed == "" {
 			return "NULL", nil
 		}
+		// Same two-step validation the save path uses: an exact decimal shape
+		// (a big-int key included) passes its digits through unrounded, and
+		// the float path is only for shapes like "1e3". ParseFloat alone is
+		// not a gate — it accepts "NaN", "Inf", "0x1p2" and "1_000", and the
+		// raw text of each is a syntax error on at least one engine.
+		if literal, exact := changes.ExactNumberLiteral(trimmed); exact {
+			return literal, nil
+		}
 		if _, err := strconv.ParseFloat(trimmed, 64); err != nil {
+			return "", fmt.Errorf("%q 不是数字", value)
+		}
+		if !isSQLNumberShape(trimmed) {
 			return "", fmt.Errorf("%q 不是数字", value)
 		}
 		return trimmed, nil
@@ -156,4 +168,20 @@ func valueLiteral(dbType, colType, value string) (string, error) {
 		return "", fmt.Errorf("a value cannot contain NUL")
 	}
 	return sqltext.QuotedLiteral(dbType, value), nil
+}
+
+// isSQLNumberShape reports whether text is a decimal literal every engine
+// accepts: digits, a sign, a point, an exponent — and nothing else.
+func isSQLNumberShape(text string) bool {
+	hasDigit := false
+	for _, c := range text {
+		switch {
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		case c == '+' || c == '-' || c == '.' || c == 'e' || c == 'E':
+		default:
+			return false
+		}
+	}
+	return hasDigit
 }

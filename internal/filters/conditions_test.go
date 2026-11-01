@@ -176,3 +176,47 @@ func TestWhereAndsConditionsByCatalogName(t *testing.T) {
 		t.Errorf("want no WHERE, got %q (err %v)", empty, err)
 	}
 }
+
+// The numeric filter value goes through the same gate as a saved edit: an
+// exact decimal shape (a big-int key included) keeps its digits, and the
+// float path is restricted to shapes every engine accepts as a literal.
+// strconv.ParseFloat alone would let "NaN", "Inf", "0x1p2" and "1_000"
+// through — the raw text of each is a syntax error on at least one engine.
+func TestFilterNumericValueValidation(t *testing.T) {
+	cases := []struct {
+		name  string
+		value string
+		want  string // rendered literal, or "" when the value must be refused
+	}{
+		{name: "big-int key passes unrounded", value: "9007199254740993", want: "9007199254740993"},
+		{name: "decimal with trailing zeros keeps them", value: "1.50", want: "1.50"},
+		{name: "scientific notation stays on the float path", value: "1e3", want: "1e3"},
+		{name: "leading dot is a float", value: ".5", want: ".5"},
+		{name: "NaN is not a number literal", value: "NaN", want: ""},
+		{name: "Inf is not a number literal", value: "Inf", want: ""},
+		{name: "negative infinity is refused", value: "-Infinity", want: ""},
+		{name: "hex float is refused", value: "0x1p2", want: ""},
+		{name: "digit separator is refused", value: "1_000", want: ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			quoted := `"id"`
+			got, err := render("mysql", "integer", quoted, Condition{Column: "id", Op: Eq, Value: tc.value})
+			if tc.want == "" {
+				if err == nil {
+					t.Fatalf("want the value refused, got %s", got)
+				}
+				if !strings.Contains(err.Error(), "不是数字") {
+					t.Errorf("error %q does not say the value is not a number", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("want %s, got error: %v", tc.want, err)
+			}
+			if want := quoted + " = " + tc.want; got != want {
+				t.Errorf("want %s\ngot  %s", want, got)
+			}
+		})
+	}
+}

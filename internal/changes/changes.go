@@ -59,7 +59,7 @@ type ChangeSet struct {
 // server through a JSON body, and a JSON number decodes as float64, so the cells
 // an edit names arrive as text or as a float - never as the int64 a read yielded,
 // which is the shape the Fyne client has to answer. A plain number written as
-// text keeps its digits (exactNumberLiteral), because a double cannot hold it
+// text keeps its digits (ExactNumberLiteral), because a double cannot hold it
 // past 2^53 and cannot name a DECIMAL's twentieth digit at all.
 func ValueLiteral(dbType, colType string, value interface{}) (string, error) {
 	switch v := value.(type) {
@@ -101,7 +101,7 @@ func ValueLiteral(dbType, colType string, value interface{}) (string, error) {
 			if trimmed == "" {
 				return "NULL", nil
 			}
-			if literal, exact := exactNumberLiteral(trimmed); exact {
+			if literal, exact := ExactNumberLiteral(trimmed); exact {
 				return literal, nil
 			}
 			number, err := strconv.ParseFloat(trimmed, 64)
@@ -161,7 +161,7 @@ func NumberLiteral(value float64) string {
 //
 // Only the shape is recognised, never the size: ".5" and "1." and "1e3" stay on
 // the path that has always rendered them, "0x10" stays refused.
-func exactNumberLiteral(text string) (string, bool) {
+func ExactNumberLiteral(text string) (string, bool) {
 	body := strings.TrimPrefix(text, "+")
 	digits := strings.TrimPrefix(body, "-")
 	if digits == "" {
