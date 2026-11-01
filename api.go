@@ -608,10 +608,15 @@ func (a *App) routes() *http.ServeMux {
 		res, err := a.ApplyStructureEdit(body)
 		if err != nil {
 			if reason, paused := isNeedsConfirmation(err); paused {
+				// Warnings must travel with the pause: the dialog renders
+				// preview.warnings.length on receipt, and a missing key is a
+				// TypeError that unmounts the whole tree — dead end for the
+				// confirm loop.
 				return map[string]any{
 					"needsConfirmation": true,
 					"reason":            reason,
 					"statements":        res.Statements,
+					"warnings":          res.Warnings,
 				}, nil
 			}
 			return nil, err

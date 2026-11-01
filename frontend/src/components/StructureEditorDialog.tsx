@@ -72,15 +72,27 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
     [target, rows, indexRows, fkRows],
   );
 
-  const patch = (i: number, next: Partial<ColumnEdit>) =>
+  // Any edit invalidates a pending Safe Mode confirmation: the confirmed
+  // route must only replay statements the user actually acknowledged.
+  const invalidatePending = () => setPendingReason(null);
+  const patch = (i: number, next: Partial<ColumnEdit>) => {
+    invalidatePending();
     setRows(current => current.map((r, j) => (j === i ? { ...r, ...next } : r)));
-  const patchIndex = (i: number, next: Partial<IndexEditRow>) =>
+  };
+  const patchIndex = (i: number, next: Partial<IndexEditRow>) => {
+    invalidatePending();
     setIndexRows(current => current.map((r, j) => (j === i ? { ...r, ...next } : r)));
-  const patchFk = (i: number, next: Partial<ForeignKeyEditRow>) =>
+  };
+  const patchFk = (i: number, next: Partial<ForeignKeyEditRow>) => {
+    invalidatePending();
     setFkRows(current => current.map((r, j) => (j === i ? { ...r, ...next } : r)));
+  };
 
   const runPreview = async () => {
     setBusy(true);
+    // 新预览意味着屏上语句集已变：挂起中的 Safe Mode 确认随之失效——
+    // 否则"确认执行"会放行一份用户从未确认过的新语句集。
+    setPendingReason(null);
     try {
       const res = await PreviewStructureEdit(payload);
       setPreview(res);
