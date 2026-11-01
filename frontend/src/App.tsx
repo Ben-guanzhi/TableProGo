@@ -30,6 +30,7 @@ import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
 import type { ForeignKeyEditRow, IndexEditRow } from './lib/structureEdit';
+import { txBusy, txGate, txSettle, type TxOp } from './lib/txButtons';
 import {
   Connection,
   ConnectionConfig,
@@ -407,34 +408,56 @@ function App() {
 
   // Interactive transactions (backend txn.go): one per tab. The status the backend
   // returns is the tab's badge; an empty status means autocommit.
+  //
+  // The badge lags the request, so without a gate a double-click sends the same
+  // op twice and the second one fails with "already has an open transaction".
+  // txPending records the op in flight per tab; a click while one is pending is
+  // ignored and the buttons are disabled for the same reason.
+  const [txPending, setTxPending] = useState<Record<string, TxOp | null>>({});
   const txHandlers = (tab: Tab) => ({
     txActive: !!tab.txStatus,
     txStatus: tab.txStatus ?? '',
+    txBusy: txBusy(txPending[tab.id] ?? null),
     onBeginTx: async () => {
       if (!activeConnection) return;
+      const pending = txGate(txPending[tab.id] ?? null, 'begin');
+      setTxPending(p => ({ ...p, [tab.id]: pending }));
+      if (pending !== null) return; // a click while in flight is a no-op
       try {
         const status = await BeginTransaction(activeConnection.id, tab.id, tabDatabase(tab));
         setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: status } : t)));
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
+      } finally {
+        setTxPending(p => ({ ...p, [tab.id]: txSettle(p[tab.id] ?? null) }));
       }
     },
     onCommitTx: async () => {
       if (!activeConnection) return;
+      const pending = txGate(txPending[tab.id] ?? null, 'commit');
+      setTxPending(p => ({ ...p, [tab.id]: pending }));
+      if (pending !== null) return;
       try {
         await CommitTransaction(activeConnection.id, tab.id);
         setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '' } : t)));
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
+      } finally {
+        setTxPending(p => ({ ...p, [tab.id]: txSettle(p[tab.id] ?? null) }));
       }
     },
     onRollbackTx: async () => {
       if (!activeConnection) return;
+      const pending = txGate(txPending[tab.id] ?? null, 'rollback');
+      setTxPending(p => ({ ...p, [tab.id]: pending }));
+      if (pending !== null) return;
       try {
         await RollbackTransaction(activeConnection.id, tab.id);
         setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '' } : t)));
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
+      } finally {
+        setTxPending(p => ({ ...p, [tab.id]: txSettle(p[tab.id] ?? null) }));
       }
     },
   });

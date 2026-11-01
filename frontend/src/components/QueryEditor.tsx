@@ -86,6 +86,7 @@ interface QueryEditorProps {
   // holds one open transaction, and only one is allowed at a time.
   txStatus?: string;
   txActive?: boolean;
+  txBusy?: boolean;
   onBeginTx?: () => void;
   onCommitTx?: () => void;
   onRollbackTx?: () => void;
@@ -249,6 +250,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     loading,
     txStatus = '',
     txActive = false,
+    txBusy = false,
     onBeginTx,
     onCommitTx,
     onRollbackTx,
@@ -696,7 +698,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                 <button
                   className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-success hover:bg-success-hover text-on-success disabled:opacity-40"
                   onClick={onCommitTx}
-                  disabled={loading}
+                  disabled={loading || txBusy}
                   title="提交这个标签页的事务"
                 >
                   <FiCheck size={11} className="mr-1 shrink-0" />
@@ -705,7 +707,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                 <button
                   className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-danger hover:bg-danger-hover text-on-danger disabled:opacity-40"
                   onClick={onRollbackTx}
-                  disabled={loading}
+                  disabled={loading || txBusy}
                   title="回滚这个标签页的事务，撤掉其中所有语句"
                 >
                   <FiRotateCcw size={11} className="mr-1 shrink-0" />
@@ -716,7 +718,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
               <button
                 className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
                 onClick={onBeginTx}
-                disabled={loading}
+                disabled={loading || txBusy}
                 title="开始事务：之后的语句都在事务里，直到提交或回滚"
               >
                 <FiGitCommit size={11} className="mr-1 shrink-0" />
