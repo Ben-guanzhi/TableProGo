@@ -494,6 +494,10 @@ func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interfa
 				row[i] = string(val)
 			case time.Time:
 				row[i] = val.Format(time.RFC3339)
+			case int64:
+				row[i] = jsonSafeInt(val)
+			case uint64:
+				row[i] = jsonSafeUint(val)
 			default:
 				row[i] = val
 			}
@@ -632,20 +636,34 @@ func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 // digit TEXT — a JSON number would round them through float64 on the JS side,
 // which is the precision loss ValDecimal exists to prevent; the frontend
 // re-attaches numeric ORDERING from the column type (gridView cellKeyFor).
+// jsonSafeInt maps an integer cell onto a JSON-safe value. Beyond
+// Number.MAX_SAFE_INTEGER (|2^53|) a JSON number rounds through the browser's
+// res.json() — the grid would display AND edit-save a different value, and key
+// predicates built from the rounded cell hit the wrong row. Snowflake-style IDs
+// live exactly there. Those cross as exact digit text (the save path's
+// exactNumberLiteral round-trips it无损); the grid's numeric ordering already
+// handles numeric strings. Shared by the buffered cellValue, the streaming
+// streamCell, and the preview runSelectCtx so all three exits agree.
+func jsonSafeInt(v int64) interface{} {
+	if v > 1<<53 || v < -(1<<53) {
+		return strconv.FormatInt(v, 10)
+	}
+	return v
+}
+
+// jsonSafeUint is jsonSafeInt for unsigned integers: a u64 past 2^53 also
+// rounds in the browser's res.json().
+func jsonSafeUint(v uint64) interface{} {
+	if v > 1<<53 {
+		return strconv.FormatUint(v, 10)
+	}
+	return v
+}
+
 func cellValue(v dbcore.Value) interface{} {
 	switch v.Kind {
 	case dbcore.ValInt:
-		// Beyond Number.MAX_SAFE_INTEGER a JSON number rounds through the
-		// browser's res.json() — the grid would display AND edit-save a
-		// different value, and key predicates built from the rounded cell
-		// hit the wrong row. Snowflake-style IDs live exactly there. Cross
-		// as exact digit text (the string round-trips through
-		// exactNumberLiteral on the save path); the grid's numeric ordering
-		// already handles numeric strings.
-		if v.I > 1<<53 || v.I < -(1<<53) {
-			return strconv.FormatInt(v.I, 10)
-		}
-		return v.I
+		return jsonSafeInt(v.I)
 	case dbcore.ValFloat:
 		return v.F
 	case dbcore.ValText:

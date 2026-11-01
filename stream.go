@@ -210,6 +210,10 @@ func streamCell(v interface{}) interface{} {
 		return string(val)
 	case time.Time:
 		return val.Format(time.RFC3339)
+	case int64:
+		return jsonSafeInt(val)
+	case uint64:
+		return jsonSafeUint(val)
 	default:
 		return val
 	}

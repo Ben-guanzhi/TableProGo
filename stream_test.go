@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/dbcore/dbcore"
 )
 
 // collectStream runs StreamQuery and returns the events it produced.
@@ -197,5 +199,47 @@ func TestLiveStreamLargeResultTruncates(t *testing.T) {
 	}
 	if rows != 1000 || batches != 5 {
 		t.Fatalf("rows=%d batches=%d", rows, batches)
+	}
+}
+
+// Every exit that crosses an integer cell to the grid must agree on the
+// big-int rule: |v| > 2^53 crosses as exact digit text, because a JSON number
+// of that size rounds through the browser's res.json() — the grid would
+// display AND edit-save a different value, and key predicates built from the
+// rounded cell hit the wrong row. The buffered cellValue, the streaming
+// streamCell, and the preview runSelectCtx all share jsonSafeInt/jsonSafeUint.
+func TestBigIntCrossesAsTextEveryExit(t *testing.T) {
+	const big = int64(9007199254740993) // 2^53 + 1
+
+	// jsonSafeInt: the shared helper.
+	if got := jsonSafeInt(big).(string); got != "9007199254740993" {
+		t.Errorf("jsonSafeInt(2^53+1) = %q, want exact digits", got)
+	}
+	if got := jsonSafeInt(123).(int64); got != 123 {
+		t.Errorf("jsonSafeInt(123) = %v, want int64 123", got)
+	}
+	if got := jsonSafeInt(-(1<<53) - 1).(string); got != "-9007199254740993" {
+		t.Errorf("jsonSafeInt(-(2^53+1)) = %q", got)
+	}
+	if got := jsonSafeUint(uint64(big)).(string); got != "9007199254740993" {
+		t.Errorf("jsonSafeUint(2^53+1) = %q", got)
+	}
+
+	// streamCell: the streaming exit.
+	if got := streamCell(big).(string); got != "9007199254740993" {
+		t.Errorf("streamCell(2^53+1) = %q", got)
+	}
+	if got := streamCell(uint64(big)).(string); got != "9007199254740993" {
+		t.Errorf("streamCell(u64 2^53+1) = %q", got)
+	}
+	// Small ints stay numbers (the grid orders them numerically).
+	if got := streamCell(int64(42)).(int64); got != 42 {
+		t.Errorf("streamCell(42) = %v, want int64 42", got)
+	}
+
+	// cellValue: the buffered exit.
+	cv := cellValue(dbcore.Value{Kind: dbcore.ValInt, I: big})
+	if got := cv.(string); got != "9007199254740993" {
+		t.Errorf("cellValue(2^53+1) = %q", got)
 	}
 }
