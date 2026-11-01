@@ -197,6 +197,41 @@ func indexOf(haystack, needle string) int {
 	return -1
 }
 
+// Two concurrent Begins on one session must open exactly one server-side
+// transaction: the guard and the opener round trip are one atomic step.
+// With the round trip outside the lock, both goroutines pass the guard, both
+// call the opener, and the second id overwrites the first — the other
+// transaction leaks server-side and commit/rollback address the wrong one.
+func TestConcurrentBeginOpensExactlyOne(t *testing.T) {
+	op := &fakeOpener{}
+	var s Session
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			errs[i] = s.Begin(op, "app")
+		}(i)
+	}
+	wg.Wait()
+	opened := 0
+	for _, e := range errs {
+		if e == nil {
+			opened++
+		}
+	}
+	if opened != 1 {
+		t.Fatalf("exactly one Begin must succeed, got %d (%v)", opened, errs)
+	}
+	if len(op.begun) != 1 {
+		t.Fatalf("the opener must be called once, got %d", len(op.begun))
+	}
+	if !s.HasTx() || s.TxID() != "txn-app" {
+		t.Fatalf("session = status %q id %q", s.Status, s.TxID())
+	}
+}
+
 // Two concurrent statements on one tab (the HTTP layer's worst case: two
 // execute-in-tab requests, or a statement racing a commit) share the Session
 // pointer. The mutex discipline is what keeps that off the race detector —

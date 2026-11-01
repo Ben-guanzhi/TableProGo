@@ -112,19 +112,23 @@ var ErrDatabaseMismatch = errors.New("the open transaction belongs to another da
 // Begin opens a transaction for the session's database. A tab that already has one
 // is refused rather than silently nesting: SQL has no nested transactions, and a
 // second Begin would leak the first.
+//
+// The check and the opener round trip run under one lock: with the round trip
+// outside it, two concurrent Begins both pass the guard, both open a server-side
+// transaction, and the second id overwrites the first — commit/rollback then
+// address the wrong transaction and the other one leaks. The lock is per-tab, so
+// this only serialises Begin against that tab's own commit/rollback/statements,
+// which already share it.
 func (s *Session) Begin(open Opener, database string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.Status == Active || s.Status == Failed {
-		s.mu.Unlock()
 		return fmt.Errorf("this tab already has an open transaction; commit or roll it back first")
 	}
-	s.mu.Unlock()
 	id, err := open.Begin(database)
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.Status = Active
 	s.ID = id
 	s.Database = database
