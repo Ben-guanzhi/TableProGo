@@ -60,6 +60,37 @@ func TestServeExecuteStreamRejectsGet(t *testing.T) {
 	}
 }
 
+// Oversized request bodies must be refused before the handler runs: the two
+// NDJSON endpoints used to decode r.Body unbounded, so a client could force
+// the server to buffer an arbitrarily large payload.
+func TestServeExecuteStreamRejectsOversizedBody(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	body := `{"connId":"c1","query":"SELECT 1","database":"` + strings.Repeat("x", apiBodyLimit) + `"}`
+	req := httptest.NewRequest("POST", "/api/execute-stream", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.serveExecuteStream(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400 for a body over apiBodyLimit", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "application/x-ndjson" {
+		t.Fatal("an oversized body must not start the NDJSON response")
+	}
+}
+
+func TestServeSearchDataRejectsOversizedBody(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	body := `{"connId":"c1","database":"` + strings.Repeat("x", apiBodyLimit) + `","keyword":""}`
+	req := httptest.NewRequest("POST", "/api/search-data", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	app.serveSearchData(rec, req)
+	if rec.Code != 400 {
+		t.Fatalf("status = %d, want 400 for a body over apiBodyLimit", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct == "application/x-ndjson" {
+		t.Fatal("an oversized body must not start the NDJSON response")
+	}
+}
+
 // A Safe Mode pause must arrive as an error event that says confirmation is
 // possible, so the UI can offer the prompt instead of showing a dead end.
 func TestServeExecuteStreamSurfacesSafeMode(t *testing.T) {

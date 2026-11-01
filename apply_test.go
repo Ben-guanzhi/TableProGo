@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"tablepro-go/internal/changes"
 )
 
 // tableState reads the rows back as text, so an assertion is about the data the
@@ -128,6 +130,77 @@ func TestApplyChangesRollsBackWhenOneRowIsGone(t *testing.T) {
 	got := tableState(t, conn, "SELECT id, name, qty FROM parts ORDER BY id")
 	if strings.Join(got, ", ") != want {
 		t.Errorf("nothing may survive the rollback: table holds %v, want %v", got, want)
+	}
+}
+
+// An UPDATE whose key row is gone by the time it runs is refused through the
+// key probe: zero affected rows means either "no such row" or "no-op write",
+// and only the probe tells them apart.
+func TestApplyChangesRollsBackWhenUpdatedRowIsGone(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	seedParts(t, conn)
+	a := searchApp(conn)
+
+	_, err := a.ApplyChanges(partsSet(conn,
+		RowChange{Kind: rowDelete, Original: []interface{}{2.0, "b", 20.0}},
+		RowChange{Original: []interface{}{2.0, "b", 20.0}, Edits: []CellEdit{{Column: "qty", Value: "99"}}},
+	))
+	if err == nil || !strings.Contains(err.Error(), "matched no row") {
+		t.Fatalf("want a refused update of a vanished row, got %v", err)
+	}
+	want := "1|a|10, 2|b|20"
+	got := tableState(t, conn, "SELECT id, name, qty FROM parts ORDER BY id")
+	if strings.Join(got, ", ") != want {
+		t.Errorf("the vanished-row update must not land: table holds %v, want %v", got, want)
+	}
+}
+
+// An UPDATE that matched its row but wrote identical values must not abort the
+// batch: engines that count only changed rows (MySQL) report zero affected
+// rows for it, and the key probe is what lets it pass.
+func TestApplyChangesNoOpUpdateDoesNotAbort(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	seedParts(t, conn)
+	a := searchApp(conn)
+
+	if _, err := a.ApplyChanges(partsSet(conn,
+		RowChange{Original: []interface{}{1.0, "a", 10.0}, Edits: []CellEdit{{Column: "qty", Value: "10"}}},
+	)); err != nil {
+		t.Fatalf("a no-op update must not abort the batch: %v", err)
+	}
+	got := tableState(t, conn, "SELECT id, name, qty FROM parts ORDER BY id")
+	if strings.Join(got, ", ") != "1|a|10, 2|b|20" {
+		t.Errorf("table holds %v, want the seeded rows untouched", got)
+	}
+}
+
+// zeroRowVerdict is the whole rule: only an UPDATE gets the probe, and the probe
+// result decides between "no-op" (nil) and "data moved" (abort). A DELETE or
+// INSERT with zero rows is unambiguous and aborts without probing.
+func TestZeroRowVerdict(t *testing.T) {
+	update := changes.Statement{Kind: changes.KindUpdate, Table: "parts", Where: "id = 1"}
+	del := changes.Statement{Kind: changes.KindDelete, Table: "parts", Where: "id = 1"}
+	ins := changes.Statement{Kind: changes.KindInsert, Table: "parts"}
+
+	if err := zeroRowVerdict(update, func() (bool, error) { return true, nil }); err != nil {
+		t.Errorf("a no-op update must pass: %v", err)
+	}
+	if err := zeroRowVerdict(update, func() (bool, error) { return false, nil }); err == nil {
+		t.Error("an update of a vanished row must abort")
+	}
+
+	probed := false
+	if err := zeroRowVerdict(del, func() (bool, error) { probed = true; return true, nil }); err == nil {
+		t.Error("a delete that matched no row must abort")
+	}
+	if err := zeroRowVerdict(ins, func() (bool, error) { probed = true; return true, nil }); err == nil {
+		t.Error("an insert that affected no row must abort")
+	}
+	if probed {
+		t.Error("only an update may probe the key")
+	}
+	if err := zeroRowVerdict(update, func() (bool, error) { return false, fmt.Errorf("boom") }); err == nil {
+		t.Error("a failed probe must abort")
 	}
 }
 

@@ -68,7 +68,7 @@ func (a *App) serveExecuteStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body queryRequest
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}
@@ -107,7 +107,7 @@ func (a *App) serveSearchData(w http.ResponseWriter, r *http.Request) {
 		Database string `json:"database"`
 		Keyword  string `json:"keyword"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
 		writeError(w, 400, err.Error())
 		return
 	}

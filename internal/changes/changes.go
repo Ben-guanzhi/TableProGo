@@ -295,47 +295,87 @@ func (c *context) keyWhere(original []interface{}) (string, error) {
 }
 
 // update returns an empty statement for a row whose edits all cancelled out.
-func (c *context) update(change RowChange) (string, error) {
+func (c *context) update(change RowChange) (Statement, error) {
 	_, _, assignments, err := c.literals(change.Edits)
 	if err != nil {
-		return "", err
+		return Statement{}, err
 	}
 	if len(assignments) == 0 {
-		return "", nil
+		return Statement{}, nil
 	}
 	where, err := c.keyWhere(change.Original)
 	if err != nil {
-		return "", err
+		return Statement{}, err
 	}
-	return fmt.Sprintf("UPDATE %s SET %s WHERE %s", c.name, strings.Join(assignments, ", "), where), nil
+	return Statement{
+		SQL:   fmt.Sprintf("UPDATE %s SET %s WHERE %s", c.name, strings.Join(assignments, ", "), where),
+		Kind:  KindUpdate,
+		Table: c.name,
+		Where: where,
+	}, nil
 }
 
 // insert writes only the columns the grid filled in, so an auto-increment key
 // and every column default keep working.
-func (c *context) insert(change RowChange) (string, error) {
+func (c *context) insert(change RowChange) (Statement, error) {
 	if len(change.Edits) == 0 {
-		return "", fmt.Errorf("a new row needs at least one value")
+		return Statement{}, fmt.Errorf("a new row needs at least one value")
 	}
 	columns, values, _, err := c.literals(change.Edits)
 	if err != nil {
-		return "", err
+		return Statement{}, err
 	}
-	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		c.name, strings.Join(columns, ", "), strings.Join(values, ", ")), nil
+	return Statement{
+		SQL:   fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", c.name, strings.Join(columns, ", "), strings.Join(values, ", ")),
+		Kind:  KindInsert,
+		Table: c.name,
+	}, nil
 }
 
-func (c *context) remove(change RowChange) (string, error) {
+func (c *context) remove(change RowChange) (Statement, error) {
 	where, err := c.keyWhere(change.Original)
 	if err != nil {
-		return "", err
+		return Statement{}, err
 	}
-	return fmt.Sprintf("DELETE FROM %s WHERE %s", c.name, where), nil
+	return Statement{
+		SQL:   fmt.Sprintf("DELETE FROM %s WHERE %s", c.name, where),
+		Kind:  KindDelete,
+		Table: c.name,
+		Where: where,
+	}, nil
+}
+
+// Statement is one rendered write plus the metadata ApplyChanges needs to
+// interpret its row count. Where is the primary-key predicate of an UPDATE or
+// DELETE, empty for an INSERT: MySQL counts only changed rows, so a no-op
+// UPDATE reports zero affected rows even though its row is still there, and the
+// apply path has to be able to tell the two cases apart by probing the key.
+type Statement struct {
+	SQL   string
+	Kind  string
+	Table string
+	Where string
 }
 
 // Build is the pure half of the work: given how the result is shaped and what
 // the table's columns are, render the whole queue - UPDATE, INSERT and DELETE
 // rows in the order the client queued them.
 func Build(dbType, name string, resultColumns, keyColumns []string, types map[string]string, changes []RowChange) ([]string, error) {
+	plan, err := BuildPlan(dbType, name, resultColumns, keyColumns, types, changes)
+	if err != nil {
+		return nil, err
+	}
+	statements := make([]string, 0, len(plan))
+	for _, st := range plan {
+		statements = append(statements, st.SQL)
+	}
+	return statements, nil
+}
+
+// BuildPlan is Build with the per-statement metadata kept: the SQL text plus
+// the statement kind and, for the writes that locate a row by key, the key
+// predicate the apply path probes when the row count is ambiguous.
+func BuildPlan(dbType, name string, resultColumns, keyColumns []string, types map[string]string, changes []RowChange) ([]Statement, error) {
 	if len(changes) == 0 {
 		return nil, fmt.Errorf("nothing to save")
 	}
@@ -344,16 +384,16 @@ func Build(dbType, name string, resultColumns, keyColumns []string, types map[st
 		return nil, err
 	}
 
-	statements := make([]string, 0, len(changes))
+	statements := make([]Statement, 0, len(changes))
 	for _, change := range changes {
-		var statement string
+		var st Statement
 		switch change.Kind {
 		case KindInsert:
-			statement, err = c.insert(change)
+			st, err = c.insert(change)
 		case KindDelete:
-			statement, err = c.remove(change)
+			st, err = c.remove(change)
 		case KindUpdate:
-			statement, err = c.update(change)
+			st, err = c.update(change)
 		default:
 			// A kind nobody recognises must not quietly become an UPDATE: the
 			// row would be written differently from what the grid promised.
@@ -362,8 +402,8 @@ func Build(dbType, name string, resultColumns, keyColumns []string, types map[st
 		if err != nil {
 			return nil, err
 		}
-		if statement != "" {
-			statements = append(statements, statement)
+		if st.SQL != "" {
+			statements = append(statements, st)
 		}
 	}
 	if len(statements) == 0 {

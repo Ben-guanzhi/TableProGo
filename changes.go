@@ -5,6 +5,8 @@ package main
 // rest of the package (and the JSON API) already uses.
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"regexp"
 	"strings"
@@ -126,14 +128,9 @@ func buildStatements(dbType, name string, resultColumns, keyColumns []string, ty
 	return changes.Build(dbType, name, resultColumns, keyColumns, types, list)
 }
 
-// buildUpdateStatements is buildStatements narrowed to edited cells.
-func buildUpdateStatements(dbType, name string, resultColumns, keyColumns []string, types map[string]string, list []RowChange) ([]string, error) {
-	return changes.BuildUpdates(dbType, name, resultColumns, keyColumns, types, list)
-}
-
-// buildChanges resolves what the grid cannot know - the object's name and the
-// table's keys and types - and leaves the rest to the pure builder.
-func (a *App) buildChanges(set ChangeSet) ([]string, error) {
+// buildChangePlan is buildChanges with the per-statement metadata kept (kind and
+// key predicate), which ApplyChanges needs to interpret a zero row count.
+func (a *App) buildChangePlan(set ChangeSet) ([]changes.Statement, error) {
 	conn, err := a.connection(set.ConnID)
 	if err != nil {
 		return nil, err
@@ -160,7 +157,26 @@ func (a *App) buildChanges(set ChangeSet) ([]string, error) {
 			keys = append(keys, col.Name)
 		}
 	}
-	return changes.Build(conn.Type, name, set.Columns, keys, types, set.Changes)
+	return changes.BuildPlan(conn.Type, name, set.Columns, keys, types, set.Changes)
+}
+
+// buildUpdateStatements is buildStatements narrowed to edited cells.
+func buildUpdateStatements(dbType, name string, resultColumns, keyColumns []string, types map[string]string, list []RowChange) ([]string, error) {
+	return changes.BuildUpdates(dbType, name, resultColumns, keyColumns, types, list)
+}
+
+// buildChanges resolves what the grid cannot know - the object's name and the
+// table's keys and types - and leaves the rest to the pure builder.
+func (a *App) buildChanges(set ChangeSet) ([]string, error) {
+	plan, err := a.buildChangePlan(set)
+	if err != nil {
+		return nil, err
+	}
+	statements := make([]string, 0, len(plan))
+	for _, st := range plan {
+		statements = append(statements, st.SQL)
+	}
+	return statements, nil
 }
 
 // PreviewChanges is the statement list the user confirms before anything runs.
@@ -170,9 +186,11 @@ func (a *App) PreviewChanges(set ChangeSet) ([]string, error) {
 
 // ApplyChanges runs the rebuilt statements as one transaction: either every
 // edit lands or none does, which is the only way a mistake stays fixable. A
-// statement that matches no row aborts the batch instead of quietly skipping.
+// statement that matches no row aborts the batch instead of quietly skipping —
+// except an UPDATE that matched its row but changed nothing (MySQL counts only
+// changed rows, so it reports zero): the key is probed to tell the two apart.
 func (a *App) ApplyChanges(set ChangeSet) (int64, error) {
-	statements, err := a.buildChanges(set)
+	plan, err := a.buildChangePlan(set)
 	if err != nil {
 		return 0, err
 	}
@@ -180,8 +198,8 @@ func (a *App) ApplyChanges(set ChangeSet) (int64, error) {
 	// Safe Mode only has to enforce the hard block here; a "needs confirmation"
 	// level is satisfied by that same dialog.
 	mode := a.GetSettings().SafeMode
-	for _, statement := range statements {
-		if guard := guardWrite(mode, statement); guard.Blocked {
+	for _, statement := range plan {
+		if guard := guardWrite(mode, statement.SQL); guard.Blocked {
 			return 0, fmt.Errorf("%s", guard.Reason)
 		}
 	}
@@ -207,13 +225,17 @@ func (a *App) ApplyChanges(set ChangeSet) (int64, error) {
 	defer tx.Rollback()
 
 	var applied int64
-	for i, statement := range statements {
-		res, err := txDrv.ExecuteIn(tx, ctx, statement)
+	for i, statement := range plan {
+		res, err := txDrv.ExecuteIn(tx, ctx, statement.SQL)
 		if err != nil {
 			return applied, fmt.Errorf("statement %d: %w", i+1, err)
 		}
 		if res.AffectedRows == 0 {
-			return applied, fmt.Errorf("statement %d matched no row; the data changed since it was read, nothing was committed", i+1)
+			if verdict := zeroRowVerdict(statement, func() (bool, error) {
+				return rowStillThere(txDrv, tx, ctx, statement)
+			}); verdict != nil {
+				return applied, fmt.Errorf("statement %d: %w", i+1, verdict)
+			}
 		}
 		applied += res.AffectedRows
 	}
@@ -223,7 +245,41 @@ func (a *App) ApplyChanges(set ChangeSet) (int64, error) {
 	// The edit lands as one history entry: the statements the user reviewed in
 	// the dialog are the audit trail, and without this the grid path would be
 	// invisible next to typed statements.
+	statements := make([]string, 0, len(plan))
+	for _, st := range plan {
+		statements = append(statements, st.SQL)
+	}
 	a.recordStatement(set.ConnID, set.Database, strings.Join(statements, ";\n"),
 		QueryResult{AffectedRows: applied})
 	return applied, nil
+}
+
+// zeroRowVerdict explains why a statement that affected no rows must abort the
+// batch, or returns nil when zero rows is the correct outcome. An UPDATE that
+// matched its key but wrote identical values is a no-op on engines that count
+// only changed rows (MySQL), so its key is probed first; a DELETE or INSERT
+// with zero rows is unambiguous.
+func zeroRowVerdict(st changes.Statement, probe func() (bool, error)) error {
+	if st.Kind == changes.KindUpdate {
+		present, err := probe()
+		if err != nil {
+			return fmt.Errorf("the key probe for the no-op check failed: %w", err)
+		}
+		if present {
+			return nil // the row is there; the edit simply cancelled out
+		}
+	}
+	return fmt.Errorf("matched no row; the data changed since it was read, nothing was committed")
+}
+
+// rowStillThere asks the same transaction whether the statement's key predicate
+// still locates a row. The probe runs inside the open transaction, so it sees
+// exactly the state the UPDATE or DELETE was applied to.
+func rowStillThere(txDrv dbcore.SQLTxDriver, tx *sql.Tx, ctx context.Context, st changes.Statement) (bool, error) {
+	probe := fmt.Sprintf("SELECT 1 FROM %s WHERE %s", st.Table, st.Where)
+	res, err := txDrv.ExecuteIn(tx, ctx, probe)
+	if err != nil {
+		return false, err
+	}
+	return len(res.Rows) > 0, nil
 }
