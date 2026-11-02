@@ -83,12 +83,31 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].Name < found[j].Name })
 
+	// One round trip for every table's columns when the driver supports it:
+	// a diagram over dozens of tables otherwise costs one ListColumns per
+	// table (Kleinberg plan K-1). Batch failure degrades to the per-table
+	// path (logged), never to a failed diagram — same discipline as the data
+	// search below.
+	batchCols := make(map[string][]dbcore.ColumnInfo)
+	haveBatch := false
+	if bc, ok := dbcore.AsBatchColumns(drv); ok {
+		all, err := bc.BatchColumns(ctx, listSchema)
+		if err != nil {
+			log.Printf("er: batch columns unavailable, falling back per table: %v", err)
+		} else {
+			for _, c := range all {
+				batchCols[c.Table] = append(batchCols[c.Table], c)
+			}
+			haveBatch = true
+		}
+	}
+
 	tables := make([]ERTable, 0, len(found))
 	for _, t := range found {
 		if t.Type == "view" || t.Type == "materialized_view" {
 			continue
 		}
-		erTable, err := erTableOf(ctx, drv, schema, t)
+		erTable, err := erTableOf(ctx, drv, schema, t, batchCols[t.Name], haveBatch)
 		if err != nil {
 			// One unreadable table (a dropped-in-flight object, a permission
 			// gap) must not throw away the whole diagram — the same discipline
@@ -104,10 +123,15 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 // erTableOf reads one table's columns and foreign keys and projects them onto the
 // diagram model. It reuses the driver already opened for the schema, so the whole
 // diagram is one pool's worth of metadata calls rather than one per table.
-func erTableOf(ctx context.Context, drv dbcore.SQLDriver, schema string, t dbcore.TableInfo) (ERTable, error) {
-	cols, err := drv.ListColumns(ctx, schema, t.Name)
-	if err != nil {
-		return ERTable{}, err
+// Columns arrive pre-read when the driver served the whole schema in one batch
+// (colsKnown); otherwise they are read per table here.
+func erTableOf(ctx context.Context, drv dbcore.SQLDriver, schema string, t dbcore.TableInfo, cols []dbcore.ColumnInfo, colsKnown bool) (ERTable, error) {
+	if !colsKnown {
+		var err error
+		cols, err = drv.ListColumns(ctx, schema, t.Name)
+		if err != nil {
+			return ERTable{}, err
+		}
 	}
 	columns := make([]ERColumn, 0, len(cols))
 	for _, c := range cols {
