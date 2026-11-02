@@ -697,6 +697,8 @@ export interface ImportResult {
   columns: string[];
   createdTable: boolean;
   error?: string;
+  /** File-column → table-column pairing for an existing-table import. */
+  mapped?: { file: string; table?: string; suggested?: string }[];
 }
 
 // ImportFile parses a CSV/JSON file server-side and writes it into a table.

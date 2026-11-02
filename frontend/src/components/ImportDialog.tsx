@@ -179,6 +179,29 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
             <div className="text-sm text-secondary bg-raised border border-line rounded px-3 py-2">
               已写入 {result.rows} 行，跳过 {result.skipped} 行，执行 {result.statements} 条语句
               {result.createdTable ? '，并创建了表' : ''}。
+              {(result.mapped ?? []).some(m => !m.table && m.suggested) && (
+                <div className="mt-2 pt-2 border-t border-line-soft text-2xs">
+                  <p className="text-muted">以下文件列没有对应表列，未写入；名称相近的候选列供人工核对（本次未自动采用）：</p>
+                  <ul className="mt-1 space-y-0.5">
+                    {(result.mapped ?? [])
+                      .filter(m => !m.table && m.suggested)
+                      .map(m => (
+                        <li key={m.file} className="text-warning">
+                          {m.file} <span className="text-muted">→ 可能是</span> {m.suggested}
+                        </li>
+                      ))}
+                  </ul>
+                </div>
+              )}
+              {(result.mapped ?? []).some(m => !m.table && !m.suggested) && (
+                <div className="mt-1 text-2xs text-muted">
+                  未写入且无相近候选：
+                  {(result.mapped ?? [])
+                    .filter(m => !m.table && !m.suggested)
+                    .map(m => m.file)
+                    .join('、')}
+                </div>
+              )}
             </div>
           )}
 
