@@ -15,6 +15,7 @@ import { copyText } from '../clipboard';
 import { openExternal } from '../externalLink';
 import { scrollBehavior } from '../motion';
 import { ChangeSet, QueryResult, TableRef } from '../types';
+import { computeVisibleRange, ROW_HEIGHT, OVERSCAN, VisibleRange } from '../datagrid/virtual';
 import {
   buildView,
   cellText,
@@ -178,6 +179,46 @@ const DataGrid: React.FC<DataGridProps> = ({
   const targetName = editSource
     ? [editSource.database, editSource.schema, editSource.table].filter(Boolean).join('.')
     : '';
+
+  // ── Virtual window (K-4) ────────────────────────────────────────────────
+  // Only rows in [win.i0, win.i1] enter the DOM; everything above and below is
+  // padded by spacer rows so the scrollbar stays honest. A constant row height
+  // is the price: cells truncate (they already do — `truncate whitespace-pre`),
+  // so no cell can grow a row. Window position is component state updated on
+  // scroll/resize; re-render cost is O(window), independent of result size.
+  const [win, setWin] = useState<VisibleRange>({ i0: 0, i1: -1, topPad: 0, bottomPad: 0 });
+  // Latest-value refs so the scroll handler reads totals without re-binding.
+  const headerHRef = useRef(0);
+  const bodyTotalRef = useRef(0);
+  bodyTotalRef.current = view.length + queue.inserts.length;
+  const [headerH, setHeaderH] = useState(0);
+  headerHRef.current = headerH;
+  useEffect(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    const update = () => {
+      setWin(computeVisibleRange(scroller.scrollTop, scroller.clientHeight, headerHRef.current, bodyTotalRef.current));
+    };
+    // The sticky thead's height offsets the scrollable region; track it too.
+    const head = scroller.querySelector('thead');
+    const headObs = new ResizeObserver(() => {
+      setHeaderH(head ? head.getBoundingClientRect().height : 0);
+      update();
+    });
+    if (head) headObs.observe(head);
+    const ro = new ResizeObserver(update);
+    ro.observe(scroller);
+    scroller.addEventListener('scroll', update, { passive: true });
+    update();
+    return () => {
+      headObs.disconnect();
+      ro.disconnect();
+      scroller.removeEventListener('scroll', update);
+    };
+    // Recompute when the row supply changes: a new result can leave the old
+    // window outside the new range.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, queue.inserts.length]);
 
   // Which columns count as the key is the table's business, not the result's, so
   // it is read from the catalog once per source instead of guessed from names.
@@ -432,11 +473,16 @@ const DataGrid: React.FC<DataGridProps> = ({
   }, [picker, activeOption, fkQuery]);
 
   // Queued rows sit below the fetched ones, so the grid has to grow before the
-  // newest is in view.
+  // newest is in view. Arithmetic scroll (K-4): the tail row may not be in the
+  // DOM yet, so scroll to the computed body bottom rather than an element.
   const revealTail = () => {
     requestAnimationFrame(() => {
       const scroller = scrollerRef.current;
-      scroller?.scrollTo({ top: scroller.scrollHeight, behavior: scrollBehavior() });
+      if (!scroller) return;
+      // Body height = fetched rows + queued inserts; landing one row short of
+      // the very bottom keeps the last row fully visible above any padding.
+      const bodyBottom = (view.length + queue.inserts.length) * ROW_HEIGHT;
+      scroller.scrollTo({ top: Math.max(0, bodyBottom), behavior: scrollBehavior() });
     });
   };
 
@@ -650,10 +696,23 @@ const DataGrid: React.FC<DataGridProps> = ({
       const clampedColumn = Math.max(0, Math.min(nextColumn, columns.length - 1));
       if (view[clampedPos] === cursor?.row && clampedColumn === column && !extend) return;
       dispatchEditor({ type: 'cursorMove', row: view[clampedPos], column: clampedColumn, extend });
-      // Keep the focused row in sight: the scroller scrolls just enough.
-      scrollerRef.current
-        ?.querySelector(`tr[data-row-index="${view[clampedPos]}"]`)
-        ?.scrollIntoView({ block: 'nearest' });
+      // Keep the focused row in sight by arithmetic (K-4): the row may not be
+      // rendered at all outside the window, so scrollIntoView cannot find it.
+      // The thead is sticky over the content, so it does not consume the
+      // viewport — body coordinates start at scrollTop 0.
+      const scroller = scrollerRef.current;
+      if (scroller) {
+        const top = clampedPos * ROW_HEIGHT;
+        const bottom = top + ROW_HEIGHT;
+        if (top < scroller.scrollTop || bottom > scroller.scrollTop + scroller.clientHeight) {
+          // Land the row just inside the edge it crossed, with a small margin.
+          const target =
+            top < scroller.scrollTop
+              ? Math.max(0, top - ROW_HEIGHT)
+              : bottom - scroller.clientHeight + ROW_HEIGHT;
+          scroller.scrollTo({ top: target, behavior: scrollBehavior() });
+        }
+      }
     };
 
     switch (e.key) {
@@ -871,18 +930,32 @@ const DataGrid: React.FC<DataGridProps> = ({
             </tr>
           </thead>
           <tbody>
-            {body.map((target, pos) => {
+            {/* Virtual window (K-4): rows outside [win.i0, win.i1] are padded
+                by spacer rows whose heights sum to the unrendered rows, so the
+                scrollbar stays honest. The window covers fetched rows first;
+                queued inserts below are windowed separately (they are few, but
+                the arithmetic is uniform). */}
+            {win.i0 > 0 && (
+              <tr aria-hidden className="vspacer">
+                <td colSpan={columns.length + 1} style={{ height: win.topPad, padding: 0, border: 0, lineHeight: 0 }} />
+              </tr>
+            )}
+            {body.slice(win.i0, win.i1 + 1).map((target, pos) => {
               const { index, fresh } = target;
               const row = fresh ? [] : rows[index] ?? [];
               const deleting = !fresh && queue.deletes.includes(index);
               const isSelected = !fresh && selected.includes(index);
+              // Zebra striping needs the ABSOLUTE position in the body, not the
+              // position inside the window: within-window striping would flicker
+              // as the window moves.
+              const absPos = win.i0 + pos;
               const rowBg = deleting
                 ? 'bg-danger/15'
                 : fresh
                   ? 'bg-success/10'
                   : isSelected
                     ? 'bg-accent/25'
-                    : pos % 2
+                    : absPos % 2
                       ? 'bg-row-alt'
                       : 'bg-canvas';
               return (
@@ -929,10 +1002,10 @@ const DataGrid: React.FC<DataGridProps> = ({
                     ) : deleting ? (
                       <span className="flex items-center justify-end gap-1 leading-none">
                         <span className="text-2xs font-normal text-danger">删除</span>
-                        {pos + 1}
+                        {absPos + 1}
                       </span>
                     ) : (
-                      pos + 1
+                      absPos + 1
                     )}
                   </td>
                   {columns.map((col, c) => {
@@ -1167,6 +1240,11 @@ const DataGrid: React.FC<DataGridProps> = ({
                 </tr>
               );
             })}
+            {win.i1 >= 0 && win.i1 < bodyTotalRef.current - 1 && (
+              <tr aria-hidden className="vspacer">
+                <td colSpan={columns.length + 1} style={{ height: win.bottomPad, padding: 0, border: 0, lineHeight: 0 }} />
+              </tr>
+            )}
           </tbody>
         </table>
 
