@@ -123,7 +123,7 @@ const DatabaseFilterDialog: React.FC<DatabaseFilterDialogProps> = ({
     <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50">
       <div ref={panelRef} role="dialog" aria-modal="true" aria-labelledby="db-filter-title" className="bg-panel rounded-lg w-full max-w-lg shadow-xl">
         <div className="flex items-center justify-between px-5 py-3 border-b border-line">
-          <h2 id="db-filter-title" className="text-sm font-semibold">Filtering: {connection.name}</h2>
+          <h2 id="db-filter-title" className="text-sm font-semibold">数据库筛选：{connection.name}</h2>
           <button className="text-secondary hover:text-ink" onClick={onClose} aria-label="关闭对话框">
             <FiX size={18} />
           </button>
@@ -170,14 +170,14 @@ const DatabaseFilterDialog: React.FC<DatabaseFilterDialogProps> = ({
             className="px-4 py-1.5 rounded text-sm bg-raised hover:bg-emphasis text-ink"
             onClick={onClose}
           >
-            Cancel
+            取消
           </button>
           <button
             type="button"
             className="px-4 py-1.5 rounded text-sm bg-accent hover:bg-accent-hover text-on-accent"
             onClick={() => onSave(filter)}
           >
-            OK
+            确定
           </button>
         </div>
       </div>
