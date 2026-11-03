@@ -95,9 +95,17 @@ func (a *App) connSnapshot(conn *Connection) ([]catalogsnap.Match, bool) {
 // catalog could not be read" look the same in the UI but are not the same thing.
 // matchRank scores a case-folded hit for the quick-open box. The name a user
 // is typing usually starts with what they typed (orders → orders_items) or
-// falls on a word boundary (oi → order_items); a hit buried mid-word is the
+// falls on a word boundary (items → order_items); a hit buried mid-word is the
 // weakest reading. Lower is better; ties keep the collection order (the
 // stable sort), which is the connections' stable ID order.
+//
+// The match is a substring, not a subsequence. The SQL path filters with LIKE
+// server-side, which cannot express subsequence; the in-memory paths must
+// agree with it so a cached search and an uncached one return the same hits.
+// Relaxing only the in-memory paths to subsequence would make the same query
+// return different results depending on whether the catalog snapshot is
+// cached — a bug, not a feature. (Kleinberg ring adjudication, K-F2 deferred
+// item: declined; see TestSearchSubstringNotSubsequence.)
 func matchRank(lower, query string) int {
 	switch {
 	case strings.HasPrefix(lower, query):

@@ -351,6 +351,37 @@ func TestSearchRanksPrefixesOverSubstrings(t *testing.T) {
 	}
 }
 
+// TestSearchSubstringNotSubsequence pins the Kleinberg-ring adjudication of the
+// K-F2 deferred item (三档语义升级: subsequence relaxing substring). It is
+// declined, not implemented:
+//
+//	"oi" is a subsequence of "order_items" (o...i) but not a substring, so the
+//	quick-open box must not return it. The SQL path filters with LIKE
+//	server-side, which can only express substring; the in-memory paths must
+//	agree so a cached search and an uncached one return the same hits.
+//	Relaxing only the in-memory paths to subsequence would make the same query
+//	diverge by cache state. A subsequence leak here means the adjudication was
+//	overturned without a replacement SQL strategy.
+func TestSearchSubstringNotSubsequence(t *testing.T) {
+	if strings.Contains("order_items", "oi") {
+		t.Fatal("precondition: \"oi\" must not be a substring of \"order_items\"")
+	}
+	conn := sqliteDB(t, "c1", "Main")
+	if _, err := conn.DB.Exec(`CREATE TABLE order_items (id integer primary key)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	a := searchApp(conn)
+	hits, err := a.SearchObjects("oi", 50)
+	if err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	for _, h := range hits {
+		if h.Table == "order_items" {
+			t.Errorf("subsequence leaked into substring search: %q matched %q", "oi", h.Table)
+		}
+	}
+}
+
 func names(hits []ObjectMatch) []string {
 	out := make([]string, len(hits))
 	for i, h := range hits {
