@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/dbcore/dbcore"
+	fuzzy "github.com/dbcore/dbcore/fuzzy"
 	tableprosql "github.com/dbcore/dbcore/sqltext"
 	"tablepro-go/internal/catalogsnap"
 )
@@ -178,7 +179,7 @@ func (a *App) SearchObjects(pattern string, limit int) ([]ObjectMatch, error) {
 			failures = append(failures, scope+": "+err.Error())
 		}
 	}
-	lower := strings.ToLower(pattern)
+	lower := fuzzy.FoldString(pattern)
 	for _, conn := range conns {
 		if len(found) >= pool {
 			break
@@ -306,7 +307,7 @@ func searchInDatabase(a *App, conn *Connection, database, fragment string, limit
 		match.ConnID = conn.ID
 		match.Database = database
 		match.Type = normalizeTableType(objectType)
-		match.Lower = strings.ToLower(match.Table)
+		match.Lower = fuzzy.FoldString(match.Table)
 		found = append(found, match)
 	}
 	if err := rows.Err(); err != nil {
@@ -333,13 +334,13 @@ func searchKVKeys(a *App, conn *Connection, lower string, limit int) ([]ObjectMa
 				return err
 			}
 			for _, key := range batch.Keys {
-				if strings.Contains(strings.ToLower(key), lower) {
+				if strings.Contains(fuzzy.FoldString(key), lower) {
 					found = append(found, ObjectMatch{
 						ConnID:   conn.ID,
 						Database: database,
 						Type:     "key",
 						Table:    key,
-						Lower:    strings.ToLower(key),
+						Lower:    fuzzy.FoldString(key),
 					})
 					if len(found) >= limit {
 						return nil
@@ -376,14 +377,14 @@ func searchPluginCatalog(a *App, conn *Connection, lower string, limit int) ([]O
 	}
 	var found []ObjectMatch
 	for _, t := range tables {
-		if strings.Contains(strings.ToLower(t.Name), lower) {
+		if strings.Contains(fuzzy.FoldString(t.Name), lower) {
 			found = append(found, ObjectMatch{
 				ConnID:   conn.ID,
 				Database: database,
 				Schema:   t.Schema,
 				Type:     normalizeTableType(t.Type),
 				Table:    t.Name,
-				Lower:    strings.ToLower(t.Name),
+				Lower:    fuzzy.FoldString(t.Name),
 			})
 			if len(found) >= limit {
 				break

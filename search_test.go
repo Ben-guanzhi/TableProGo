@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	fuzzy "github.com/dbcore/dbcore/fuzzy"
 	tableprosql "github.com/dbcore/dbcore/sqltext"
 )
 
@@ -243,6 +244,44 @@ func TestSearchFindsRedisKeys(t *testing.T) {
 	}
 	if len(found) != 0 {
 		t.Fatalf("unexpected matches: %+v", found)
+	}
+}
+
+// TestSearchFoldEquivalence 锁定折叠判据统一（K-F2）后的行为：ToLower 与
+// 轨道归一在 ASCII/CJK 子串命中上等价（双方都折叠到同一轨道代表，包含关系
+// 保持）；'İ' 特例锁定行为修正——ToLower('İ')='i' 会误命中 "elvin" 里的 i，
+// 轨道判据拒绝（更严格、更正确）。
+func TestSearchFoldEquivalence(t *testing.T) {
+	cases := []struct {
+		hay, query string
+	}{
+		{"orders", "ord"},
+		{"order_items", "order"},
+		{"order_items", "items"},
+		{"invoice.items", "items"},
+		{"lineitems", "items"},
+		{"中文items表", "items"},
+		{"user:1", "user"},
+		{"KELVIN", "kelvin"},
+		{"\u212Aelvin", "kelvin"},
+		{"elvin", "celvin"},
+		{"elvin", "İ"}, // 特例：ToLower 误命中，轨道判据拒绝
+	}
+	for _, tc := range cases {
+		oldHit := strings.Contains(strings.ToLower(tc.hay), strings.ToLower(tc.query))
+		newHit := strings.Contains(fuzzy.FoldString(tc.hay), fuzzy.FoldString(tc.query))
+		if tc.hay == "elvin" && tc.query == "İ" {
+			if !oldHit {
+				t.Errorf("precondition: ToLower should over-match %q vs %q (that is the bug being fixed)", tc.hay, tc.query)
+			}
+			if newHit {
+				t.Errorf("orbit folding must reject ToLower's over-folding: %q vs %q", tc.hay, tc.query)
+			}
+			continue
+		}
+		if oldHit != newHit {
+			t.Errorf("fold equivalence: Contains(ToLower(%q), ToLower(%q)) = %v, Contains(FoldString) = %v", tc.hay, tc.query, oldHit, newHit)
+		}
 	}
 }
 
