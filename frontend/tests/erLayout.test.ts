@@ -92,6 +92,70 @@ test('the layout is deterministic: same schema, same drawing', () => {
   );
 });
 
+// serialize flattens the whole layout (nodes, edges, canvas) to plain JSON so
+// two layouts can be compared byte for byte — a Map key would otherwise hide
+// order differences inside the object graph.
+function serialize(layout: ReturnType<typeof computeLayout>): string {
+  return JSON.stringify({
+    nodes: layout.nodes.map(n => [n.table.name, n.x, n.y, n.width, n.height]),
+    edges: layout.edges.map(e => [e.from, e.to, e.name]),
+    width: layout.width,
+    height: layout.height,
+  });
+}
+
+// shuffle reorders a copy with a fixed Fisher-Yates seed: determinism must not
+// depend on the order tables arrive in the model. The barycenter sweep sums
+// neighbour positions in the neighbour-list order, which is built from the
+// tables array — a float accumulation order that could in principle change
+// the layout. This is the K-F3 contract: byte-identical output for any input
+// order, so map/array iteration order can never leak back into the drawing.
+function shuffled(tables: ReturnType<typeof table>[], seed: number): ReturnType<typeof table>[] {
+  const arr = [...tables];
+  let s = seed;
+  const next = () => {
+    s = (s * 1103515245 + 12345) & 0x7fffffff;
+    return s;
+  };
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = next() % (i + 1);
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+test('K-F3: the layout is byte-identical across input order (map order cannot leak)', () => {
+  const base = [
+    table('orders', ['customers']),
+    table('order_items', ['orders', 'products']),
+    table('customers'),
+    table('products'),
+    table('audit_log'),
+    table('sessions', ['customers']),
+    table('payments', ['orders', 'customers']),
+    table('shipments', ['orders']),
+  ];
+  const reference = serialize(computeLayout(schema(base)));
+  for (const seed of [1, 7, 42, 1234, 99999]) {
+    const layout = computeLayout(schema(shuffled(base, seed)));
+    assert.equal(
+      serialize(layout),
+      reference,
+      `layout drifted for seed ${seed}: the drawing must not depend on input order`,
+    );
+  }
+});
+
+test('K-F3: the full layout (edges included) is byte-identical on repeat', () => {
+  const model = schema([
+    table('orders', ['customers']),
+    table('order_items', ['orders', 'products']),
+    table('customers'),
+    table('products'),
+  ]);
+  assert.equal(serialize(computeLayout(model)), serialize(computeLayout(model)));
+});
+
 test('circular references still lay out (no overflow) and every table is placed', () => {
   const layout = computeLayout(
     schema([table('a', ['b']), table('b', ['c']), table('c', ['a'])]),

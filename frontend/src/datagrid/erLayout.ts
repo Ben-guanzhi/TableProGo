@@ -174,6 +174,13 @@ export function computeLayout(model: ERSchema): ERLayout {
       });
     }
   }
+  // The edge list is rendered in array order, so it must not depend on the
+  // order tables arrived in the model: sort by (from, to, name), the same
+  // full-key discipline the barycenter sweeps use for their ties. (K-F3:
+  // the determinism contract — byte-identical layout for any input order.)
+  edges.sort(
+    (a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to) || a.name.localeCompare(b.name),
+  );
 
   return { nodes: nodeList, edges, width: totalW, height: totalH + PAD, byName };
 }
