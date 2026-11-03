@@ -124,7 +124,13 @@ func (a *App) buildStructureEdits(req StructureEditRequest) (StructureEditResult
 		}
 		from := ddl.Column{Name: before.Name, Type: before.Type, Nullable: before.Nullable, DefaultValue: before.DefaultValue}
 		to := ddl.Column{Name: name, Type: want.Type, Nullable: want.Nullable, DefaultValue: want.DefaultValue}
-		res.Statements = append(res.Statements, ddl.AlterColumn(dbType, schema, req.Table, from, to)...)
+		statements, gap := ddl.AlterColumn(dbType, schema, req.Table, from, to)
+		if gap != "" {
+			// The renderer returned what it could express and named the part it
+			// left out; the editor surfaces both instead of dropping the change.
+			res.Warnings = append(res.Warnings, gap)
+		}
+		res.Statements = append(res.Statements, statements...)
 	}
 	// Drops: catalog columns the form no longer lists.
 	for _, c := range current {
