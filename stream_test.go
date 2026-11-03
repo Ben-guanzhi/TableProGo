@@ -218,7 +218,7 @@ func TestBigIntCrossesAsTextEveryExit(t *testing.T) {
 	if got := jsonSafeInt(123).(int64); got != 123 {
 		t.Errorf("jsonSafeInt(123) = %v, want int64 123", got)
 	}
-	if got := jsonSafeInt(-(1<<53) - 1).(string); got != "-9007199254740993" {
+	if got := jsonSafeInt(-(1 << 53) - 1).(string); got != "-9007199254740993" {
 		t.Errorf("jsonSafeInt(-(2^53+1)) = %q", got)
 	}
 	if got := jsonSafeUint(uint64(big)).(string); got != "9007199254740993" {

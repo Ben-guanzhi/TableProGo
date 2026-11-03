@@ -393,8 +393,8 @@ func (c *Client) completeAnthropic(ctx context.Context, system string, messages 
 	// Anthropic signs with x-api-key (not a bearer token) and pins the API
 	// version; the Authorization header above would be rejected by its gateway.
 	body, status, err := doJSON(ctx, c.http, c.cfg.BaseURL+"/messages", "", payload, map[string]string{
-		"x-api-key":          c.cfg.APIKey,
-		"anthropic-version":  "2023-06-01",
+		"x-api-key":         c.cfg.APIKey,
+		"anthropic-version": "2023-06-01",
 	})
 	if err != nil {
 		return Response{}, err
@@ -434,7 +434,7 @@ type gemRequest struct {
 }
 
 type gemContent struct {
-	Role  string     `json:"role,omitempty"`
+	Role  string    `json:"role,omitempty"`
 	Parts []gemPart `json:"parts"`
 }
 

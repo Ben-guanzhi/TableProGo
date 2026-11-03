@@ -228,7 +228,7 @@ type tabQueryRequest struct {
 }
 
 type previewRequest struct {
-	ConnID   string        `json:"connId"`
+	ConnID string `json:"connId"`
 	// TabID scopes the page read so /api/cancel-query can stop THIS tab's
 	// preview without touching a neighbouring tab's query.
 	TabID    string        `json:"tabId"`
