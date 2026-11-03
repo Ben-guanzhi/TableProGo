@@ -90,11 +90,17 @@ func (a *App) SecurityNotice() string {
 	keyringFallback.Lock()
 	reason := keyringFallback.reason
 	keyringFallback.Unlock()
+	// Name the file the plain text lands in: "on this machine" is not enough
+	// for a user to find or remove it.
+	location := a.filePath
+	if location == "" {
+		location = "本机"
+	}
 	if reason != "" {
 		keyringFallback.Lock()
 		keyringFallback.reason = ""
 		keyringFallback.Unlock()
-		return "系统钥匙串不可用（" + reason + "）：本次保存的密码以明文存储在本机。"
+		return "系统钥匙串不可用（" + reason + "）：本次保存的密码以明文存储在 " + location + "。"
 	}
 	a.connectionsMu.RLock()
 	plain := false
@@ -106,7 +112,7 @@ func (a *App) SecurityNotice() string {
 	}
 	a.connectionsMu.RUnlock()
 	if plain {
-		return "系统钥匙串不可用：已有连接的密码以明文保存在本机。修好钥匙串后重新保存连接即可封存。"
+		return "系统钥匙串不可用：已有连接的密码以明文保存在 " + location + "。修好钥匙串后重新保存连接即可封存。"
 	}
 	return ""
 }

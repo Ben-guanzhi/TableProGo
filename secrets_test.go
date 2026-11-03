@@ -125,6 +125,53 @@ func TestProtectFallsBackWhenKeyringFails(t *testing.T) {
 	}
 }
 
+// TestSecurityNoticeFallbackOnceAndPath pins the two things the user must be
+// told about a silent plain-text fallback: the notice names the file the
+// password landed in, and the fallback is reported only once per session
+// (the UI polls the notice, so a repeat would spam the toast).
+func TestSecurityNoticeFallbackOnceAndPath(t *testing.T) {
+	keyring.MockInitWithError(errors.New("no secret service"))
+
+	keyringFallback.Lock()
+	keyringFallback.reason = ""
+	keyringFallback.Unlock()
+
+	path := filepath.Join(t.TempDir(), "connections.json")
+	if _, err := protectViaKeyringOrPlain("pw"); err != nil {
+		t.Fatalf("fallback must not fail the save: %v", err)
+	}
+	app := &App{filePath: path}
+
+	first := app.SecurityNotice()
+	if first == "" || !strings.Contains(first, "明文") {
+		t.Fatalf("first notice = %q, want the plain-text warning", first)
+	}
+	if !strings.Contains(first, path) {
+		t.Fatalf("notice %q should name the plain-text file %q", first, path)
+	}
+	if second := app.SecurityNotice(); second != "" {
+		t.Fatalf("fallback must be reported once, got %q on the second read", second)
+	}
+}
+
+// TestSecurityNoticeStoredPlainTextNamesFile pins the notice for a connection
+// whose password was stored in clear text before the keyring existed: it
+// names the file so the user can find and re-seal it.
+func TestSecurityNoticeStoredPlainTextNamesFile(t *testing.T) {
+	keyring.MockInit()
+	path := filepath.Join(t.TempDir(), "connections.json")
+	app := &App{
+		filePath: path,
+		savedConnections: []ConnectionConfig{
+			{ID: "c1", Name: "legacy", Type: "sqlite", Password: "hunter2"},
+		},
+	}
+	got := app.SecurityNotice()
+	if !strings.Contains(got, "明文") || !strings.Contains(got, path) {
+		t.Fatalf("notice = %q, want the plain-text warning naming %q", got, path)
+	}
+}
+
 // TestKeyringWorksProbe pins the capability probe the Fyne dialog's warning
 // rests on: a working keyring answers true, a broken one false.
 func TestKeyringWorksProbe(t *testing.T) {
