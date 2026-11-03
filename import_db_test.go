@@ -269,3 +269,48 @@ func TestImportBatchForStaysUnderParameterCap(t *testing.T) {
 		}
 	}
 }
+
+// An empty req.Schema keeps the connection's own default namespace, so the
+// existing callers and the engines without a schema layer are unaffected.
+func TestImportSchemaDefaultPerEngine(t *testing.T) {
+	cases := []struct {
+		dbType   string
+		database string
+		want     string
+	}{
+		{"postgresql", "app", "public"},
+		{"sqlserver", "app", "dbo"},
+		{"mysql", "shop", "shop"},
+		{"sqlite", "app.db", ""}, // no schema layer: unqualified
+		{"oracle", "app", ""},    // schema comes from the connected user
+		{"unknown", "app", ""},
+	}
+	for _, tc := range cases {
+		if got := importSchema(tc.dbType, tc.database); got != tc.want {
+			t.Errorf("importSchema(%s, %q) = %q, want %q", tc.dbType, tc.database, got, tc.want)
+		}
+	}
+}
+
+// An explicit schema is carried all the way into the generated statements:
+// SQLite names its default database "main", so qualifying there is valid and
+// the rows must land under the qualified reference.
+func TestImportExplicitSchemaLandsInIt(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	path := writeTempFile(t, "orders.csv", "id,name\n1,alice\n")
+
+	res, err := app.ImportFile(ImportRequest{
+		ConnID: "c1", Database: "", Schema: "main", Table: "orders", Path: path,
+		Options: ImportOptions{HasHeader: true, CreateTable: true},
+	})
+	if err != nil {
+		t.Fatalf("import: %v", err)
+	}
+	if !res.CreatedTable || res.Rows != 1 {
+		t.Fatalf("result = %+v", res)
+	}
+	r := app.ExecuteQuery("c1", "SELECT name FROM \"main\".\"orders\"", "")
+	if r.Error != "" || r.RowCount != 1 || r.Rows[0][0] != "alice" {
+		t.Fatalf("rows under the qualified reference = %+v", r)
+	}
+}

@@ -45,11 +45,15 @@ type ImportOptions struct {
 
 // ImportRequest is the API payload for one import.
 type ImportRequest struct {
-	ConnID   string        `json:"connId"`
-	Database string        `json:"database"`
-	Table    string        `json:"table"`
-	Path     string        `json:"path"`
-	Options  ImportOptions `json:"options"`
+	ConnID   string `json:"connId"`
+	Database string `json:"database"`
+	// Schema is the catalog namespace the import lands in. Empty means the
+	// connection's own default (MySQL: the database, PostgreSQL: public,
+	// SQL Server: dbo), so SQLite and Oracle keep writing unqualified names.
+	Schema  string        `json:"schema"`
+	Table   string        `json:"table"`
+	Path    string        `json:"path"`
+	Options ImportOptions `json:"options"`
 }
 
 // ImportResult summarises one import run.
@@ -144,11 +148,18 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 		res.Error = err.Error()
 		return res, err
 	}
+	// The catalog namespace the run lands in. An explicit req.Schema wins;
+	// empty keeps the connection's own default so SQLite/Oracle stay
+	// unqualified and existing callers see no change.
+	schema := req.Schema
+	if schema == "" {
+		schema = importSchema(conn.Type, req.Database)
+	}
 	ctx, done := a.beginRunIn(context.Background(), req.ConnID, "import")
 	defer done()
 
 	if opts.Mode == "truncate" {
-		stmt, terr := tableprosql.TruncateStatement(conn.Type, importfile.Ident(conn.Type, req.Table))
+		stmt, terr := tableprosql.TruncateStatement(conn.Type, importfile.TableRef(conn.Type, schema, req.Table))
 		if terr != nil {
 			res.Error = terr.Error()
 			return res, terr
@@ -160,7 +171,7 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 	}
 
 	w := &importWriter{
-		ctx: ctx, drv: drv, dbType: conn.Type, table: req.Table,
+		ctx: ctx, drv: drv, dbType: conn.Type, schema: schema, table: req.Table,
 		opts: opts, skipErrors: req.Options.SkipErrors, res: &res,
 	}
 	if err := w.begin(); err != nil {
@@ -200,6 +211,7 @@ type importWriter struct {
 	txDrv      dbcore.SQLTxDriver // nil without transaction support or with skipErrors
 	tx         *sql.Tx
 	dbType     string
+	schema     string
 	table      string
 	opts       importfile.Options
 	skipErrors bool
@@ -269,7 +281,7 @@ func (w *importWriter) write(chunk [][]*string, firstRow int) error {
 	batch := importBatchFor(w.dbType, len(w.cols))
 	for start := 0; start < len(chunk); start += batch {
 		end := minInt(start+batch, len(chunk))
-		stmt, args, err := importfile.InsertSQL(w.dbType, w.table, w.cols, chunk[start:end], w.opts)
+		stmt, args, err := importfile.InsertSQL(w.dbType, w.schema, w.table, w.cols, chunk[start:end], w.opts)
 		if err != nil {
 			return err
 		}
@@ -284,7 +296,7 @@ func (w *importWriter) write(chunk [][]*string, firstRow int) error {
 			// Retry the failed batch row by row so one bad row does not lose
 			// the rest; the first failure is reported, not swallowed.
 			for i := start; i < end; i++ {
-				one, oneArgs, err := importfile.InsertSQL(w.dbType, w.table, w.cols, chunk[i:i+1], w.opts)
+				one, oneArgs, err := importfile.InsertSQL(w.dbType, w.schema, w.table, w.cols, chunk[i:i+1], w.opts)
 				if err != nil {
 					return err
 				}
@@ -373,7 +385,7 @@ func (a *App) prepareImport(w *importWriter, req ImportRequest, opts importfile.
 	created := false
 	if req.Options.CreateTable {
 		var err error
-		created, err = a.ensureImportTable(w.ctx, w.drv, w.dbType, req.Database, req.Table, cols, sample, opts)
+		created, err = a.ensureImportTable(w.ctx, w.drv, w.dbType, w.schema, req.Table, cols, sample, opts)
 		if err != nil {
 			return err
 		}
@@ -403,7 +415,7 @@ func (a *App) prepareImport(w *importWriter, req ImportRequest, opts importfile.
 			}
 			keys[i] = k
 		}
-		resolved, err := a.resolveUpsertKeys(w.ctx, w.drv, w.dbType, req.Database, req.Table, w.cols, keys)
+		resolved, err := a.resolveUpsertKeys(w.ctx, w.drv, w.dbType, w.schema, req.Table, w.cols, keys)
 		if err != nil {
 			return err
 		}
@@ -419,12 +431,12 @@ func (a *App) prepareImport(w *importWriter, req ImportRequest, opts importfile.
 // headerless file maps positionally when the arity agrees. File columns with
 // no counterpart are dropped from the INSERT and the pairing is reported.
 func (a *App) mapImportColumns(w *importWriter, req ImportRequest, fileCols []string) error {
-	cols, err := w.drv.ListColumns(w.ctx, importSchema(w.dbType, req.Database), req.Table)
+	cols, err := w.drv.ListColumns(w.ctx, w.schema, req.Table)
 	if err != nil {
-		return fmt.Errorf("import: 读取表 %s 的列失败：%w", req.Table, err)
+		return fmt.Errorf("import: 读取表 %s 的列失败：%w", importName(w.dbType, w.schema, req.Table), err)
 	}
 	if len(cols) == 0 {
-		return fmt.Errorf("import: 目标表 %s 不存在（或没有列）", req.Table)
+		return fmt.Errorf("import: 目标表 %s 不存在（或没有列）", importName(w.dbType, w.schema, req.Table))
 	}
 	tableNames := make([]string, len(cols))
 	for i, c := range cols {
@@ -453,7 +465,10 @@ func (a *App) mapImportColumns(w *importWriter, req ImportRequest, fileCols []st
 	return nil
 }
 
-// importSchema is the catalog namespace ListTables expects.
+// importSchema is the catalog namespace ListTables expects when the caller did
+// not name one: MySQL names its database as the schema, PostgreSQL's
+// conventional default is public, SQL Server's is dbo, and the rest have no
+// schema layer at all.
 func importSchema(dbType, database string) string {
 	switch dbType {
 	case "mysql":
@@ -466,9 +481,22 @@ func importSchema(dbType, database string) string {
 	return ""
 }
 
+// importName renders the target for a user-facing message. An empty schema
+// leaves just the table, so the message reads the same as before.
+func importName(dbType, schema, table string) string {
+	if schema == "" {
+		return table
+	}
+	q, err := qualifiedName(dbType, schema, table)
+	if err != nil {
+		return schema + "." + table
+	}
+	return q
+}
+
 // ensureImportTable creates the table when missing and reports whether it did.
-func (a *App) ensureImportTable(ctx context.Context, drv dbcore.SQLDriver, dbType, database, table string, cols []string, rows [][]*string, opts importfile.Options) (bool, error) {
-	tables, err := drv.ListTables(ctx, importSchema(dbType, database))
+func (a *App) ensureImportTable(ctx context.Context, drv dbcore.SQLDriver, dbType, schema, table string, cols []string, rows [][]*string, opts importfile.Options) (bool, error) {
+	tables, err := drv.ListTables(ctx, schema)
 	if err != nil {
 		return false, err
 	}
@@ -484,7 +512,7 @@ func (a *App) ensureImportTable(ctx context.Context, drv dbcore.SQLDriver, dbTyp
 	if opts.InferTypes {
 		kinds = importfile.InferTypes(cols, rows)
 	}
-	if _, err := drv.Execute(ctx, importfile.CreateTableSQL(dbType, table, cols, kinds)); err != nil {
+	if _, err := drv.Execute(ctx, importfile.CreateTableSQL(dbType, schema, table, cols, kinds)); err != nil {
 		return false, fmt.Errorf("import: create table: %w", err)
 	}
 	return true, nil
@@ -494,7 +522,7 @@ func (a *App) ensureImportTable(ctx context.Context, drv dbcore.SQLDriver, dbTyp
 // against the imported columns; otherwise the table's primary key is used —
 // *not* every column, because "ON CONFLICT (id, name)" does not match a primary
 // key on id alone and the server rejects it.
-func (a *App) resolveUpsertKeys(ctx context.Context, drv dbcore.SQLDriver, dbType, database, table string, cols, requested []string) ([]string, error) {
+func (a *App) resolveUpsertKeys(ctx context.Context, drv dbcore.SQLDriver, dbType, schema, table string, cols, requested []string) ([]string, error) {
 	known := make(map[string]bool, len(cols))
 	for _, c := range cols {
 		known[c] = true
@@ -507,9 +535,9 @@ func (a *App) resolveUpsertKeys(ctx context.Context, drv dbcore.SQLDriver, dbTyp
 		}
 		return requested, nil
 	}
-	columns, err := drv.ListColumns(ctx, importSchema(dbType, database), table)
+	columns, err := drv.ListColumns(ctx, schema, table)
 	if err != nil {
-		return nil, fmt.Errorf("import: read primary key of %s: %w", table, err)
+		return nil, fmt.Errorf("import: read primary key of %s: %w", importName(dbType, schema, table), err)
 	}
 	var keys []string
 	for _, c := range columns {

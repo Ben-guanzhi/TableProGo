@@ -281,13 +281,30 @@ func Ident(dbType, name string) string {
 	return q
 }
 
-// CreateTableSQL renders the CREATE TABLE for the parsed columns.
-func CreateTableSQL(dbType, table string, cols []string, kinds []string) string {
+// TableRef renders the target reference for CREATE/INSERT. Where the engine
+// has a schema layer and a schema was chosen the reference is qualified;
+// otherwise it stays the bare identifier, Oracle's no-quoting rule included.
+// An engine without a schema layer never gets one, so SQLite keeps writing
+// unqualified names.
+func TableRef(dbType, schema, table string) string {
+	if schema == "" {
+		return Ident(dbType, table)
+	}
+	q, err := sqltext.QualifiedName(dbType, schema, table)
+	if err != nil {
+		return Ident(dbType, table)
+	}
+	return q
+}
+
+// CreateTableSQL renders the CREATE TABLE for the parsed columns. The target
+// is schema-qualified when a schema was chosen.
+func CreateTableSQL(dbType, schema, table string, cols []string, kinds []string) string {
 	defs := make([]string, len(cols))
 	for i, c := range cols {
 		defs[i] = Ident(dbType, c) + " " + ColumnType(dbType, kinds[i])
 	}
-	return "CREATE TABLE " + Ident(dbType, table) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"
+	return "CREATE TABLE " + TableRef(dbType, schema, table) + " (\n  " + strings.Join(defs, ",\n  ") + "\n)"
 }
 
 // Placeholder renders the idx-th bind marker (1-based) in the engine's syntax.
@@ -305,8 +322,9 @@ func Placeholder(dbType string, idx int) string {
 
 // InsertSQL renders one (optionally multi-row) INSERT. In "upsert" mode the
 // statement gets the engine's conflict clause; Oracle accepts one row per
-// statement, which the caller enforces by batching per row.
-func InsertSQL(dbType, table string, cols []string, rows [][]*string, opts Options) (string, []dbcore.Value, error) {
+// statement, which the caller enforces by batching per row. The target is
+// schema-qualified when a schema was chosen.
+func InsertSQL(dbType, schema, table string, cols []string, rows [][]*string, opts Options) (string, []dbcore.Value, error) {
 	if dbType == "oracle" && len(rows) > 1 {
 		return "", nil, fmt.Errorf("import: oracle accepts one row per INSERT statement")
 	}
@@ -334,7 +352,7 @@ func InsertSQL(dbType, table string, cols []string, rows [][]*string, opts Optio
 		}
 		tuples = append(tuples, "("+strings.Join(marks, ", ")+")")
 	}
-	stmt := "INSERT INTO " + Ident(dbType, table) + " (" + strings.Join(quotedCols, ", ") + ") VALUES " + strings.Join(tuples, ", ")
+	stmt := "INSERT INTO " + TableRef(dbType, schema, table) + " (" + strings.Join(quotedCols, ", ") + ") VALUES " + strings.Join(tuples, ", ")
 	if opts.Mode == "upsert" {
 		clause, err := sqltext.UpsertClause(dbType, cols, opts.UpsertKeys)
 		if err != nil {

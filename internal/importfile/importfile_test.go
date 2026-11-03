@@ -103,22 +103,39 @@ func TestColumnTypePerEngine(t *testing.T) {
 }
 
 func TestCreateTableSQLQuotesPerEngine(t *testing.T) {
-	if got := CreateTableSQL("postgresql", "t1", []string{"id"}, []string{"int"}); !strings.Contains(got, `"t1"`) {
+	if got := CreateTableSQL("postgresql", "", "t1", []string{"id"}, []string{"int"}); !strings.Contains(got, `"t1"`) {
 		t.Errorf("pg DDL = %q", got)
 	}
-	if got := CreateTableSQL("mysql", "t1", []string{"id"}, []string{"int"}); !strings.Contains(got, "`t1`") {
+	if got := CreateTableSQL("mysql", "", "t1", []string{"id"}, []string{"int"}); !strings.Contains(got, "`t1`") {
 		t.Errorf("mysql DDL = %q", got)
 	}
 	// Oracle leaves simple names unquoted so they fold to upper case.
-	got := CreateTableSQL("oracle", "t1", []string{"id"}, []string{"int"})
+	got := CreateTableSQL("oracle", "", "t1", []string{"id"}, []string{"int"})
 	if !strings.Contains(got, "CREATE TABLE t1") || strings.Contains(got, `"t1"`) {
 		t.Errorf("oracle DDL = %q", got)
 	}
 }
 
+func TestCreateTableSQLQualifiesSchema(t *testing.T) {
+	got := CreateTableSQL("postgresql", "sales", "orders", []string{"id"}, []string{"int"})
+	if !strings.Contains(got, `CREATE TABLE "sales"."orders"`) {
+		t.Errorf("pg qualified DDL = %q", got)
+	}
+	got = CreateTableSQL("mysql", "shop", "orders", []string{"id"}, []string{"int"})
+	if !strings.Contains(got, "CREATE TABLE `shop`.`orders`") {
+		t.Errorf("mysql qualified DDL = %q", got)
+	}
+	// SQLite has no schema layer: an empty schema leaves the reference bare,
+	// which is the unchanged default path.
+	got = CreateTableSQL("sqlite", "", "orders", []string{"id"}, []string{"int"})
+	if !strings.Contains(got, `CREATE TABLE "orders"`) || strings.Contains(got, ".") {
+		t.Errorf("sqlite DDL must not qualify: %q", got)
+	}
+}
+
 func TestInsertSQLBindsEveryCell(t *testing.T) {
 	rows := [][]*string{{strPtr("1"), nil}, {strPtr("2"), strPtr("b")}}
-	stmt, args, err := InsertSQL("postgresql", "t", []string{"id", "name"}, rows, Options{})
+	stmt, args, err := InsertSQL("postgresql", "", "t", []string{"id", "name"}, rows, Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,25 +154,53 @@ func TestInsertSQLBindsEveryCell(t *testing.T) {
 }
 
 func TestInsertSQLUpsertClauses(t *testing.T) {
-	pg, _, err := InsertSQL("postgresql", "t", []string{"id", "name"}, [][]*string{{strPtr("1"), strPtr("a")}},
+	pg, _, err := InsertSQL("postgresql", "", "t", []string{"id", "name"}, [][]*string{{strPtr("1"), strPtr("a")}},
 		Options{Mode: "upsert", UpsertKeys: []string{"id"}})
 	if err != nil || !strings.Contains(pg, `ON CONFLICT ("id") DO UPDATE SET "id"=excluded."id"`) {
 		t.Fatalf("pg upsert = %q (%v)", pg, err)
 	}
-	my, _, err := InsertSQL("mysql", "t", []string{"id"}, [][]*string{{strPtr("1")}},
+	my, _, err := InsertSQL("mysql", "", "t", []string{"id"}, [][]*string{{strPtr("1")}},
 		Options{Mode: "upsert", UpsertKeys: []string{"id"}})
 	if err != nil || !strings.Contains(my, "ON DUPLICATE KEY UPDATE") {
 		t.Fatalf("mysql upsert = %q (%v)", my, err)
 	}
-	if _, _, err := InsertSQL("sqlserver", "t", []string{"id"}, [][]*string{{strPtr("1")}},
+	if _, _, err := InsertSQL("sqlserver", "", "t", []string{"id"}, [][]*string{{strPtr("1")}},
 		Options{Mode: "upsert", UpsertKeys: []string{"id"}}); err == nil {
 		t.Fatal("sqlserver upsert must be rejected")
 	}
 }
 
 func TestOracleRejectsMultiRowInsert(t *testing.T) {
-	if _, _, err := InsertSQL("oracle", "t", []string{"id"}, [][]*string{{strPtr("1")}, {strPtr("2")}}, Options{}); err == nil {
+	if _, _, err := InsertSQL("oracle", "", "t", []string{"id"}, [][]*string{{strPtr("1")}, {strPtr("2")}}, Options{}); err == nil {
 		t.Fatal("oracle multi-row insert must be rejected")
+	}
+}
+
+// The schema flows into the statement text, not just the catalog lookup: an
+// explicit namespace has to reach the INSERT, otherwise the run writes to the
+// connection's default schema while the catalog was read from the named one.
+func TestInsertSQLQualifiesSchema(t *testing.T) {
+	stmt, _, err := InsertSQL("postgresql", "sales", "orders", []string{"id"}, [][]*string{{strPtr("1")}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stmt, `INSERT INTO "sales"."orders"`) {
+		t.Errorf("pg qualified INSERT = %q", stmt)
+	}
+	stmt, _, err = InsertSQL("mysql", "shop", "orders", []string{"id"}, [][]*string{{strPtr("1")}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stmt, "INSERT INTO `shop`.`orders`") {
+		t.Errorf("mysql qualified INSERT = %q", stmt)
+	}
+	// The empty schema is the unchanged path.
+	stmt, _, err = InsertSQL("postgresql", "", "orders", []string{"id"}, [][]*string{{strPtr("1")}}, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stmt, `INSERT INTO "orders"`) {
+		t.Errorf("pg bare INSERT = %q", stmt)
 	}
 }
 

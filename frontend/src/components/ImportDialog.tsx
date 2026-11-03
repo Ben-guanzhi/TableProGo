@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { CancelQuery, ImportFile, ImportOptions, ImportResult } from '../api';
+import { useEffect, useRef, useState } from 'react';
+import { CancelQuery, GetSchemas, ImportFile, ImportOptions, ImportResult } from '../api';
 import { TableRef } from '../types';
 import { FiUpload, FiX } from 'react-icons/fi';
 import toast from 'react-hot-toast';
@@ -34,6 +34,26 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
   });
   // Conflict keys stay a comma-separated string in the input; the API wants a list.
   const [upsertKeys, setUpsertKeys] = useState('');
+  // Engines with a schema layer answer the namespace list; the rest return
+  // nothing, and the import then keeps writing unqualified names.
+  const [schemas, setSchemas] = useState<string[]>([]);
+  const [schema, setSchema] = useState(target.schema);
+
+  useEffect(() => {
+    let cancelled = false;
+    GetSchemas(target.connId, target.database)
+      .then((list) => {
+        if (cancelled) return;
+        const names = list ?? [];
+        setSchemas(names);
+        // A target without a schema name falls back to the connection's first
+        // namespace, so the select is never blank while the list is known.
+        setSchema((s) => (s ? s : names[0] ?? ''));
+      })
+      .catch(() => { if (!cancelled) setSchemas([]); });
+    return () => { cancelled = true; };
+  }, [target.connId, target.database]);
+
   const isSQL = /\.sql$/i.test(path.trim());
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -51,6 +71,7 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
       const res = await ImportFile({
         connId: target.connId,
         database: target.database,
+        schema,
         table: target.table,
         path: path.trim(),
         options: {
@@ -103,6 +124,21 @@ const ImportDialog: React.FC<ImportDialogProps> = ({ target, onClose, onImported
 
           {!isSQL && (
             <>
+          {schemas.length > 0 && (
+            <div>
+              <label htmlFor="import-schema" className="block text-sm text-secondary mb-1">目标 schema</label>
+              <select
+                id="import-schema"
+                className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                value={schema}
+                onChange={(e) => setSchema(e.target.value)}
+              >
+                {schemas.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <label className="flex items-center gap-2 text-sm text-secondary">
               <input type="checkbox" checked={options.hasHeader} onChange={(e) => setOptions({ ...options, hasHeader: e.target.checked })} />

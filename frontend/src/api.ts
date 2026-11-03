@@ -705,6 +705,7 @@ export interface ImportResult {
 export async function ImportFile(req: {
   connId: string;
   database: string;
+  schema: string;
   table: string;
   path: string;
   options: ImportOptions;
