@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log"
 	"os"
@@ -43,6 +44,11 @@ func writeFileAtomic(path string, data []byte) error {
 // does not exist. A file that exists but does not parse is moved aside rather
 // than deleted, so its bytes stay recoverable instead of being silently
 // overwritten by the next save.
+//
+// A UTF-8 BOM is stripped before parsing. Windows editors (Notepad, PowerShell's
+// Set-Content) write one, and encoding/json rejects it as an invalid first
+// character — without this, a hand-edited connections.json would be quarantined
+// as corrupt over three invisible bytes.
 func readJSONFile[T any](path string) (entries []T, ok bool, err error) {
 	data, readErr := os.ReadFile(path)
 	if readErr != nil {
@@ -51,6 +57,7 @@ func readJSONFile[T any](path string) (entries []T, ok bool, err error) {
 		}
 		return nil, false, readErr
 	}
+	data = bytes.TrimPrefix(data, utf8BOM)
 	if err := json.Unmarshal(data, &entries); err != nil {
 		quarantine := path + ".corrupt"
 		if qErr := os.Rename(path, quarantine); qErr == nil {
@@ -62,6 +69,9 @@ func readJSONFile[T any](path string) (entries []T, ok bool, err error) {
 	}
 	return entries, true, nil
 }
+
+// utf8BOM is the byte order mark a Windows editor may prepend.
+var utf8BOM = []byte{0xEF, 0xBB, 0xBF}
 
 // connKey identifies a connection by target. Neither the stored id (a random
 // UUID generated per connection) nor the sealed password (DPAPI seals a fresh

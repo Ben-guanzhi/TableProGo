@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Scheduled batch jobs (W7): `tablepro-go --job=<recipe.json>` runs a JSON recipe
+  headless and exits — the shape that fits a "start on demand" app, because cron
+  and Task Scheduler already own retry, log rotation and alerting. A recipe names
+  saved connections BY ID and carries no credential, so it can live in a repo;
+  steps are `backup` / `transfer` (W5) / `rowsync` (W6) / `wait`, run in order and
+  stopping at the first failure. Exit codes are load-bearing: 0 all steps ran, 1 a
+  step failed, 2 the recipe itself was unusable — the recipe is validated before
+  any connection opens, so a typo alerts the person who wrote it rather than the
+  person on call for the database. `--dry-run` validates and reports the plan
+  (transfer and rowsync previews are read-only) without writing. A job has no UI
+  to answer the app's confirm dialogs, so the recipe IS the confirmation — the
+  risk surface is the file, not the run; `rowsync` defaults to analyse-only, and a
+  plan exceeding the one-shot apply cap is refused rather than silently
+  half-applied. Log lines are redacted (`password=`/`token=`/`secret=` → `***`)
+  so a cron mail is safe to paste into a ticket. `docs/scheduled-jobs.md` carries
+  the recipe reference plus cron, systemd timer and Task Scheduler examples.
 - Row-level synchronization (W6): analyse a table's two sides by primary key and
   apply only the ticked differences. `internal/rowsync` is the pure merge (18
   cases): two streams ordered by the same key are merged with a two-way merge, so
