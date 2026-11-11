@@ -258,11 +258,17 @@ func (a *App) llmListConnections() (string, error) {
 	return joinLines(lines), nil
 }
 
-// formatQueryResult renders rows as text the model can read.
+// formatQueryResult renders rows as text the model can read. String cells go
+// through data masking first: the model sees shapes (a***@***, 138****5678),
+// not a real person's email or phone. The masking policy is the same one the
+// MCP server uses — one policy for every AI surface.
 func formatQueryResult(result *mcp.QueryResult) string {
 	if result == nil || len(result.Rows) == 0 {
 		return "(no rows)"
 	}
+	// Mask in place: the result came straight from the catalog and is not
+	// reused after this render.
+	mcp.MaskQueryResult(result)
 	var b strings.Builder
 	b.WriteString(strings.Join(result.Columns, " | "))
 	b.WriteString("\n")

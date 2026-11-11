@@ -152,7 +152,7 @@ func (a *App) previewPage(connID, tabID, database string, schema string, table s
 
 	db := conn.DB
 	schema = defaultSchema(conn.Type, schema)
-	if conn.Type == "postgresql" {
+	if isPostgresLike(conn.Type) {
 		if db, err = a.poolFor(conn, database); err != nil {
 			return QueryResult{Error: err.Error()}
 		}

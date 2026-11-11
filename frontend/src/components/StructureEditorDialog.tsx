@@ -1,7 +1,8 @@
 import { useMemo, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
 import { FiPlus, FiTrash2, FiX } from 'react-icons/fi';
-import { ColumnEdit, ApplyStructureEdit, ApplyStructureEditConfirmed, PreviewStructureEdit } from '../api';
+import { ColumnEdit, ApplyStructureEdit, ApplyStructureEditConfirmed, ApplyStructureRollback, ApplyStructureRollbackConfirmed, PreviewStructureEdit } from '../api';
+import type { StructureEditResult, StructureRollbackRequest } from '../api';
 import type { TableRef } from '../types';
 import { useDialog } from '../dialog';
 import {
@@ -49,7 +50,24 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
   const [indexRows, setIndexRows] = useState<IndexEditRow[]>(indexes);
   const [fkRows, setFkRows] = useState<ForeignKeyEditRow[]>(foreignKeys);
   const [preview, setPreview] = useState<{ statements: string[]; warnings: string[] } | null>(null);
+  const [applied, setApplied] = useState<StructureEditResult | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // The catalog snapshot the dialog opened with: rollback renders the reverse
+  // from this plus the applied request.
+  const beforeSnapshot: StructureRollbackRequest['before'] = {
+    columns: columns.map(c => ({ name: c.name, type: c.type, nullable: c.nullable, defaultValue: c.defaultValue })),
+    indexes: indexes.map(r => ({ name: r.name, unique: r.unique, columns: parseColumnList(r.columnsText) })),
+    foreignKeys: foreignKeys.map(r => ({
+      name: r.name,
+      columns: parseColumnList(r.columnsText),
+      refSchema: r.refSchema,
+      refTable: r.refTable,
+      refColumns: parseColumnList(r.refColumnsText),
+      onDelete: r.onDelete,
+      onUpdate: r.onUpdate,
+    })),
+  };
 
   const payload = useMemo(
     () => ({
@@ -126,6 +144,37 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
       setPendingReason(null);
       setPreview(res);
       toast.success(`结构已更新（${res.statements.length} 条语句）`);
+      // Keep the dialog open: the applied result carries a rollback offer, and
+      // closing here would leave the user with no way to undo.
+      setApplied(res);
+    } catch (e) {
+      toast.error((e as Error).message, { duration: 10000 });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const rollbackPayload = (): StructureRollbackRequest => ({
+    ...(payload as unknown as StructureRollbackRequest),
+    before: beforeSnapshot,
+    statements: applied?.statements,
+  });
+
+  // Undo the applied edit by rendering its reverse from the before-snapshot.
+  const runRollback = async (confirmed = false) => {
+    if (!applied) return;
+    const rollback = rollbackPayload();
+    setBusy(true);
+    try {
+      const res = await (confirmed ? ApplyStructureRollbackConfirmed(rollback) : ApplyStructureRollback(rollback));
+      if ((res as unknown as { needsConfirmation?: boolean }).needsConfirmation) {
+        const reason = (res as unknown as { reason: string }).reason;
+        setPendingReason(reason);
+        toast(reason, { duration: 10000, icon: '⚠️' });
+        return;
+      }
+      setPendingReason(null);
+      toast.success(`已撤销（${res.statements.length} 条语句）`);
       onApplied();
       onClose();
     } catch (e) {
@@ -470,6 +519,15 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
           )}
         </div>
 
+        {applied && (
+          <div className="mx-5 mt-3 px-3 py-2 rounded border border-success/40 bg-success/10 flex items-center gap-3">
+            <span className="text-xs text-ink">
+              已应用 {applied.statements.length} 条语句，可撤销回之前的状态
+            </span>
+            <div className="flex-1" />
+          </div>
+        )}
+
         <div className="flex justify-end gap-3 px-5 py-3 border-t border-line shrink-0">
           <button className="px-4 py-2 rounded text-sm bg-raised hover:bg-emphasis text-ink" onClick={onClose}>
             关闭
@@ -481,20 +539,31 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
           >
             {busy ? '计算中…' : '预览改动'}
           </button>
-          <button
-            className="px-4 py-2 rounded text-sm bg-accent hover:bg-accent-hover text-on-accent disabled:opacity-40"
-            onClick={() => void runApply(pendingReason !== null)}
-            disabled={busy || !preview || preview.statements.length === 0}
-            title={
-              pendingReason !== null
-                ? 'Safe Mode 要求确认：再次点击执行这些语句'
-                : preview?.statements.length === 0
-                  ? '没有可执行的改动'
-                  : '在一个事务里执行这些语句'
-            }
-          >
-            {pendingReason !== null ? '确认执行' : '执行'}
-          </button>
+          {applied ? (
+            <button
+              className="px-4 py-2 rounded text-sm bg-warning hover:bg-warning-hover text-on-warning disabled:opacity-40"
+              onClick={() => void runRollback(pendingReason !== null)}
+              disabled={busy}
+              title="用回滚语句恢复到应用之前的结构"
+            >
+              {pendingReason !== null ? '确认撤销' : '撤销'}
+            </button>
+          ) : (
+            <button
+              className="px-4 py-2 rounded text-sm bg-accent hover:bg-accent-hover text-on-accent disabled:opacity-40"
+              onClick={() => void runApply(pendingReason !== null)}
+              disabled={busy || !preview || preview.statements.length === 0}
+              title={
+                pendingReason !== null
+                  ? 'Safe Mode 要求确认：再次点击执行这些语句'
+                  : preview?.statements.length === 0
+                    ? '没有可执行的改动'
+                    : '在一个事务里执行这些语句'
+              }
+            >
+              {pendingReason !== null ? '确认执行' : '执行'}
+            </button>
+          )}
         </div>
       </div>
     </div>

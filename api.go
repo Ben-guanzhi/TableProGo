@@ -507,6 +507,31 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/er", 400, func(a *App, body tableRefRequest) (any, error) {
 		return a.GetERDiagram(body.ConnID, body.Database, body.Schema)
 	})
+	// One ERD foreign-key edit endpoint: a `preview` request only renders, an
+	// apply runs the statements under the Safe Mode guard (a pause comes back
+	// structured, and /api/er/fk-confirmed re-sends after the confirmation).
+	post(a, mux, "/api/er/fk", 400, func(a *App, body ERFKEditRequest) (any, error) {
+		if body.Preview {
+			return a.PreviewERFKEdit(body)
+		}
+		res, err := a.ApplyERFKEdit(body)
+		if err != nil {
+			if reason, paused := isNeedsConfirmation(err); paused {
+				return map[string]any{
+					"needsConfirmation": true,
+					"reason":            reason,
+					"statements":        res.Statements,
+					"warnings":          res.Warnings,
+					"rollback":          res.Rollback,
+				}, nil
+			}
+			return nil, err
+		}
+		return res, nil
+	})
+	post(a, mux, "/api/er/fk-confirmed", 400, func(a *App, body ERFKEditRequest) (any, error) {
+		return a.ApplyERFKEditConfirmed(body)
+	})
 	// Schema comparison and synchronization. The comparison rules live in
 	// dbcore/schemadiff; the apply route takes a plan id and entry ids rather
 	// than SQL, so a client can only run statements this process computed.
@@ -627,6 +652,25 @@ func (a *App) routes() *http.ServeMux {
 	})
 	post(a, mux, "/api/structure-edit-confirmed", 400, func(a *App, body StructureEditRequest) (any, error) {
 		return a.ApplyStructureEditConfirmed(body)
+	})
+	post(a, mux, "/api/structure-edit/rollback", 400, func(a *App, body StructureRollbackRequest) (any, error) {
+		res, err := a.ApplyStructureRollback(body)
+		if err != nil {
+			if reason, paused := isNeedsConfirmation(err); paused {
+				return map[string]any{
+					"needsConfirmation": true,
+					"reason":            reason,
+					"statements":        res.Statements,
+					"warnings":          res.Warnings,
+					"applied":           res.Applied,
+				}, nil
+			}
+			return nil, err
+		}
+		return res, nil
+	})
+	post(a, mux, "/api/structure-edit/rollback-confirmed", 400, func(a *App, body StructureRollbackRequest) (any, error) {
+		return a.ApplyStructureRollbackConfirmed(body)
 	})
 	post(a, mux, "/api/trigger-definition", 400, func(a *App, body tableRefRequest) (any, error) {
 		def, err := a.GetTriggerDefinition(body.ConnID, body.Database, body.Schema, body.Table)
@@ -816,6 +860,9 @@ func (a *App) routes() *http.ServeMux {
 	})
 	post(a, mux, "/api/import", 400, func(a *App, body ImportRequest) (any, error) {
 		return a.ImportFile(body)
+	})
+	post(a, mux, "/api/import/preview", 400, func(a *App, body ImportRequest) (any, error) {
+		return a.PreviewImport(body)
 	})
 
 	// Streaming results: NDJSON, one event per line, flushed per batch so the

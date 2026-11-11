@@ -17,7 +17,7 @@ import (
 // resolveObjectSchema 归一 schema 级目录（触发器、函数/过程）的命名空间：
 // MySQL 用库当 schema，PG 缺省 public。
 func resolveObjectSchema(conn *Connection, database, schema string) string {
-	if conn.Type == "mysql" {
+	if isMySQLLike(conn.Type) {
 		if schema == "" {
 			return database
 		}

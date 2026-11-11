@@ -710,7 +710,7 @@ func connSpec(config ConnectionConfig) dbcore.ConnSpec {
 // connSpecAt is connSpec with the dialed endpoint overridden (SSH tunnel).
 func connSpecAt(config ConnectionConfig, host string, port int) dbcore.ConnSpec {
 	kind := dbcore.DatabaseKind(config.Type)
-	switch config.Type {
+	switch builtinEngine(config.Type) {
 	case "postgresql":
 		kind = dbcore.KindPostgres
 	case "sqlserver":
@@ -735,7 +735,7 @@ func connSpecAt(config ConnectionConfig, host string, port int) dbcore.ConnSpec 
 }
 
 func createConnection(config ConnectionConfig) (*sql.DB, error) {
-	return createConnectionAt(config, config.Host, config.Port)
+	return createConnectionAt(config, config.Host, engineDefaultPortFor(config))
 }
 
 // createConnectionAt opens the engine at an explicit host/port. The SSH tunnel
@@ -750,7 +750,7 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 	spec := connSpecAt(config, host, port)
 	var dsn string
 	var driver string
-	switch config.Type {
+	switch builtinEngine(config.Type) {
 	case "mysql":
 		driver = "mysql"
 		dsn = dbcoremysql.DSN(spec)
@@ -795,4 +795,35 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 	db.SetConnMaxLifetime(dbConnMaxLifetime)
 	db.SetConnMaxIdleTime(dbConnMaxIdleTime)
 	return db, nil
+}
+
+// engineDefaultPortFor 是 engines.go 的端口表在 ConnectionConfig 上的入口:
+// 端口未填 (0) 时回落到该引擎的常规端口, 让OceanBase(2881)/StarRocks(9030) 等
+// 别名与底层引擎一样开箱即用。
+func engineDefaultPortFor(config ConnectionConfig) int {
+	if config.Port != 0 {
+		return config.Port
+	}
+	if p := engineDefaultPort(config.Type); p != 0 {
+		return p
+	}
+	return builtinEngineDefaultPort(config.Type)
+}
+
+// builtinEngineDefaultPort is the port a built-in engine conventionally listens
+// on; aliases that do not declare their own fall through to their base engine.
+func builtinEngineDefaultPort(engineType string) int {
+	switch builtinEngine(engineType) {
+	case "mysql":
+		return 3306
+	case "postgresql":
+		return 5432
+	case "sqlserver":
+		return 1433
+	case "oracle":
+		return 1521
+	case "sqlite":
+		return 0
+	}
+	return 0
 }

@@ -11,6 +11,13 @@ interface BackupTarget {
   schema?: string;
 }
 
+// pgLike / mysqlLike 镜像后端 engines.go 的协议族判定: 协议兼容引擎用底层引擎的
+// dump 工具 (openGauss/金仓 → pg_dump, OceanBase MySQL 模式/GreatSQL/StarRocks/Doris → mysqldump)。
+const PG_LIKE = ['postgresql', 'opengauss', 'gaussdb', 'kingbase'];
+const MYSQL_LIKE = ['mysql', 'oceanbase', 'greatsql', 'starrocks', 'doris'];
+const toolName = (dbType: string) =>
+  PG_LIKE.includes(dbType) ? 'pg_dump' : MYSQL_LIKE.includes(dbType) ? 'mysqldump' : 'sqlite3 (.dump)';
+
 interface BackupDialogProps {
   target: BackupTarget;
   onClose: () => void;
@@ -76,17 +83,16 @@ const BackupDialog: React.FC<BackupDialogProps> = ({ target, onClose }) => {
 
         <div className="p-5 space-y-3">
           <p className="text-2xs text-muted">
-            使用官方工具 {target.dbType === 'postgresql' ? 'pg_dump' : 'mysqldump'}（在 PATH 或环境变量
-            TABLEPRO_PG_DUMP / TABLEPRO_MYSQLDUMP 指定的路径上查找）。
-            口令经环境变量传递，不进入进程参数。
+            使用官方工具 {toolName(target.dbType)}（在 PATH 或对应环境变量
+            {PG_LIKE.includes(target.dbType) ? ' TABLEPRO_PG_DUMP' : MYSQL_LIKE.includes(target.dbType) ? ' TABLEPRO_MYSQLDUMP' : ' TABLEPRO_SQLITE3'} 指定的路径上查找）。
+            {MYSQL_LIKE.includes(target.dbType) || PG_LIKE.includes(target.dbType) ? '口令经环境变量传递，不进入进程参数。' : 'SQLite 是本地文件，以只读方式打开，无口令。'}
           </p>
 
           <div className="flex gap-3 text-xs">
             {(
               [
                 ['full', '结构 + 数据'],
-                ['structure', '仅结构'],
-                ['data', '仅数据'],
+                ...(target.dbType === 'sqlite' ? [] : ([['structure', '仅结构'], ['data', '仅数据']] as const)) ,
               ] as const
             ).map(([value, label]) => (
               <label key={value} className="flex items-center gap-1.5 cursor-pointer">
@@ -113,7 +119,7 @@ const BackupDialog: React.FC<BackupDialogProps> = ({ target, onClose }) => {
               type="text"
               value={outPath}
               onChange={e => setOutPath(e.target.value)}
-              placeholder={target.dbType === 'postgresql' ? 'C:\\backups\\app.sql' : 'C:\\backups\\app.sql'}
+              placeholder="C:\\backups\\app.sql"
               className="w-full bg-canvas border border-line-strong rounded px-2 py-1.5 text-xs text-ink font-mono focus:outline-none focus:border-accent"
             />
           </label>

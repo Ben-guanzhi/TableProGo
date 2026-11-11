@@ -35,6 +35,8 @@ const ALLOW = new Set([
   'MySQL', 'PostgreSQL', 'SQLite', 'SQL Server', 'Oracle', 'Redis', 'SSH',
   'TLS', 'SSL', 'SQL', 'CSV', 'JSON', 'Markdown', 'Excel（XLSX）', 'XLSX',
   'XML', 'HTML', 'API', 'URL', 'URI', 'HTTP', 'HTTPS', 'ID', 'UUID',
+  'OceanBase (MySQL 模式)', 'GreatSQL', 'StarRocks', 'Apache Doris (FE)',
+  'openGauss', 'KingbaseES',
   // engine / type identifiers and input types
   'mysql', 'postgresql', 'sqlite', 'sqlserver', 'oracle', 'redis',
   'text', 'number', 'password', 'checkbox', 'success', 'failed',

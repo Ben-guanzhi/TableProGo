@@ -5,12 +5,13 @@ A fast, lightweight database client built with Wails3 + Go, inspired by TablePro
 ## Features
 
 - **Multiple Database Support**: MySQL, PostgreSQL, SQLite
+- **Protocol-compatible engines**: OceanBase (MySQL mode), GreatSQL, StarRocks, Apache Doris (FE), openGauss, Huawei GaussDB, KingbaseES — same driver stack as the engine whose wire protocol they speak, with per-alias default ports
 - **Modern UI**: React + TypeScript + Tailwind CSS
 - **Query Editor**: Syntax highlighting, auto-complete, execute with ⌘+Enter
 - **Data Grid**: Virtual scrolling, column sorting, copy/paste
 - **Connection Management**: Save, edit, test connections
 - **Schema Browser**: Browse databases, tables, columns
-- **Import/Export**: CSV, JSON, SQL, Excel formats
+- **Import/Export**: CSV, JSON, SQL, Excel (XLSX) formats; import supports multi-sheet workbooks and column mapping
 
 ## Tech Stack
 
@@ -119,15 +120,37 @@ any error to show for it. Such tables, and every table in SQL Server or Oracle
 | SQLite     | 3.x     | ✅ Supported   |
 | SQL Server | 2012+   | ✅ Supported   |
 | Oracle     | 12c+    | ✅ Supported   |
+| OceanBase (MySQL mode) | 4.x | ✅ MySQL 协议 |
+| GreatSQL   | 8.0+    | ✅ MySQL 协议  |
+| StarRocks / Doris (FE) | 3.x / 2.x | ✅ MySQL 协议 |
+| openGauss  | 5.x/6.x | ✅ PostgreSQL 协议 |
+| 华为 GaussDB | —     | ✅ PostgreSQL 协议 |
+| 人大金仓 KingbaseES | V8+ | ✅ PostgreSQL 协议 |
+
+协议兼容引擎与底层引擎共用同一驱动栈与方言（dbcore/sqltext.Normalize 归一），差异只在
+连接参数与默认端口（OceanBase 2881、StarRocks/Doris FE 9030、PG 系 5432）。
+
+备份走官方命令行工具：PostgreSQL / MySQL 及其协议兼容引擎用 `pg_dump` / `mysqldump`，
+SQLite 用 `sqlite3 .dump`（只读打开；structure/data 模式不支持，.dump 只出全量）。
+工具经 `TABLEPRO_PG_DUMP` / `TABLEPRO_MYSQLDUMP` / `TABLEPRO_SQLITE3` 环境变量或 PATH 定位；
+口令走环境变量不进 argv；工具退出但产物为空/不存在时整体失败。
 
 ## Import/Export Formats
 
-| Format       | Export |
-|--------------|--------|
-| CSV          | ✅     |
-| JSON         | ✅     |
-| SQL (INSERT) | ✅     |
-| Excel (XLSX) | ✅     |
+| Format            | Import | Export |
+|-------------------|--------|--------|
+| CSV               | ✅     | ✅     |
+| JSON              | ✅     | ✅     |
+| SQL (script/INSERT) | ✅   | ✅     |
+| Excel (XLSX/XLSM) | ✅     | ✅     |
+| Excel (legacy XLS) | 尽力 | ✅ |
+
+Import reads CSV/JSON/XLSX from the backend and writes them into a table. XLSX workbooks may
+contain several worksheets: each worksheet imports into its own table (named after the sheet by
+default), each in its own transaction so one failing sheet cannot take the others down. A
+column map can be supplied to rename or skip file columns; a non-empty map is authoritative and
+is applied before type inference and `CREATE TABLE`. The dialog can preview the generated SQL
+before anything is written.
 
 ## License
 

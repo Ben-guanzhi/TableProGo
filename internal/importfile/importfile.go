@@ -1,5 +1,5 @@
-// Package importfile parses CSV/JSON import files and renders the engine-specific
-// SQL that writes them.
+// Package importfile parses CSV/JSON/XLSX import files and renders the
+// engine-specific SQL that writes them.
 //
 // It holds the pure half of the import feature: no App, no connection, no I/O
 // beyond reading the file it is given. The impure half (transactions, driver
@@ -24,7 +24,8 @@ import (
 
 // Options controls parsing and SQL rendering.
 type Options struct {
-	// Format is "csv", "json" or "sql"; empty means infer from the extension.
+	// Format is "csv", "json", "xlsx" or "sql"; empty means infer from the
+	// extension.
 	Format string
 	// HasHeader says the first CSV row holds column names.
 	HasHeader bool
@@ -46,6 +47,11 @@ func Normalize(opts Options, path string) Options {
 			opts.Format = "json"
 		case ".sql":
 			opts.Format = "sql"
+		case ".xlsx", ".xlsm", ".xls":
+			// .xls (the old binary format) is best-effort: excelize cannot read
+			// it, so the open fails with the engine's message rather than being
+			// silently treated as a delimited file.
+			opts.Format = "xlsx"
 		default:
 			opts.Format = "csv"
 		}
@@ -64,14 +70,30 @@ func Normalize(opts Options, path string) Options {
 
 // Parse returns column names and rows. JSON objects may omit keys; the missing
 // cells become NULL. CSV cells are always text ("" stays an empty string, not
-// NULL, because CSV has no null literal). The whole file is materialized; the
-// streaming variants (CSVStream) keep memory bounded for large imports.
+// NULL, because CSV has no null literal). An xlsx workbook returns its first
+// non-empty worksheet; the multi-sheet reader is ParseXLSXFile. The whole file
+// is materialized; the streaming variants (CSVStream) keep memory bounded for
+// large imports.
 func Parse(path string, opts Options) ([]string, [][]*string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer f.Close()
+	// The binary workbook must be read raw, before DecodingReader has consumed
+	// its sniff bytes; the text formats go through the encoding sniffer.
+	if opts.Format == "xlsx" {
+		sheets, err := ParseXLSXReader(f)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, s := range sheets {
+			if !s.Empty() {
+				return s.Cols, s.Rows, nil
+			}
+		}
+		return nil, nil, fmt.Errorf("import: file is empty")
+	}
 	dec := DecodingReader(f)
 	if opts.Format == "json" {
 		return ParseJSON(dec)

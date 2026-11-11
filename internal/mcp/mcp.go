@@ -15,9 +15,30 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/dbcore/dbcore/masking"
 )
+
+// isIdentifierLike reports whether s is a plain SQL identifier: letters, digits
+// (not leading) and underscores. The sample_table tool builds its SQL from the
+// table name in-process, so only identifier-like names are accepted — quoting
+// is dialect-specific and the Catalog interface deliberately does not expose
+// the engine spelling to this package.
+func isIdentifierLike(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i, r := range s {
+		if r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || i > 0 && r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
 // Catalog is what the tools need from the client. Keeping it this small is what
 // lets the package be tested without a database and reused by another client.
@@ -70,6 +91,10 @@ type QueryResult struct {
 	Rows      [][]interface{} `json:"rows"`
 	RowCount  int             `json:"rowCount"`
 	Truncated bool            `json:"truncated"`
+	// Masked reports that string cells went through data masking (sensitive
+	// column names and PII shapes) before leaving the machine. A client that
+	// copies masked values back to the database copies stars, which is safe.
+	Masked bool `json:"masked,omitempty"`
 }
 
 // Level is what a client is allowed to do. It is a property of the *server*, not
@@ -306,6 +331,17 @@ func (s *Server) tools() []tool {
 			}),
 		},
 		{
+			Name:        "sample_table",
+			Description: fmt.Sprintf("只读抽样某表的前 N 行（limit 上限 %d，不传默认 20），行内容经数据掩码后返回，供模型快速了解数据形态。", DefaultMaxRows),
+			InputSchema: schemaOf(map[string]param{
+				"connection": {Type: "string", Desc: "连接 id", Required: true},
+				"table":      {Type: "string", Desc: "表名", Required: true},
+				"database":   {Type: "string", Desc: "数据库名，留空用连接默认库"},
+				"schema":     {Type: "string", Desc: "schema 名，留空用引擎默认"},
+				"limit":      {Type: "number", Desc: "行数上限 (1-" + strconv.Itoa(DefaultMaxRows) + ", 默认 20)"},
+			}),
+		},
+		{
 			Name:        "query",
 			Description: fmt.Sprintf("执行只读 SQL（SELECT/WITH/SHOW/DESCRIBE/EXPLAIN），最多返回 %d 行。", s.opts.MaxRows),
 			InputSchema: schemaOf(map[string]param{
@@ -374,6 +410,8 @@ func (s *Server) dispatch(name string, args map[string]interface{}) (string, err
 		return s.listTables(arg("connection"), arg("database"), arg("schema"))
 	case "describe_table":
 		return s.describeTable(arg("connection"), arg("database"), arg("schema"), arg("table"))
+	case "sample_table":
+		return s.sampleTable(arg("connection"), arg("database"), arg("schema"), arg("table"), args["limit"])
 	case "query":
 		return s.query(arg("connection"), arg("database"), arg("sql"))
 	case "execute":
@@ -428,6 +466,76 @@ func (s *Server) describeTable(connID, database, schema, table string) (string, 
 		return "", err
 	}
 	return marshalJSON(columns)
+}
+
+// sampleTable 只读抽样一张表的前 N 行。SQL 在服务端拼装: 表名只允许
+// identifier-like 字符 (方言引用不可用, Catalog 不暴露引擎拼写; 非法名直接
+// 拒绝), LIMIT 由本函数钳制 —— 模型无法通过 limit 参数把上下文撑爆, 也无法
+// 借表名注入第二语句 (工具层本就只接单语句)。行内容出机器前经数据掩码。
+func (s *Server) sampleTable(connID, database, schema, table string, limitArg interface{}) (string, error) {
+	if connID == "" {
+		return "", fmt.Errorf("缺少参数 connection")
+	}
+	if table == "" {
+		return "", fmt.Errorf("缺少参数 table")
+	}
+	limit := 20
+	switch v := limitArg.(type) {
+	case float64: // JSON number
+		limit = int(v)
+	case string:
+		if strings.TrimSpace(v) != "" {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil || n <= 0 {
+				return "", fmt.Errorf("limit 必须是正整数, got %q", v)
+			}
+			limit = n
+		}
+	case nil:
+	default:
+		return "", fmt.Errorf("limit 必须是数字")
+	}
+	if limit <= 0 {
+		return "", fmt.Errorf("limit 必须是正整数")
+	}
+	// 上限与服务器的行预算一致 (MaxRows 未配置时回落包默认): 模型不能借
+	// limit 参数撑爆上下文, 也不该比 query 工具拿得更多。
+	if max := s.opts.MaxRows; max > 0 && limit > max {
+		limit = max
+	} else if max <= 0 && limit > DefaultMaxRows {
+		limit = DefaultMaxRows
+	}
+	// 表名只允许 identifier-like 字符, 不满足直接拒绝, 杜绝注入面。
+	if !isIdentifierLike(table) {
+		return "", fmt.Errorf("sample_table 的表名只允许字母/数字/下划线: %q", table)
+	}
+	// 先探表是否存在 (不存在的表在 Columns 报错, 信息明确)。
+	if _, err := s.catalog.Columns(connID, database, schema, table); err != nil {
+		return "", err
+	}
+	sql := "SELECT * FROM " + table + " LIMIT " + strconv.Itoa(limit)
+	result, err := s.catalog.Query(connID, database, sql, limit)
+	if err != nil {
+		return "", err
+	}
+	return marshalJSON(MaskQueryResult(result))
+}
+
+// maskPolicy 是 MCP/LLM 输出共用的数据掩码策略 (dbcore/masking 默认档)。
+var maskPolicy = masking.Default()
+
+// MaskQueryResult 掩码一个结果集的字符串单元格 (导出供 LLM 助手路径复用,
+// 与 MCP 工具共用同一策略)。列名来自结果自身, 所以掩码与结果集严格对齐,
+// 不依赖调用方记忆列序。
+func MaskQueryResult(result *QueryResult) *QueryResult {
+	if result == nil || len(result.Rows) == 0 {
+		return result
+	}
+	for i, row := range result.Rows {
+		result.Rows[i] = maskPolicy.RowInterface(result.Columns, row)
+	}
+	result.Masked = true
+	return result
 }
 
 // readOnlyPrefixes are the statement kinds the query tool accepts. The check is on
@@ -629,7 +737,9 @@ func (s *Server) query(connID, database, sql string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return marshalJSON(result)
+	// 数据掩码: 行内容出机器前脱敏 (列名层 + 形态层)。MCP 是对外部 AI 的出口,
+	// 出口的脱敏不可协商; masked 标记让客户端知道值是遮罩过的。
+	return marshalJSON(MaskQueryResult(result))
 }
 
 func (s *Server) execute(connID, database, sql string) (string, error) {

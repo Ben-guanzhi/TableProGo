@@ -197,7 +197,7 @@ func searchOneTable(ctx context.Context, a *App, conn *Connection, database stri
 	}
 
 	db := conn.DB
-	if conn.Type == "postgresql" {
+	if isPostgresLike(conn.Type) {
 		// Cross-database search needs a session bound to that database.
 		if db, err = a.poolFor(conn, database); err != nil {
 			return QueryResult{}, err

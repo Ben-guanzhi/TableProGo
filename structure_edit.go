@@ -65,6 +65,9 @@ type StructureEditRequest struct {
 type StructureEditResult struct {
 	Statements []string `json:"statements"`
 	Warnings   []string `json:"warnings"`
+	// Applied echoes the statement list a rollback request says was executed, so
+	// the response stays traceable back to the edit it undoes.
+	Applied []string `json:"applied,omitempty"`
 }
 
 // buildStructureEdits diffs the desired column list against the catalog and
@@ -81,7 +84,7 @@ func (a *App) buildStructureEdits(req StructureEditRequest) (StructureEditResult
 	}
 	dbType := conn.Type
 	schema := defaultSchema(dbType, req.Schema)
-	if dbType == "mysql" && schema == "" {
+	if isMySQLLike(dbType) && schema == "" {
 		schema = req.Database
 	}
 
@@ -350,52 +353,63 @@ func (a *App) applyStructureEdit(req StructureEditRequest, force bool) (Structur
 	if err != nil {
 		return res, err
 	}
-	if len(res.Statements) == 0 {
-		return res, nil
+	statements, warnings, err := a.executeStructureStatements(req.ConnID, req.Database, res.Statements, res.Warnings, force)
+	res.Statements = statements
+	res.Warnings = warnings
+	return res, err
+}
+
+// executeStructureStatements runs a rendered statement list under the Safe Mode
+// guard, in one transaction, recording one history entry. The structure editor
+// and its rollback share it so both take exactly the same pause and land in the
+// history the same way.
+func (a *App) executeStructureStatements(connID, database string, statements, warnings []string, force bool) ([]string, []string, error) {
+	if len(statements) == 0 {
+		return statements, warnings, nil
 	}
 	mode := a.GetSettings().SafeMode
-	for _, statement := range res.Statements {
+	for _, statement := range statements {
 		if guard := guardWrite(mode, statement); guard.Blocked {
-			res.Warnings = append(res.Warnings, guard.Reason)
-			return res, fmt.Errorf("%s", guard.Reason)
+			warnings = append(warnings, guard.Reason)
+			return statements, warnings, fmt.Errorf("%s", guard.Reason)
 		} else if guard.NeedsConfirmation && !force {
 			// confirmWrites covers structure DDL too — the same pause a
 			// table action takes, not a silent straight-to-execution path.
-			res.Warnings = append(res.Warnings, guard.Reason)
-			return res, needsConfirmationError{reason: guard.Reason}
+			warnings = append(warnings, guard.Reason)
+			return statements, warnings, needsConfirmationError{reason: guard.Reason}
 		}
 	}
-	conn, err := a.connection(req.ConnID)
+	conn, err := a.connection(connID)
 	if err != nil {
-		return res, err
+		return statements, warnings, err
 	}
-	drv, err := a.execDriver(conn, req.Database)
+	drv, err := a.execDriver(conn, database)
 	if err != nil {
-		return res, err
+		return statements, warnings, err
 	}
 	txDrv, ok := drv.(dbcore.SQLTxDriver)
 	if !ok {
-		return res, fmt.Errorf("unsupported type: %s", conn.Type)
+		return statements, warnings, fmt.Errorf("unsupported type: %s", conn.Type)
 	}
-	ctx, done := a.beginRun(req.ConnID)
+	ctx, done := a.beginRun(connID)
 	defer done()
 	tx, err := txDrv.Begin(ctx, dbcore.TxMode{})
 	if err != nil {
-		return res, err
+		return statements, warnings, err
 	}
 	defer tx.Rollback()
-	for i, statement := range res.Statements {
+	for i, statement := range statements {
 		if _, err := txDrv.ExecuteIn(tx, ctx, statement); err != nil {
-			return res, fmt.Errorf("语句 %d: %w", i+1, err)
+			return statements, warnings, fmt.Errorf("语句 %d: %w", i+1, err)
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return res, err
+		return statements, warnings, err
 	}
 	// The DDL lands in the history as the statements the user reviewed.
-	joined := strings.Join(res.Statements, ";\n")
-	a.recordStatement(req.ConnID, req.Database, joined, dbcoreQueryResult(len(res.Statements)))
-	return res, nil
+	joined := strings.Join(statements, ";\n")
+	a.recordStatement(connID, database, joined, dbcoreQueryResult(len(statements)))
+	return statements, warnings, nil
 }
 
 // dbcoreQueryResult packages a statement count into the history entry shape.

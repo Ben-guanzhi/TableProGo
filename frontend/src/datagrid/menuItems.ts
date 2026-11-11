@@ -21,8 +21,13 @@ export type MenuItemId =
   | 'keyRefresh'
   | 'backup';
 
-// backupableEngine names the two engines with an official single-file dump tool.
-const backupableEngine = (dbType: string) => dbType === 'postgresql' || dbType === 'mysql';
+// backupableEngine names the engines with an official single-file dump tool:
+// pg_dump / mysqldump for the two protocol families (including their
+// protocol-compatible aliases), and sqlite3 .dump for SQLite.
+const PG_LIKE = ['postgresql', 'opengauss', 'gaussdb', 'kingbase'];
+const MYSQL_LIKE = ['mysql', 'oceanbase', 'greatsql', 'starrocks', 'doris'];
+const backupableEngine = (dbType: string) =>
+  PG_LIKE.includes(dbType) || MYSQL_LIKE.includes(dbType) || dbType === 'sqlite';
 
 // routineEngine: every SQL engine but SQLite stores functions/procedures; the
 // dialog itself explains when a plugin connection cannot read them.
@@ -55,7 +60,8 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     // Whole-database data search walks every table's text columns: it belongs
     // on a database node (the unit the search scans), never on Redis.
     if (node.kind === 'database' && node.dbType !== 'redis') items.push('searchData');
-    // Native-tool backup (pg_dump/mysqldump) exists for exactly two engines.
+    // Native-tool backup (pg_dump/mysqldump/sqlite3) exists for the two
+    // protocol families plus SQLite.
     if (backupableEngine(node.dbType)) items.push('backup');
   }
   if (node.kind === 'table' || node.kind === 'view') {

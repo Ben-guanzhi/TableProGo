@@ -66,7 +66,7 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 
 	schema = defaultSchema(conn.Type, schema)
 	listSchema := schema
-	if conn.Type == "mysql" && listSchema == "" {
+	if isMySQLLike(conn.Type) && listSchema == "" {
 		listSchema = database
 	}
 

@@ -59,7 +59,7 @@ func singleColumnForeignKey(fks []ForeignKeyInfo, column string) (ForeignKeyInfo
 // tables, reusing the name builder the update statements use so the list is read
 // from the very object an edit would write.
 func fkTargetName(dbType, database, refSchema, refTable string) (string, error) {
-	if dbType == "mysql" {
+	if isMySQLLike(dbType) {
 		// In MySQL's catalog the "schema" of a reference is a database name.
 		if refSchema == "" {
 			refSchema = database
@@ -161,7 +161,7 @@ func (a *App) ForeignKeyValues(connID, database, schema, table, column string, l
 	}
 
 	refSchema := fk.RefSchema
-	if conn.Type == "mysql" && refSchema == "" {
+	if isMySQLLike(conn.Type) && refSchema == "" {
 		refSchema = database
 	}
 	// The description is a convenience: a catalog the database filter hides must
@@ -181,7 +181,7 @@ func (a *App) ForeignKeyValues(connID, database, schema, table, column string, l
 	}
 
 	db := conn.DB
-	if conn.Type == "postgresql" {
+	if isPostgresLike(conn.Type) {
 		if db, err = a.poolFor(conn, database); err != nil {
 			return ForeignKeyCandidates{}, err
 		}

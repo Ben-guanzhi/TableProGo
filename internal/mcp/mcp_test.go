@@ -455,3 +455,78 @@ func TestParseError(t *testing.T) {
 		t.Fatal("a parse error must be reported")
 	}
 }
+
+// --- sample_table ---
+// The happy path builds one SELECT with a clamped LIMIT and answers with rows.
+func TestSampleTableBuildsCappedSelect(t *testing.T) {
+	s, cat := newTestServer(Options{MaxRows: 200})
+	text, isErr := callResult(t, s, "sample_table", map[string]interface{}{
+		"connection": "c1", "table": "orders", "limit": 5.0,
+	})
+	if isErr {
+		t.Fatalf("sample_table errored: %s", text)
+	}
+	var out QueryResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(cat.queries) != 1 {
+		t.Fatalf("exactly one query expected: %v", cat.queries)
+	}
+	if cat.queries[0] != "SELECT * FROM orders LIMIT 5" {
+		t.Fatalf("sql = %q", cat.queries[0])
+	}
+	if cat.limitSet != 5 {
+		t.Fatalf("row limit = %d, want 5", cat.limitSet)
+	}
+	if out.RowCount != 1 {
+		t.Fatalf("rows = %v", out)
+	}
+}
+
+// An oversized limit is clamped to MaxRows, not passed through: a model cannot
+// blow up its own context window, and the catalog still caps the rows.
+func TestSampleTableClampsLimit(t *testing.T) {
+	s, cat := newTestServer(Options{MaxRows: 50})
+	if _, isErr := callResult(t, s, "sample_table", map[string]interface{}{
+		"connection": "c1", "table": "orders", "limit": 10000.0,
+	}); isErr {
+		t.Fatal("oversized limit must be clamped, not refused")
+	}
+	if cat.limitSet != 50 {
+		t.Fatalf("clamped limit = %d, want 50", cat.limitSet)
+	}
+}
+
+// A non-identifier table name is refused before any SQL is built: quoting is
+// dialect-specific and the Catalog does not expose the engine spelling, so the
+// injection surface is closed by shape instead.
+func TestSampleTableRefusesNonIdentifierNames(t *testing.T) {
+	s, _ := newTestServer(Options{})
+	for _, name := range []string{"orders; DROP TABLE orders", `orders" --`} {
+		text, isErr := callResult(t, s, "sample_table", map[string]interface{}{
+			"connection": "c1", "table": name,
+		})
+		if !isErr {
+			t.Fatalf("table %q must be refused", name)
+		}
+		if !strings.Contains(text, "表名") {
+			t.Fatalf("refusal should name the problem: %s", text)
+		}
+	}
+	// A missing table argument is the same refusal path.
+	if _, isErr := callResult(t, s, "sample_table", map[string]interface{}{"connection": "c1"}); !isErr {
+		t.Fatal("missing table must be refused")
+	}
+}
+
+// A bogus limit spelling is an honest refusal too.
+func TestSampleTableValidatesArguments(t *testing.T) {
+	s, _ := newTestServer(Options{})
+	text, isErr := callResult(t, s, "sample_table", map[string]interface{}{
+		"connection": "c1", "table": "orders", "limit": "abc",
+	})
+	if !isErr || !strings.Contains(text, "limit") {
+		t.Fatalf("bogus limit must be refused with an explanation: %s", text)
+	}
+}

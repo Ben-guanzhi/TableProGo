@@ -313,7 +313,7 @@ func searchInDatabase(a *App, conn *Connection, database, fragment string, limit
 		return nil, nil
 	}
 	db := conn.DB
-	if conn.Type == "postgresql" {
+	if isPostgresLike(conn.Type) {
 		// Cross-database search needs a session bound to that database.
 		var err error
 		if db, err = a.poolFor(conn, database); err != nil {

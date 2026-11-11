@@ -39,9 +39,12 @@ func (a *App) sqlDriver(conn *Connection, database string) (dbcore.SQLDriver, er
 	return driverFor(conn, db)
 }
 
-// driverFor wraps one open pool in the driver of its engine.
+// driverFor wraps one open pool in the driver of its engine. Protocol
+// compatible engines (OceanBase MySQL 模式 / openGauss / 金仓 …) open with the
+// built-in driver of the engine whose wire protocol they speak; the alias only
+// renames the connection, the driver stack is the shared one.
 func driverFor(conn *Connection, db *sql.DB) (dbcore.SQLDriver, error) {
-	switch conn.Type {
+	switch builtinEngine(conn.Type) {
 	case "sqlite":
 		return sqlite.NewFromDB(db), nil
 	case "postgresql":
@@ -295,7 +298,7 @@ func (a *App) getTablesFiltered(connID string, database string, schema string, e
 	// whole catalog to answer "is this object here" would undo its purpose.
 	if exact != "" && !pluginConnection(conn) {
 		db := conn.DB
-		if conn.Type == "postgresql" {
+		if isPostgresLike(conn.Type) {
 			if db, err = a.poolFor(conn, database); err != nil {
 				return nil, err
 			}
@@ -328,7 +331,7 @@ func (a *App) getTablesFiltered(connID string, database string, schema string, e
 		return nil, err
 	}
 	listSchema := schema
-	if conn.Type == "mysql" && listSchema == "" {
+	if isMySQLLike(conn.Type) && listSchema == "" {
 		listSchema = database
 	}
 	ctx, done := a.beginRun(connID)

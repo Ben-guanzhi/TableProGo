@@ -323,7 +323,7 @@ func (a *App) loadComparePlan(id string) (*comparePlan, bool) {
 // does: MySQL's schema is its database, and every engine has a default.
 func compareSchema(conn *Connection, database, schema string) string {
 	resolved := defaultSchema(conn.Type, schema)
-	if resolved == "" && conn.Type == "mysql" {
+	if resolved == "" && isMySQLLike(conn.Type) {
 		return database
 	}
 	return resolved

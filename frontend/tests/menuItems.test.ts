@@ -77,13 +77,14 @@ test('enums appear only on PostgreSQL', () => {
   }
 });
 
-// Only the two engines with an official single-file dump tool offer backup.
-test('backup appears for pg/mysql containers, never for sqlite/redis', () => {
-  for (const dbType of ['postgresql', 'mysql']) {
+// Engines with an official single-file dump tool offer backup: the two
+// protocol families (and their aliases) plus SQLite (sqlite3 .dump).
+test('backup appears for pg/mysql/sqlite containers, never for redis/oracle', () => {
+  for (const dbType of ['postgresql', 'mysql', 'opengauss', 'oceanbase', 'kingbase', 'greatsql', 'sqlite']) {
     const items = menuItemsFor(node({ kind: 'database', key: 'd|2', label: 'app', schema: undefined, table: undefined, dbType }));
     assert.equal(items.includes('backup'), true, `${dbType} should offer backup`);
   }
-  for (const dbType of ['sqlite', 'redis']) {
+  for (const dbType of ['redis', 'oracle', 'sqlserver']) {
     const items = menuItemsFor(node({ kind: 'database', key: 'd|3', label: 'app', schema: undefined, table: undefined, dbType }));
     assert.equal(items.includes('backup'), false, `${dbType} must not offer backup`);
   }

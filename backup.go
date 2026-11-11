@@ -1,14 +1,16 @@
 package main
 
 // 原生工具备份（移植自 db-dev §9，对标 TablePlus 的模式）: 客户端不实现
-// dump 语义，只做 探测服务端版本 → 选择官方命令行工具 (pg_dump / mysqldump)
-// → 拼参数 → stderr 逐行日志 → ctx 取消即杀进程。一致性快照、序列、大表
-// 流式等难点全部交给官方工具，备份产物与官方工具逐字节一致。
+// dump 语义，只做 探测服务端版本 → 选择官方命令行工具 (pg_dump / mysqldump
+// / sqlite3) → 拼参数 → stderr 逐行日志 → ctx 取消即杀进程。一致性快照、
+// 序列、大表流式等难点全部交给官方工具，备份产物与官方工具逐字节一致。
 //
-// 工具来源: 环境变量 TABLEPRO_PG_DUMP / TABLEPRO_MYSQLDUMP 指定路径（沿用
-// db-dev 的 TABULA_* 别名），否则在 PATH 上查找。口令经 PGPASSWORD /
-// MYSQL_PWD 环境变量传递，不进 argv（argv 在进程列表里可见）。SQLite 与
-// SQL Server / Oracle 无此模式的对应物，明确报错而不是假装成功。
+// 工具来源: 环境变量 TABLEPRO_PG_DUMP / TABLEPRO_MYSQLDUMP / TABLEPRO_SQLITE3
+// 指定路径（沿用 db-dev 的 TABULA_* 别名），否则在 PATH 上查找。口令经
+// PGPASSWORD / MYSQL_PWD 环境变量传递，不进 argv（argv 在进程列表里可见）。
+// SQLite 用官方 sqlite3 .dump（文件型引擎，无口令）；找不到 sqlite3 时明确
+// 报错并提示安装/指定路径。SQL Server / Oracle 无此模式的对应物，明确报错
+// 而不是假装成功。
 //
 // 与 db-dev 的两点差异: 隧道由连接自己持有（Connect 时建好），工具对
 // dialTarget() 的回环地址跑；输出必须给 OutPath，由工具自己写文件，
@@ -20,6 +22,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,9 +57,12 @@ func (l *backupLog) logf(format string, args ...any) {
 	}
 }
 
-// nativeBackupSupported 报告该引擎能否走原生工具备份。
+// nativeBackupSupported 报告该引擎能否走原生工具备份。协议兼容引擎走底层引擎的
+// 工具: OceanBase(MySQL 模式)/GreatSQL/StarRocks/Doris 用 mysqldump,
+// openGauss/GaussDB/金仓用 pg_dump (openGauss 官方分发含兼容 pg_dump 的 gsql 工具族)。
+// SQLite 走官方 sqlite3 .dump。
 func nativeBackupSupported(dbType string) bool {
-	return dbType == "postgresql" || dbType == "mysql"
+	return isPostgresLike(dbType) || isMySQLLike(dbType) || builtinEngine(dbType) == "sqlite"
 }
 
 // Backup 执行一次备份。postgres/mysql 走原生工具；其余引擎明确拒绝。
@@ -77,7 +83,7 @@ func (a *App) Backup(req BackupRequest) (BackupResult, error) {
 		return res, fmt.Errorf("%s", res.Error)
 	}
 	if !nativeBackupSupported(conn.Type) {
-		res.Error = fmt.Sprintf("引擎 %s 无官方单文件 dump 工具（SQLite 是单文件库；SQL Server/Oracle 的备份是服务端操作），此对话仅支持 PostgreSQL/MySQL", conn.Type)
+		res.Error = fmt.Sprintf("引擎 %s 无官方单文件 dump 工具（SQL Server/Oracle 的备份是服务端操作），此对话仅支持 PostgreSQL/MySQL/SQLite 及其协议兼容引擎", conn.Type)
 		return res, fmt.Errorf("%s", res.Error)
 	}
 	database := req.Database
@@ -93,9 +99,12 @@ func (a *App) Backup(req BackupRequest) (BackupResult, error) {
 		mode = "full"
 	}
 	host, port := conn.dialTarget()
-	if conn.Type == "postgresql" {
+	switch {
+	case builtinEngine(conn.Type) == "sqlite":
+		err = a.runSQLiteDump(ctx, conn, log, req, mode)
+	case isPostgresLike(conn.Type):
 		err = a.runPgDump(ctx, conn, log, req, database, mode, host, port)
-	} else {
+	default:
 		err = a.runMysqlDump(ctx, conn, log, req, database, mode, host, port)
 	}
 	if err == nil {
@@ -227,6 +236,33 @@ func pgDumpArgs(user string, req BackupRequest, database, mode, host string, por
 		"--dbname="+database,
 	)
 	return args
+}
+
+// runSQLiteDump 用官方 sqlite3 的 .dump 生成备份。SQLite 是文件型引擎，
+// 没有服务端版本探测，只有工具存在性检查；以只读 URI 打开源库，避免与
+// 运行中的写连接冲突。structure/data 模式 sqlite3 无官方开关（.dump 只出
+// 全量），明确拒绝而不是静默给出全量。
+func (a *App) runSQLiteDump(ctx context.Context, conn *Connection, log *backupLog, req BackupRequest, mode string) error {
+	if mode != "full" {
+		return fmt.Errorf("sqlite3 的 .dump 只输出全部对象（结构+数据），不支持 %s 模式；请改用 full", mode)
+	}
+	tool, err := ResolveDumpTool([]string{"TABLEPRO_SQLITE3", "TABULA_SQLITE3"}, "sqlite3")
+	if err != nil {
+		return err
+	}
+	file := conn.Config.Database
+	if file == "" || file == ":memory:" {
+		return fmt.Errorf("SQLite 连接没有库文件（内存库无法用 sqlite3 备份）")
+	}
+	if _, err := os.Stat(file); err != nil {
+		return fmt.Errorf("SQLite 库文件不可读: %w", err)
+	}
+	// 只读 URI: 路径正斜杠化并按 URI 规则转义 ? 与 #，扩展名不是 .db/.sqlite
+	// 时用 file:...?... 仍成立（sqlite3 依赖 URI 参数, 不依赖扩展名）。
+	uri := "file:" + strings.NewReplacer("?", "%3f", "#", "%23").Replace(filepath.ToSlash(file)) + "?mode=ro"
+	args := []string{uri, ".output " + req.OutPath, ".dump"}
+	log.logf("+ %s %s %s", tool, uri, ".output/.dump")
+	return runDumpTool(ctx, log, tool, args, os.Environ(), req.OutPath)
 }
 
 func (a *App) runMysqlDump(ctx context.Context, conn *Connection, log *backupLog, req BackupRequest, database, mode, host string, port int) error {

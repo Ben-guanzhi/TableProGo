@@ -4,10 +4,26 @@ export interface DatabaseFilter {
   exclude: string[];
 }
 
+export type EngineType =
+  | 'mysql'
+  | 'postgresql'
+  | 'sqlite'
+  | 'sqlserver'
+  | 'oracle'
+  | 'redis'
+  // 协议兼容引擎: 复用底层引擎的驱动与方言, 仅连接参数与端口不同。
+  | 'oceanbase'
+  | 'greatsql'
+  | 'starrocks'
+  | 'doris'
+  | 'opengauss'
+  | 'gaussdb'
+  | 'kingbase';
+
 export interface Connection {
   id: string;
   name: string;
-  type: 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis';
+  type: EngineType;
   host: string;
   port: number;
   username: string;
@@ -39,7 +55,7 @@ export interface SSHConfig {
 export interface ConnectionConfig {
   id?: string;
   name: string;
-  type: 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis';
+  type: EngineType;
   host: string;
   port: number;
   username: string;

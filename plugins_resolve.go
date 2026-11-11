@@ -46,8 +46,10 @@ func (a *App) builtinDriver(conn *Connection) (dbcore.SQLDriver, error) {
 }
 
 // hasBuiltinDriver reports whether the binary compiles a driver for an engine.
+// Protocol-compatible aliases (OceanBase MySQL 模式 / openGauss / 金仓 …) ride the
+// built-in driver of the engine whose wire protocol they speak.
 func hasBuiltinDriver(engineType string) bool {
-	switch engineType {
+	switch builtinEngine(engineType) {
 	case "sqlite", "postgresql", "mysql", "sqlserver", "oracle":
 		return true
 	}

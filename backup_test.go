@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -85,16 +87,69 @@ func TestPgSSLModeMapping(t *testing.T) {
 	}
 }
 
-// The version probe rides the run context: a dead server fails with the probe
-// error instead of hanging, and the refusal for unsupported engines is honest.
+// The refusal for unsupported engines is honest; SQLite now goes through the
+// official sqlite3 .dump.
 func TestBackupRejectsUnsupportedEngine(t *testing.T) {
-	app, _ := newTestAppWithSQLite(t, safeModeOff)
-	res, err := app.Backup(BackupRequest{ConnID: "c1", OutPath: "x.sql"})
-	if err == nil || !strings.Contains(res.Error, "无官方单文件 dump 工具") {
-		t.Fatalf("sqlite should be refused honestly, got %v / %s", err, res.Error)
-	}
-	res, err = app.Backup(BackupRequest{ConnID: "c1", OutPath: ""})
+	app, path := newTestAppWithSQLite(t, safeModeOff)
+	res, err := app.Backup(BackupRequest{ConnID: "c1", OutPath: ""})
 	if err == nil || !strings.Contains(res.Error, "输出文件路径") {
 		t.Fatalf("missing outPath should be refused, got %v / %s", err, res.Error)
+	}
+	// sqlite3 不可用时报错必须点名工具（与 pg/mysql 同样诚实）；可用时产物是
+	// BEGIN...COMMIT 包裹的官方 dump。
+	out := filepath.Join(t.TempDir(), "out.sql")
+	res, err = app.Backup(BackupRequest{ConnID: "c1", OutPath: out, Mode: "full"})
+	if _, toolErr := ResolveDumpTool([]string{"TABLEPRO_SQLITE3", "TABULA_SQLITE3"}, "sqlite3"); toolErr != nil {
+		if err == nil || !strings.Contains(res.Error, "sqlite3") {
+			t.Fatalf("sqlite3 缺失时必须点名工具, got %v / %s", err, res.Error)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("Backup(sqlite3): %v / %s", err, res.Error)
+	}
+	b, rerr := os.ReadFile(out)
+	if rerr != nil {
+		t.Fatalf("读产物: %v", rerr)
+	}
+	s := string(b)
+	for _, want := range []string{"CREATE TABLE t(", "INSERT INTO", "BEGIN TRANSACTION"} {
+		if !strings.Contains(s, want) {
+			t.Errorf(".dump 产物缺 %q:\n%.300s", want, s)
+		}
+	}
+	_ = path
+}
+
+// sqlite3 只支持 full 模式：structure/data 必须明确拒绝而不是静默给全量。
+func TestBackupSQLiteRejectsPartialModes(t *testing.T) {
+	if _, toolErr := ResolveDumpTool([]string{"TABLEPRO_SQLITE3", "TABULA_SQLITE3"}, "sqlite3"); toolErr != nil {
+		t.Skip("sqlite3 not available:", toolErr)
+	}
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	out := filepath.Join(t.TempDir(), "out.sql")
+	res, err := app.Backup(BackupRequest{ConnID: "c1", OutPath: out, Mode: "structure"})
+	if err == nil || !strings.Contains(res.Error, ".dump") {
+		t.Fatalf("structure 模式应被拒绝: %v / %s", err, res.Error)
+	}
+}
+
+// 内存库没有文件可交给 sqlite3, 报错必须直说。
+func TestBackupSQLiteMemoryRefused(t *testing.T) {
+	if _, toolErr := ResolveDumpTool([]string{"TABLEPRO_SQLITE3", "TABULA_SQLITE3"}, "sqlite3"); toolErr != nil {
+		t.Skip("sqlite3 not available:", toolErr)
+	}
+	app := &App{
+		connections:      map[string]*Connection{},
+		savedConnections: []ConnectionConfig{{ID: "m1", Name: "mem", Type: "sqlite", Database: ":memory:"}},
+		settings:         AppSettings{SafeMode: safeModeOff, ResultLimit: 1000},
+	}
+	if err := app.Connect("m1"); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	t.Cleanup(func() { _ = app.Disconnect("m1") })
+	res, err := app.Backup(BackupRequest{ConnID: "m1", OutPath: filepath.Join(t.TempDir(), "o.sql")})
+	if err == nil || !strings.Contains(res.Error, "内存库") {
+		t.Fatalf("内存库应被拒绝: %v / %s", err, res.Error)
 	}
 }

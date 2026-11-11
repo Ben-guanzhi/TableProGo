@@ -67,7 +67,7 @@ func tableActionStatement(o objectNames, action string) (string, error) {
 			return "", fmt.Errorf("新名字和原来一样")
 		}
 		next := ""
-		if o.dbType == "mysql" {
+		if isMySQLLike(o.dbType) {
 			// MySQL's rename names both sides in full, so the table cannot
 			// drift into another database on the way.
 			var err error

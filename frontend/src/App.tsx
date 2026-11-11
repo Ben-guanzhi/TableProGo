@@ -35,6 +35,7 @@ import {
   Connection,
   ConnectionConfig,
   DatabaseFilter,
+  EngineType,
   Tab,
   QueryResult,
   SqlFilter,
@@ -121,8 +122,12 @@ const objectKey = (ref: TableRef) => `${ref.connId}|${ref.database}|${ref.schema
 let tabIdSeq = 0;
 const newTabId = () => `tab_${Date.now()}_${++tabIdSeq}`;
 
-const objectQualifier = (ref: TableRef, dbType?: string) => {
-  if (dbType === 'mysql') return ref.database;
+// mysqlLike / postgresLike 镜像后端 engines.go 的协议族判定: OceanBase(MySQL 模式)/
+// GreatSQL/StarRocks/Doris 与 openGauss/GaussDB/金仓在目录命名上与底层引擎一致。
+const MYSQL_LIKE: readonly string[] = ['mysql', 'oceanbase', 'greatsql', 'starrocks', 'doris'];
+
+const objectQualifier = (ref: TableRef, dbType?: EngineType) => {
+  if (dbType && MYSQL_LIKE.includes(dbType)) return ref.database;
   if (ref.schema) return `${ref.database}.${ref.schema}`;
   return ref.database;
 };

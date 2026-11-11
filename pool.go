@@ -20,7 +20,7 @@ func (a *App) poolFor(conn *Connection, database string) (*sql.DB, error) {
 	if conn.DB == nil {
 		return nil, fmt.Errorf("not connected")
 	}
-	if conn.Type == "postgresql" && database != "" && database != conn.Database {
+	if isPostgresLike(conn.Type) && database != "" && database != conn.Database {
 		return a.perDatabasePool(conn, database)
 	}
 	return conn.DB, nil

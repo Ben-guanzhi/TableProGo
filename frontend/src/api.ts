@@ -9,6 +9,7 @@ import type {
   Connection,
   ConnectionConfig,
   ERSchema,
+  ERFK,
   EnumTypeInfo,
   ForeignKeyInfo,
   HistoryEntry,
@@ -421,6 +422,86 @@ export interface ForeignKeyEdit {
 export interface StructureEditResult {
   statements: string[];
   warnings: string[];
+  // Applied echoes the statement list a rollback request says it executed, so the
+  // response stays traceable back to the edit it undoes.
+  applied?: string[];
+}
+
+// The before-snapshot a structure-edit rollback renders from: the catalog as it
+// stood before the edit was applied, in the same shapes the editor edits.
+export interface StructureEditSnapshot {
+  columns: ColumnEdit[];
+  indexes?: IndexEdit[];
+  foreignKeys?: ForeignKeyEdit[];
+}
+
+// A rollback request is the applied edit plus the before-snapshot; the backend
+// renders the reverse through the kernel ddl package and gates it under Safe Mode.
+export interface StructureRollbackRequest {
+  connId: string;
+  database: string;
+  schema: string;
+  table: string;
+  columns: ColumnEdit[];
+  indexes?: IndexEdit[];
+  foreignKeys?: ForeignKeyEdit[];
+  before: StructureEditSnapshot;
+  statements?: string[];
+}
+
+export async function ApplyStructureRollback(req: StructureRollbackRequest): Promise<StructureEditResult> {
+  return post('/api/structure-edit/rollback', req);
+}
+
+export async function ApplyStructureRollbackConfirmed(req: StructureRollbackRequest): Promise<StructureEditResult> {
+  return post('/api/structure-edit/rollback-confirmed', req);
+}
+
+// The ERD foreign-key editor's payload: one add/drop/rollback on one table. The
+// `preview` flag mirrors the structure editor — preview only renders, apply runs
+// under the same Safe Mode pause.
+export type ERFKEditAction = 'add' | 'drop' | 'rollback';
+
+export interface ERFKEditRequest {
+  connId: string;
+  database: string;
+  schema: string;
+  table: string;
+  action: ERFKEditAction;
+  preview: boolean;
+  // add (and a rollback of a drop): the key definition.
+  name?: string;
+  columns?: string[];
+  refSchema?: string;
+  refTable?: string;
+  refColumns?: string[];
+  onDelete?: string;
+  onUpdate?: string;
+  // drop (and a rollback of an add): the key name.
+  fkName?: string;
+  // rollback: which applied action this undoes; the backend infers it from the
+  // catalog when omitted.
+  rollbackOf?: string;
+}
+
+export interface ERFKEditResult {
+  statements: string[];
+  warnings: string[];
+  // The statements that undo this edit; the UI offers "撤销" after applying.
+  rollback: string[];
+}
+
+export async function PreviewERFKEdit(req: ERFKEditRequest): Promise<ERFKEditResult> {
+  return post('/api/er/fk', { ...req, preview: true });
+}
+
+export async function ApplyERFKEdit(req: ERFKEditRequest): Promise<ERFKEditResult> {
+  return post('/api/er/fk', { ...req, preview: false });
+}
+
+// The Safe Mode pause comes back structured; the UI confirms and re-sends here.
+export async function ApplyERFKEditConfirmed(req: ERFKEditRequest): Promise<ERFKEditResult> {
+  return post('/api/er/fk-confirmed', { ...req, preview: false });
 }
 
 export async function PreviewStructureEdit(req: {
@@ -718,7 +799,7 @@ export async function CancelQuery(connId: string, tabId = ''): Promise<{ cancell
 }
 
 export interface ImportOptions {
-  format: 'csv' | 'json' | '';
+  format: 'csv' | 'json' | 'xlsx' | 'xlsm' | 'sql' | '';
   hasHeader: boolean;
   delimiter: string;
   createTable: boolean;
@@ -726,6 +807,21 @@ export interface ImportOptions {
   skipErrors: boolean;
   mode: 'append' | 'truncate' | 'upsert';
   upsertKeys?: string[];
+}
+
+/** One work unit of a multi-file / multi-sheet import. */
+export interface ImportTableResult {
+  path?: string;
+  table: string;
+  sheet?: string;
+  rows: number;
+  skipped: number;
+  statements: number;
+  columns?: string[];
+  createdTable: boolean;
+  mapped?: { file: string; table?: string; suggested?: string }[];
+  firstError?: string;
+  error?: string;
 }
 
 export interface ImportResult {
@@ -737,18 +833,66 @@ export interface ImportResult {
   error?: string;
   /** File-column → table-column pairing for an existing-table import. */
   mapped?: { file: string; table?: string; suggested?: string }[];
+  /** First skipped row's error, with its 1-based file row number. */
+  firstError?: string;
+  /** Per-table breakdown of a multi-file / multi-sheet import. */
+  tables?: ImportTableResult[];
 }
 
-// ImportFile parses a CSV/JSON file server-side and writes it into a table.
-export async function ImportFile(req: {
+// ImportRequest is the payload of /api/import and /api/import/preview. Only the
+// fields a single-file, single-table import needs are required; the rest are
+// additive.
+export interface ImportRequest {
   connId: string;
   database: string;
   schema: string;
+  /** Target table. Empty with an xlsx workbook means one table per worksheet. */
   table: string;
   path: string;
+  paths?: string[];
+  sheet?: string;
+  sheets?: { sheet: string; table: string }[];
+  /** Authoritative file-column → table-column mapping. An empty map falls back
+   * to auto-matching; a non-empty one skips every source it does not name. */
+  columnMap?: Record<string, string>;
+  skipColumns?: string[];
   options: ImportOptions;
-}): Promise<ImportResult> {
+}
+
+// ImportFile parses a CSV/JSON/XLSX file server-side and writes it into a table.
+export async function ImportFile(req: ImportRequest): Promise<ImportResult> {
   return post('/api/import', req);
+}
+
+/** One work unit of a preview. */
+export interface ImportTablePreview {
+  path?: string;
+  sheet?: string;
+  table: string;
+  exists: boolean;
+  /** The file's columns, in file order. */
+  columns: string[];
+  /** The target table's own columns (when it exists), for the mapping editor. */
+  targetColumns?: string[];
+  mapped?: { file: string; table?: string; suggested?: string }[];
+  ddl?: string;
+  sample?: string[];
+  rows: number;
+  notes?: string[];
+}
+
+export interface ImportPreview {
+  format?: string;
+  paths?: string[];
+  tables: ImportTablePreview[];
+  notes?: string[];
+  sql?: string[];
+}
+
+// PreviewImport resolves the request and renders the SQL it would run, without
+// writing anything.
+export async function PreviewImport(req: ImportRequest): Promise<ImportPreview> {
+  return post('/api/import/preview', req);
 }
 
 // One NDJSON line of /api/execute-stream (stream.go).

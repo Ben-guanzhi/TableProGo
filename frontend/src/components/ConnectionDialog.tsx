@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ConnectionConfig } from '../types';
+import { ConnectionConfig, EngineType } from '../types';
 import type { SSHConfig } from '../types';
 import { FiX, FiDatabase, FiCheck } from 'react-icons/fi';
 import toast from 'react-hot-toast';
@@ -80,6 +80,14 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       sqlserver: 1433,
       oracle: 1521,
       redis: 6379,
+      // 协议兼容引擎的常规端口 (OceanBase 2881, StarRocks/Doris FE 9030)。
+      oceanbase: 2881,
+      greatsql: 3306,
+      starrocks: 9030,
+      doris: 9030,
+      opengauss: 5432,
+      gaussdb: 5432,
+      kingbase: 5432,
     };
 
     const defaults: Record<string, { username: string; database: string }> = {
@@ -89,13 +97,20 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       sqlserver: { username: 'sa', database: 'master' },
       oracle: { username: 'system', database: 'ORCL' },
       redis: { username: '', database: '0' },
+      oceanbase: { username: 'root', database: '' },
+      greatsql: { username: 'root', database: '' },
+      starrocks: { username: 'root', database: '' },
+      doris: { username: 'root', database: '' },
+      opengauss: { username: 'gaussdb', database: 'postgres' },
+      gaussdb: { username: 'gaussdb', database: 'postgres' },
+      kingbase: { username: 'system', database: 'test' },
     };
 
     const d = defaults[type] || { username: 'root', database: '' };
 
     setConfig({
       ...config,
-      type: type as 'mysql' | 'postgresql' | 'sqlite' | 'sqlserver' | 'oracle' | 'redis',
+      type: type as EngineType,
       port: defaultPorts[type] || 3306,
       username: d.username,
       database: d.database,
@@ -196,6 +211,14 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               <option value="sqlserver">SQL Server</option>
               <option value="oracle">Oracle</option>
               <option value="redis">Redis</option>
+              {/* 协议兼容引擎: 与底层引擎同一驱动栈, 仅端口与目录细节不同 */}
+              <option value="oceanbase">OceanBase (MySQL 模式)</option>
+              <option value="greatsql">GreatSQL</option>
+              <option value="starrocks">StarRocks</option>
+              <option value="doris">Apache Doris (FE)</option>
+              <option value="opengauss">openGauss</option>
+              <option value="gaussdb">华为 GaussDB</option>
+              <option value="kingbase">人大金仓 KingbaseES</option>
             </select>
           </div>
 
