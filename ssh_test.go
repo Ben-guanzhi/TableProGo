@@ -307,3 +307,121 @@ func TestSSHTunnelToLivePostgres(t *testing.T) {
 		t.Fatalf("SELECT 1 = %d", one)
 	}
 }
+
+// W4-b: a two-hop chain. The bastion is a real in-process SSH server, and the
+// second hop is dialled THROUGH it — the jump host's address is only reachable
+// from inside the bastion's network in production, and here it proves the
+// channel is what carries the second handshake.
+func TestSSHTunnelThroughBastion(t *testing.T) {
+	echoHost, echoPort := startEchoServer(t)
+	// The jump host (second hop) is another in-process SSH server, standing in
+	// for a host reachable only from the bastion.
+	jumpHost, jumpPort := startSSHServer(t, "jump", "jumppw")
+	// The bastion (first hop).
+	bastionHost, bastionPort := startSSHServer(t, "bounce", "bouncepw")
+
+	tun, host, port, err := openSSHTunnel(SSHConfig{
+		Enabled:  true,
+		Host:     jumpHost,
+		Port:     jumpPort,
+		User:     "jump",
+		Password: "jumppw",
+		Bastion: &SSHConfig{
+			Enabled:  true,
+			Host:     bastionHost,
+			Port:     bastionPort,
+			User:     "bounce",
+			Password: "bouncepw",
+		},
+	}, echoHost, echoPort)
+	if err != nil {
+		t.Fatalf("two-hop tunnel: %v", err)
+	}
+	defer tun.Close()
+
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial tunnel: %v", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Write([]byte("through-both-hops")); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	buf := make([]byte, len("through-both-hops"))
+	if _, err := io.ReadFull(conn, buf); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(buf) != "through-both-hops" {
+		t.Fatalf("echo = %q", buf)
+	}
+}
+
+// A bastion whose credentials are wrong must fail at the FIRST hop, and the
+// error must say so — otherwise the user debugs the jump host that never ran.
+func TestSSHTunnelBastionFailureNamesTheHop(t *testing.T) {
+	echoHost, echoPort := startEchoServer(t)
+	jumpHost, jumpPort := startSSHServer(t, "jump", "jumppw")
+	bastionHost, bastionPort := startSSHServer(t, "bounce", "rightpw")
+
+	_, _, _, err := openSSHTunnel(SSHConfig{
+		Enabled:  true,
+		Host:     jumpHost,
+		Port:     jumpPort,
+		User:     "jump",
+		Password: "jumppw",
+		Bastion: &SSHConfig{
+			Enabled:  true,
+			Host:     bastionHost,
+			Port:     bastionPort,
+			User:     "bounce",
+			Password: "wrongpw",
+		},
+	}, echoHost, echoPort)
+	if err == nil {
+		t.Fatal("a bad bastion credential must fail")
+	}
+	if !strings.Contains(err.Error(), "跳板机") {
+		t.Fatalf("error should name the bastion hop: %v", err)
+	}
+}
+
+// A bastion config that itself carries a proxy is refused: the second hop
+// cannot be reached through this machine's proxy, and honouring the field
+// silently would connect somewhere the user did not ask for.
+func TestSSHConfigRejectsProxyOnBastion(t *testing.T) {
+	cfg := SSHConfig{
+		Enabled:  true,
+		Host:     "jump",
+		User:     "u",
+		Password: "p",
+		Bastion: &SSHConfig{
+			Enabled:  true,
+			Host:     "bastion",
+			User:     "b",
+			Password: "b",
+			Proxy:    &ProxyConfig{Enabled: true, Host: "proxy", Port: 1080},
+		},
+	}
+	if err := cfg.validate(); err == nil {
+		t.Fatal("a proxy on the bastion must be refused")
+	}
+}
+
+func TestSSHConfigValidatesProxyFields(t *testing.T) {
+	base := SSHConfig{Enabled: true, Host: "h", User: "u", Password: "p"}
+	bad := base
+	bad.Proxy = &ProxyConfig{Enabled: true} // no host
+	if err := bad.validate(); err == nil {
+		t.Fatal("a proxy without a host must be refused")
+	}
+	badPort := base
+	badPort.Proxy = &ProxyConfig{Enabled: true, Host: "proxy", Port: 70000}
+	if err := badPort.validate(); err == nil {
+		t.Fatal("an out-of-range proxy port must be refused")
+	}
+	good := base
+	good.Proxy = &ProxyConfig{Enabled: true, Host: "proxy", Port: 1080}
+	if err := good.validate(); err != nil {
+		t.Fatalf("a valid proxy should pass: %v", err)
+	}
+}

@@ -50,6 +50,22 @@ export interface SSHConfig {
   password: string;
   keyFile: string;
   passphrase: string;
+  // W4-b: an optional first hop, reached before `host`. Two hops is the whole
+  // supported depth (跳板机 → 主机); a nested bastion is refused by the backend.
+  bastion?: SSHConfig;
+  // W4-c: a SOCKS5 proxy used to reach the first hop.
+  proxy?: ProxyConfig;
+  // W4-a: the ~/.ssh/config alias these values were prefilled from, if any.
+  configAlias?: string;
+}
+
+export interface ProxyConfig {
+  enabled: boolean;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  remoteDns: boolean;
 }
 
 export interface ConnectionConfig {

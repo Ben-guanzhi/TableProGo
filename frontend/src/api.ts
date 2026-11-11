@@ -214,6 +214,58 @@ export async function UnfileFavoriteFolder(folder: string): Promise<number> {
   return data.moved ?? 0;
 }
 
+// ---- W4: connection URL + ~/.ssh/config ----
+
+export interface SSHRejectedDirective {
+  Line: number;
+  Directive: string;
+  Reason: string;
+}
+
+export interface SSHResolveResult {
+  found: boolean;
+  alias: string;
+  hostName: string;
+  user: string;
+  port: number;
+  keyFiles: string[] | null;
+  rejected: SSHRejectedDirective[] | null;
+  warnings: string[] | null;
+}
+
+export interface SSHConfigHost {
+  alias: string;
+  hostName: string;
+  user: string;
+  port: number;
+}
+
+export interface SSHConfigSummary {
+  hosts: SSHConfigHost[] | null;
+  rejected: SSHRejectedDirective[] | null;
+  warnings: string[] | null;
+}
+
+// What the user's own ssh config says about a host. A missing config answers
+// found=false rather than failing: "nothing written down" is a valid answer.
+export async function ResolveSSHConfig(host: string): Promise<SSHResolveResult> {
+  return post('/api/ssh-config/resolve', { host });
+}
+
+export async function LoadSSHConfig(): Promise<SSHConfigSummary> {
+  return post('/api/ssh-config/load', {});
+}
+
+// A pasted connection URL, parsed into the dialog's own ConnectionConfig shape.
+// The backend owns the scheme table, so an unsupported scheme is refused with
+// its name instead of connecting somewhere else.
+export async function ParseConnectionURI(uri: string): Promise<{
+  config: Partial<ConnectionConfig>;
+  masked: string;
+}> {
+  return post('/api/parse-uri', { uri });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

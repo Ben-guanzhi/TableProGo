@@ -648,6 +648,28 @@ func (a *App) routes() *http.ServeMux {
 		return map[string]int{"moved": moved}, nil
 	})
 
+	// W4-a: what the user's own ~/.ssh/config says about a host, so the dialog
+	// can prefill instead of asking for values already written down once. A
+	// missing config is an empty answer, not an error.
+	post(a, mux, "/api/ssh-config/resolve", 400, func(a *App, body struct {
+		Host string `json:"host"`
+	}) (any, error) {
+		return a.ResolveSSHConfig(body.Host)
+	})
+	post(a, mux, "/api/ssh-config/load", 400, func(a *App, _ struct{}) (any, error) {
+		return a.LoadSSHConfig()
+	})
+	// W4-d: a pasted connection URL, parsed into the dialog's own shape.
+	post(a, mux, "/api/parse-uri", 400, func(a *App, body struct {
+		URI string `json:"uri"`
+	}) (any, error) {
+		cfg, err := ParseConnectionURI(body.URI)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"config": cfg, "masked": MaskConnectionURI(body.URI)}, nil
+	})
+
 	post(a, mux, "/api/structure-preview", 400, func(a *App, body StructureEditRequest) (any, error) {
 		return a.PreviewStructureEdit(body)
 	})

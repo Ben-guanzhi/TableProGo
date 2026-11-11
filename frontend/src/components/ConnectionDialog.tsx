@@ -4,6 +4,7 @@ import type { SSHConfig } from '../types';
 import { FiX, FiDatabase, FiCheck } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { useDialog } from '../dialog';
+import { ParseConnectionURI, ResolveSSHConfig } from '../api';
 
 import { Connection } from '../types';
 
@@ -50,6 +51,81 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  // W4-d: the paste-a-URL path. uriMasked echoes the parsed URL back with the
+  // password replaced, so the user can confirm the parse without the secret
+  // being shown a second time.
+  const [uriText, setUriText] = useState('');
+  const [uriMasked, setUriMasked] = useState('');
+  const [uriError, setUriError] = useState('');
+  // W4-a: reference an alias from ~/.ssh/config instead of retyping it.
+  const [sshAlias, setSshAlias] = useState('');
+  const [sshConfigNote, setSshConfigNote] = useState('');
+  const [sshConfigBad, setSshConfigBad] = useState(false);
+
+  const fillFromSSHConfig = async () => {
+    setSshConfigNote('');
+    setSshConfigBad(false);
+    try {
+      const res = await ResolveSSHConfig(sshAlias.trim());
+      if (!res.found) {
+        setSshConfigBad(true);
+        setSshConfigNote(`~/.ssh/config 里没有 ${sshAlias.trim()} 的 Host 块`);
+        return;
+      }
+      // Only fields the config actually answered are overwritten; a missing
+      // User or Port keeps whatever the user typed rather than becoming empty.
+      setConfig(prev => ({
+        ...prev,
+        ssh: {
+          ...(prev.ssh ?? emptySSH),
+          enabled: true,
+          host: res.hostName || prev.ssh?.host || '',
+          port: res.port || prev.ssh?.port || 22,
+          user: res.user || prev.ssh?.user || '',
+          keyFile: (res.keyFiles && res.keyFiles.length > 0 ? res.keyFiles[0] : prev.ssh?.keyFile) || '',
+          configAlias: sshAlias.trim(),
+        },
+      }));
+      const parts: string[] = [`已填入 ${res.hostName}:${res.port}`];
+      if (res.keyFiles && res.keyFiles.length > 0) parts.push(`${res.keyFiles.length} 个可用私钥`);
+      const rejected = res.rejected ?? [];
+      if (rejected.length > 0) {
+        setSshConfigBad(true);
+        parts.push(`已忽略: ${rejected.map(r => `${r.Directive}（${r.Reason}）`).join('; ')}`);
+      }
+      setSshConfigNote(parts.join(' · '));
+    } catch (error) {
+      setSshConfigBad(true);
+      setSshConfigNote((error as Error).message);
+    }
+  };
+
+  const applyURI = async () => {
+    setUriError('');
+    setUriMasked('');
+    try {
+      const parsed = await ParseConnectionURI(uriText);
+      const next = parsed.config;
+      setConfig(prev => ({
+        ...prev,
+        ...next,
+        // A parsed URL never carries the tunnel/proxy settings; keep whatever
+        // the user already configured for those.
+        ssh: prev.ssh,
+        options: next.options ?? prev.options,
+        name: next.name || prev.name,
+        type: (next.type as EngineType) ?? prev.type,
+        host: next.host ?? prev.host,
+        port: next.port ?? prev.port,
+        username: next.username ?? prev.username,
+        password: next.password ?? prev.password,
+        database: next.database ?? prev.database,
+      }));
+      setUriMasked(parsed.masked);
+    } catch (error) {
+      setUriError((error as Error).message);
+    }
+  };
 
   useEffect(() => {
     if (initialConfig) {
@@ -183,6 +259,43 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {/* W4-d: paste a URL instead of filling the form. The backend owns
+              the scheme table, so an unsupported scheme is refused with its
+              name rather than connecting somewhere unintended. */}
+          <div>
+            <label htmlFor="conn-uri" className="block text-sm text-secondary mb-1">
+              粘贴连接串 <span className="text-2xs text-muted">（可选，postgres:// mysql:// sqlserver:// …）</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                id="conn-uri"
+                type="text"
+                className="flex-1 px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none font-mono text-xs"
+                value={uriText}
+                onChange={e => setUriText(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    void applyURI();
+                  }
+                }}
+                placeholder="postgres://user:pw@host:5432/db"
+              />
+              <button
+                type="button"
+                className="px-3 py-2 rounded text-xs bg-raised hover:bg-emphasis text-ink border border-line"
+                onClick={() => void applyURI()}
+                disabled={!uriText.trim()}
+              >
+                解析
+              </button>
+            </div>
+            {uriError && <p className="mt-1 text-xs text-danger break-words">{uriError}</p>}
+            {uriMasked && !uriError && (
+              <p className="mt-1 text-2xs text-muted break-all">已填入（口令已隐藏）：{uriMasked}</p>
+            )}
+          </div>
+
           <div>
             <label htmlFor="conn-name" className="block text-sm text-secondary mb-1">连接名称</label>
             <input
@@ -380,7 +493,39 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               </label>
 
               {config.ssh?.enabled && (
-                <div className="grid grid-cols-3 gap-3">
+                <>
+                  {/* W4-a: fill from the user's own ssh config. The backend
+                      parses ~/.ssh/config and refuses transport directives
+                      (ProxyJump & co) with a reason, which is surfaced here
+                      rather than swallowed. */}
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="ssh-alias" className="sr-only">~/.ssh/config 别名</label>
+                    <input
+                      id="ssh-alias"
+                      type="text"
+                      className="flex-1 px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none text-xs"
+                      value={sshAlias}
+                      onChange={e => setSshAlias(e.target.value)}
+                      placeholder="~/.ssh/config 里的别名（如 staging）"
+                      aria-label="~/.ssh/config 别名"
+                    />
+                    <button
+                      type="button"
+                      className="px-3 py-2 rounded text-xs bg-raised hover:bg-emphasis text-ink border border-line"
+                      onClick={() => void fillFromSSHConfig()}
+                      disabled={!sshAlias.trim()}
+                      aria-label="从 ~/.ssh/config 读取该别名的配置"
+                    >
+                      读取配置
+                    </button>
+                  </div>
+                  {sshConfigNote && (
+                    <p className={`text-2xs ${sshConfigBad ? 'text-danger' : 'text-muted'} break-words`}>
+                      {sshConfigNote}
+                    </p>
+                  )}
+
+                  <div className="grid grid-cols-3 gap-3">
                   <div className="col-span-2">
                     <label htmlFor="ssh-host" className="block text-sm text-secondary mb-1">SSH 主机</label>
                     <input
@@ -453,7 +598,8 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                       />
                     </div>
                   )}
-                </div>
+                  </div>
+                </>
               )}
             </div>
           )}
