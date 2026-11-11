@@ -726,14 +726,21 @@ func (a *App) routes() *http.ServeMux {
 		}
 		var body struct {
 			SQL string `json:"sql"`
+			// Preset selects the layout (W2-c): "default" | "compact" |
+			// "expanded"; empty means default, so existing callers keep the
+			// historical formatting.
+			Preset string `json:"preset"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, 400, err.Error())
 			return
 		}
 		// The formatter lives in an internal package, like the script splitter:
-		// one scanner, package-tested, no connection involved.
-		writeJSON(w, map[string]string{"sql": sqlformat.Format(body.SQL)})
+		// one scanner, package-tested, no connection involved. An unknown
+		// preset falls back to the default rather than failing the call.
+		writeJSON(w, map[string]string{
+			"sql": sqlformat.FormatWith(body.SQL, sqlformat.ParsePreset(body.Preset)),
+		})
 	})
 
 	mux.HandleFunc("/api/security-notice", func(w http.ResponseWriter, r *http.Request) {

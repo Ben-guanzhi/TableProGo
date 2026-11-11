@@ -47,9 +47,79 @@ func joinModifier(word string) bool {
 	return word == "LEFT" || word == "RIGHT" || word == "FULL" || word == "INNER" || word == "CROSS"
 }
 
-// Format pretty-prints one statement (or script; statements are separated at
-// semicolons like sqlscript does). Indent is two spaces per level.
+// Preset names one layout of the same token stream (W2-c). The three shipped
+// presets differ only in where lines break and how deep the indent goes — the
+// tokenizer and the "never touch a literal/comment" rule are shared, so no
+// preset can corrupt what the others keep intact.
+type Preset string
+
+const (
+	// PresetDefault is the historical layout: one major clause per line, one
+	// select item per line, two-space indent.
+	PresetDefault Preset = "default"
+	// PresetCompact breaks only between statements and before the majors that
+	// matter (FROM/WHERE/GROUP/ORDER); select items stay on the SELECT line.
+	// It is for queries a user wants to see as one dense block.
+	PresetCompact Preset = "compact"
+	// PresetExpanded is the default with a wider indent (four spaces), so the
+	// nesting of a long statement is readable at a glance.
+	PresetExpanded Preset = "expanded"
+)
+
+// ParsePreset maps a stored/untrusted preset name to a Preset. An unknown or
+// empty name falls back to the default rather than failing the format call —
+// a settings typo must not make formatting stop working.
+func ParsePreset(name string) Preset {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case string(PresetCompact):
+		return PresetCompact
+	case string(PresetExpanded):
+		return PresetExpanded
+	default:
+		return PresetDefault
+	}
+}
+
+// indentUnit is the spaces per indent level for a preset.
+func (p Preset) indentUnit() int {
+	if p == PresetExpanded {
+		return 4
+	}
+	return 2
+}
+
+// breaksSelectItems reports whether a top-level comma after SELECT starts a
+// new line. The compact preset keeps the select list inline.
+func (p Preset) breaksSelectItems() bool {
+	return p != PresetCompact
+}
+
+// denseClauses are the majors the compact preset still breaks on: the
+// statement's spine. Everything else (JOIN modifiers, UNION, OFFSET, FETCH,
+// VALUES…) stays inline so the query reads as one block.
+var denseClauses = map[string]bool{
+	"FROM": true, "WHERE": true, "GROUP": true, "ORDER": true, "HAVING": true,
+	"SET": true,
+}
+
+// breaksClause reports whether the preset starts a new line before this major.
+func (p Preset) breaksClause(major string) bool {
+	if p == PresetCompact {
+		return denseClauses[major]
+	}
+	return true
+}
+
+// Format pretty-prints one statement with the default layout. It is FormatWith
+// with PresetDefault, which is what every existing caller wants.
 func Format(sql string) string {
+	return FormatWith(sql, PresetDefault)
+}
+
+// FormatWith pretty-prints one statement (or script; statements are separated
+// at semicolons like sqlscript does) in the named layout.
+func FormatWith(sql string, preset Preset) string {
+	indentStep := strings.Repeat(" ", preset.indentUnit())
 	var out strings.Builder
 	var line strings.Builder // current output line
 	depth := 0               // parenthesis depth
@@ -62,7 +132,7 @@ func Format(sql string) string {
 	// but go through the same flush.
 	startLine := func(indent int) {
 		if indent > 0 {
-			line.WriteString(strings.Repeat("  ", indent))
+			line.WriteString(strings.Repeat(indentStep, indent))
 		}
 	}
 	flushLine := func() {
@@ -112,7 +182,7 @@ func Format(sql string) string {
 				line.WriteString(")")
 			case ",":
 				line.WriteString(",")
-				if depth == 0 && inSelectList {
+				if depth == 0 && inSelectList && preset.breaksSelectItems() {
 					// One select item per line, indented under the clause.
 					flushLine()
 					startLine(1)
@@ -164,7 +234,7 @@ func Format(sql string) string {
 			case majorClause[upper] && depth == 0 && joinModifier(upper):
 				newClause(upper)
 				onJoinLine = true
-			case majorClause[upper] && depth == 0:
+			case majorClause[upper] && depth == 0 && preset.breaksClause(upper):
 				// UPDATE t / DELETE FROM t keep the table on the keyword's own
 				// line; only a SELECT's FROM closes a select list.
 				keepWithKeyword := upper == "FROM" && (stmtKind == "UPDATE" || stmtKind == "DELETE")

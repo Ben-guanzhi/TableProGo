@@ -216,8 +216,9 @@ export async function UnfileFavoriteFolder(folder: string): Promise<number> {
 
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
-export async function FormatSQL(sql: string): Promise<string> {
-  const data = await post('/api/format-sql', { sql });
+// preset selects the layout (W2-c): default / compact / expanded.
+export async function FormatSQL(sql: string, preset = ''): Promise<string> {
+  const data = await post('/api/format-sql', { sql, preset });
   return data.sql ?? sql;
 }
 
@@ -1113,6 +1114,11 @@ export interface AppSettings {
   // long before it the UI warns. Mirror of the backend AppSettings.
   txTimeoutMinutes: number;
   txWarnAheadMinutes: number;
+  // W2-b: modal (Vim) keybindings in the SQL editor. Off by default.
+  vimMode: boolean;
+  // W2-c: the layout the format action applies — "default" | "compact" |
+  // "expanded"; empty means default.
+  formatPreset: string;
 }
 
 export async function GetSettings(): Promise<AppSettings> {

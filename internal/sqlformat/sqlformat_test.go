@@ -78,3 +78,73 @@ func TestFormatMultipleStatements(t *testing.T) {
 		t.Fatalf("got=%q want=%q", got, want)
 	}
 }
+
+// W2-c: the three presets share one tokenizer, so a literal and a comment
+// survive every layout byte for byte — only line breaks and indent differ.
+func TestPresetsShareTokenRules(t *testing.T) {
+	src := "select 'a, b', \"my col\", -- keep me\n x from t where y = 'z'"
+	for _, preset := range []Preset{PresetDefault, PresetCompact, PresetExpanded} {
+		got := FormatWith(src, preset)
+		for _, must := range []string{`'a, b'`, `"my col"`, "-- keep me", `'z'`} {
+			if !strings.Contains(got, must) {
+				t.Fatalf("%s mangled %s: %s", preset, must, got)
+			}
+		}
+	}
+}
+
+// The compact preset keeps the select list on one line; the other two break
+// each item.
+func TestPresetCompactKeepsSelectListInline(t *testing.T) {
+	src := "select id, name, qty from parts where qty > 10"
+	compact := FormatWith(src, PresetCompact)
+	if !strings.HasPrefix(compact, "SELECT id, name, qty") {
+		t.Fatalf("compact should keep the list inline: %q", compact)
+	}
+	if !strings.Contains(compact, "\nFROM parts") {
+		t.Fatalf("compact should still break before FROM: %q", compact)
+	}
+
+	def := FormatWith(src, PresetDefault)
+	if !strings.Contains(def, "SELECT id,\n  name,") {
+		t.Fatalf("default should break items with two-space indent: %q", def)
+	}
+}
+
+// The expanded preset breaks exactly where the default does but indents by
+// four spaces, so the two layouts are comparable line by line.
+func TestPresetExpandedWidensIndent(t *testing.T) {
+	src := "select id, name from parts"
+	expanded := FormatWith(src, PresetExpanded)
+	if !strings.Contains(expanded, "SELECT id,\n    name") {
+		t.Fatalf("expanded should indent four spaces: %q", expanded)
+	}
+	// Same line count as the default: only the indent differs.
+	if a, b := strings.Count(FormatWith(src, PresetDefault), "\n"), strings.Count(expanded, "\n"); a != b {
+		t.Fatalf("expanded changed the line count: %d vs %d", a, b)
+	}
+}
+
+// An unknown or empty preset falls back to the default instead of failing: a
+// settings typo must not stop formatting.
+func TestParsePresetFallsBackToDefault(t *testing.T) {
+	for _, name := range []string{"", "  ", "bogus", "DEFAULT-typo"} {
+		if got := ParsePreset(name); got != PresetDefault {
+			t.Fatalf("ParsePreset(%q) = %q, want default", name, got)
+		}
+	}
+	if got := ParsePreset(" COMPACT "); got != PresetCompact {
+		t.Fatalf("ParsePreset should trim and fold case, got %q", got)
+	}
+	if got := ParsePreset("Expanded"); got != PresetExpanded {
+		t.Fatalf("ParsePreset should fold case, got %q", got)
+	}
+}
+
+// Format is FormatWith(default): the historical entry point keeps its output.
+func TestFormatIsDefaultPreset(t *testing.T) {
+	src := "select a, b from t where c = 1"
+	if Format(src) != FormatWith(src, PresetDefault) {
+		t.Fatal("Format must equal FormatWith(src, PresetDefault)")
+	}
+}

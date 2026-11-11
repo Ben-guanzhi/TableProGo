@@ -163,6 +163,15 @@ type AppSettings struct {
 	// TxWarnAheadMinutes is how long before the deadline the UI starts
 	// warning. 0 uses the built-in ratio (a sixth of the timeout).
 	TxWarnAheadMinutes int `json:"txWarnAheadMinutes"`
+	// VimMode turns the editor's modal keybindings on (W2-b). Off by default:
+	// Vim is a preference of a subset of users, and its Normal mode makes the
+	// editor feel broken to anyone who expected to type immediately.
+	VimMode bool `json:"vimMode"`
+	// FormatPreset names the SQL layout the editor's format action applies
+	// (W2-c): "default" (clause per line), "compact" (minimal breaks) or
+	// "expanded" (one select item per line, wider indents). Empty means
+	// "default", so an older settings file keeps formatting as before.
+	FormatPreset string `json:"formatPreset"`
 }
 
 // defaultResultLimit matches what GUI clients hand out before the user says

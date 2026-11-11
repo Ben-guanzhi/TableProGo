@@ -42,9 +42,11 @@ import {
   sql,
 } from '@codemirror/lang-sql';
 import { tags } from '@lezer/highlight';
+import { vim } from '@replit/codemirror-vim';
 import {
   FiCheck,
   FiChevronDown,
+  FiColumns,
   FiDatabase,
   FiEdit2,
   FiFolderMinus,
@@ -64,6 +66,7 @@ import { AddFavorite, AppSettings, DeleteFavorite,
 } from '../api';
 import { ColumnInfo } from '../types';
 import { findNamedParams, substituteParams } from '../lib/namedParams';
+import { FORMAT_PRESETS, normalizePreset, presetHint } from '../lib/formatPresets';
 
 export interface QueryEditorHandle {
   insertAtCursor: (text: string) => void;
@@ -114,6 +117,15 @@ interface QueryEditorProps {
   onManagePasscode?: () => void;
   getTables: (database?: string) => Promise<string[]>;
   getColumns: (table: string, database?: string) => Promise<ColumnInfo[]>;
+  // W2-a: the dual-pane editor. Everything here is optional so the read-only
+  // object-query embed keeps working unchanged — without these props the
+  // editor is single-pane, exactly as before.
+  dualPane?: boolean;
+  activePane?: 1 | 2;
+  query2?: string;
+  onQuery2Change?: (query: string) => void;
+  onActivePaneChange?: (pane: 1 | 2) => void;
+  onToggleDualPane?: () => void;
 }
 
 const dialects: Record<string, SQLDialect> = {
@@ -276,12 +288,24 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     onManagePasscode,
     getTables,
     getColumns,
+    dualPane = false,
+    activePane = 1,
+    query2 = '',
+    onQuery2Change,
+    onActivePaneChange,
+    onToggleDualPane,
   },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const lastEmitted = useRef(query);
+  // W2-a: the second pane is a second EditorView with its own history. Its
+  // mount and the echoed-document guard mirror pane 1's, because the two are
+  // the same editor twice, not one editor split.
+  const host2Ref = useRef<HTMLDivElement>(null);
+  const view2Ref = useRef<EditorView | null>(null);
+  const lastEmitted2 = useRef(query2);
   const [showSettings, setShowSettings] = React.useState(false);
   // Favorites: the curated counterpart of history. Loaded when the menu opens,
   // so a favorite saved in another tab shows up without a refresh.
@@ -316,8 +340,15 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   // 必填、文件夹可选，一次弹窗而不是两次原生提示。
   const [favDialog, setFavDialog] = useState<{ name: string; folder: string } | null>(null);
 
+  // The pane a run acts on: pane 2 only when dual mode is on and pane 2 is the
+  // active one (W2-a). Everything that reads "the current statement" goes
+  // through this, so a run, a format and a parameter substitution always act on
+  // the same text.
+  const activeView = (): EditorView | null =>
+    dualPane && activePane === 2 ? view2Ref.current : viewRef.current;
+
   const executeWithParams = () => {
-    const sql = viewRef.current?.state.doc.toString() ?? '';
+    const sql = activeView()?.state.doc.toString() ?? '';
     const names = findNamedParams(sql);
     if (names.length === 0) {
       onExecute();
@@ -329,7 +360,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   // EXPLAIN shares the named-parameter machinery: the substitution lands in
   // the editor and the plan is asked for the statement the user sees.
   const explainWithParams = () => {
-    const sql = viewRef.current?.state.doc.toString() ?? '';
+    const sql = activeView()?.state.doc.toString() ?? '';
     const names = findNamedParams(sql);
     if (names.length === 0) {
       onExplain?.();
@@ -340,7 +371,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
 
   const confirmParams = () => {
     if (!paramDialog) return;
-    const view = viewRef.current;
+    const view = activeView();
     if (!view) return;
     const sql = view.state.doc.toString();
     // The engine's literal spelling rides along: MySQL's default sql_mode
@@ -515,14 +546,28 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
 
   // Callbacks change on every parent render; routing them through a ref lets
   // the editor instance be created once.
-  const handlers = useRef({ onQueryChange, onExecute, getTables, getColumns, loading });
-  handlers.current = { onQueryChange, onExecute, getTables, getColumns, loading };
+  const handlers = useRef({
+    onQueryChange, onExecute, getTables, getColumns, loading,
+    onQuery2Change,
+  });
+  handlers.current = {
+    onQueryChange, onExecute, getTables, getColumns, loading,
+    onQuery2Change,
+  };
   const executeGate = useRef<() => void>(() => {});
   executeGate.current = executeWithParams;
+  // paneClaim reports focus/run on a pane back to the owner, which is what
+  // keeps "the pane I clicked" and "the pane that runs" the same pane.
+  const paneClaim = useRef<((pane: 1 | 2) => void) | null>(null);
+  paneClaim.current = onActivePaneChange ?? null;
 
   const fontCompartment = useMemo(() => new Compartment(), []);
   const dialectCompartment = useMemo(() => new Compartment(), []);
   const completionCompartment = useMemo(() => new Compartment(), []);
+  // W2-b: modal keybindings sit in their own compartment so toggling the
+  // setting reconfigures the live editor instead of rebuilding it (a rebuild
+  // would drop history and the cursor).
+  const vimCompartment = useMemo(() => new Compartment(), []);
   const completerRef = useRef<ReturnType<typeof makeCompleter> | null>(null);
 
   // The editor font size is a per-user preference, not per-tab state: every
@@ -538,20 +583,21 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   const fontSizeTheme = (size: number) =>
     EditorView.theme({ '&': { fontSize: `${size}px` }, '.cm-scroller': { lineHeight: '1.5' } });
 
-  useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-
-    const completer = makeCompleter(
-      db => handlers.current.getTables(db),
-      (table, db) => handlers.current.getColumns(table, db),
-    );
-    completerRef.current = completer;
-
-    const view = new EditorView({
+  // makeView builds one pane's editor. Both panes run the identical extension
+  // list; the only difference is where a document change is reported and which
+  // pane a run claims to come from. Sharing the factory is what keeps the two
+  // panes from drifting (a shortcut bound in one but not the other).
+  const makeView = (
+    host: HTMLElement,
+    initial: string,
+    completer: ReturnType<typeof makeCompleter>,
+    onDoc: (value: string) => void,
+    claimPane: () => void,
+  ): EditorView =>
+    new EditorView({
       parent: host,
       state: EditorState.create({
-        doc: lastEmitted.current,
+        doc: initial,
         extensions: [
           lineNumbers(),
           highlightActiveLineGutter(),
@@ -578,7 +624,9 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
               mac: 'Cmd-Enter',
               run: () => {
                 // A second run while the first is in flight only piles up
-                // connections against the server.
+                // connections against the server. The key belongs to the pane
+                // that has focus, so claim it before running.
+                claimPane();
                 if (!handlers.current.loading) executeGate.current();
                 return true;
               },
@@ -587,6 +635,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
               key: 'Ctrl-Shift-f',
               mac: 'Cmd-Shift-f',
               run: () => {
+                claimPane();
                 void formatSQL();
                 return true;
               },
@@ -601,15 +650,37 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
           editorTheme,
           fontCompartment.of(fontSizeTheme(savedFontSize())),
           dialectCompartment.of(sql({ dialect: MySQL, upperCaseKeywords: true })),
+          // W2-b: modal keybindings are present only when the setting is on;
+          // the empty compartment is the "off" state.
+          vimCompartment.of(settings.vimMode ? vim() : []),
           EditorView.updateListener.of(update => {
             if (!update.docChanged) return;
-            const value = update.state.doc.toString();
-            lastEmitted.current = value;
-            handlers.current.onQueryChange(value);
+            onDoc(update.state.doc.toString());
           }),
         ],
       }),
     });
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const completer = makeCompleter(
+      db => handlers.current.getTables(db),
+      (table, db) => handlers.current.getColumns(table, db),
+    );
+    completerRef.current = completer;
+
+    const view = makeView(
+      host,
+      lastEmitted.current,
+      completer,
+      value => {
+        lastEmitted.current = value;
+        handlers.current.onQueryChange(value);
+      },
+      () => paneClaim.current?.(1),
+    );
 
     viewRef.current = view;
     return () => {
@@ -619,6 +690,49 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // W2-a: pane 2 exists only while dual mode is on. Mounting/unmounting on the
+  // toggle (rather than creating it hidden) keeps a single-pane editor as cheap
+  // as it was before this feature.
+  useEffect(() => {
+    const host = host2Ref.current;
+    if (!dualPane || !host) return;
+    const completer =
+      completerRef.current ??
+      makeCompleter(
+        db => handlers.current.getTables(db),
+        (table, db) => handlers.current.getColumns(table, db),
+      );
+    const view = makeView(
+      host,
+      lastEmitted2.current,
+      completer,
+      value => {
+        lastEmitted2.current = value;
+        handlers.current.onQuery2Change?.(value);
+      },
+      () => paneClaim.current?.(2),
+    );
+    // Focusing the second pane is what "active pane" means for a run; the
+    // first click or keystroke inside it must switch the target.
+    const claim = () => paneClaim.current?.(2);
+    view.dom.addEventListener('focusin', claim);
+    view2Ref.current = view;
+    return () => {
+      view.dom.removeEventListener('focusin', claim);
+      view.destroy();
+      view2Ref.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dualPane]);
+
+  useEffect(() => {
+    const view = view2Ref.current;
+    if (view && query2 !== lastEmitted2.current) {
+      lastEmitted2.current = query2;
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: query2 } });
+    }
+  }, [query2]);
+
   useEffect(() => {
     const view = viewRef.current;
     if (view && query !== lastEmitted.current) {
@@ -627,26 +741,41 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     }
   }, [query]);
 
-  // Keywords and the dialect grammar both follow the connected engine.
+  // Keywords and the dialect grammar both follow the connected engine. Both
+  // panes are reconfigured: a second editor on an old dialect would highlight
+  // and complete against the wrong grammar.
   useEffect(() => {
-    const view = viewRef.current;
-    if (!view || !completerRef.current) return;
     const active = dialects[dialect] ?? MySQL;
-    view.dispatch({
-      effects: [
-        dialectCompartment.reconfigure(sql({ dialect: active, upperCaseKeywords: true })),
-        completionCompartment.reconfigure(
-          autocompletion({
-            override: [keywordCompletionSource(active, true), completerRef.current],
-          }),
-        ),
-      ],
-    });
-  }, [dialect, dialectCompartment, completionCompartment]);
+    for (const view of [viewRef.current, view2Ref.current]) {
+      if (!view || !completerRef.current) continue;
+      view.dispatch({
+        effects: [
+          dialectCompartment.reconfigure(sql({ dialect: active, upperCaseKeywords: true })),
+          completionCompartment.reconfigure(
+            autocompletion({
+              override: [keywordCompletionSource(active, true), completerRef.current],
+            }),
+          ),
+        ],
+      });
+    }
+  }, [dialect, dualPane, dialectCompartment, completionCompartment]);
+
+  // W2-b: turning Vim on or off reconfigures the same views. The instances are
+  // never rebuilt, so undo history and the cursor survive the toggle.
+  useEffect(() => {
+    for (const view of [viewRef.current, view2Ref.current]) {
+      if (!view) continue;
+      view.dispatch({
+        effects: vimCompartment.reconfigure(settings.vimMode ? vim() : []),
+      });
+    }
+  }, [settings.vimMode, dualPane, vimCompartment]);
 
   useImperativeHandle(ref, () => ({
     insertAtCursor: (text: string) => {
-      const view = viewRef.current;
+      // A script opened from the sidebar lands in the pane the user is in.
+      const view = activeView();
       if (!view) return;
       const { from, to } = view.state.selection.main;
       view.dispatch({
@@ -656,14 +785,14 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
       });
       view.focus();
     },
-    focus: () => viewRef.current?.focus(),
+    focus: () => activeView()?.focus(),
   }));
 
   const formatSQL = async () => {
-    const view = viewRef.current;
+    const view = activeView();
     if (!view) return;
     try {
-      const formatted = await FormatSQL(view.state.doc.toString());
+      const formatted = await FormatSQL(view.state.doc.toString(), normalizePreset(settings.formatPreset));
       if (!formatted) return;
       // Replace the whole document but keep the cursor where it was, clamped.
       const pos = Math.min(view.state.selection.main.head, formatted.length);
@@ -871,10 +1000,38 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
             className="flex items-center justify-center w-6 h-6 text-secondary hover:text-ink rounded hover:bg-raised"
             onClick={() => void formatSQL()}
             aria-label="格式化 SQL (Ctrl+Shift+F)"
-            title="格式化 SQL (Ctrl+Shift+F)"
+            title={`格式化 SQL (Ctrl+Shift+F) · ${presetHint(settings.formatPreset)}`}
           >
             <FiAlignLeft size={12} />
           </button>
+          {/* W2-c: the format layout. A native select keeps the toolbar
+              compact and gets keyboard/menu behaviour for free. */}
+          <select
+            className="bg-canvas hover:bg-raised border border-line rounded px-1 py-0.5 text-2xs text-secondary cursor-pointer max-w-[64px]"
+            value={normalizePreset(settings.formatPreset)}
+            onChange={e => onSettingsChange({ ...settings, formatPreset: e.target.value })}
+            aria-label="SQL 格式化预设"
+            title={`格式化预设：${presetHint(settings.formatPreset)}`}
+          >
+            {FORMAT_PRESETS.map(p => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+          {/* W2-a: only the main editor has two panes; the read-only embeds
+              pass no handler, so the button is absent rather than inert. */}
+          {onToggleDualPane && (
+            <button
+              className={`flex items-center justify-center w-6 h-6 rounded hover:bg-raised ${
+                dualPane ? 'text-accent' : 'text-secondary hover:text-ink'
+              }`}
+              onClick={onToggleDualPane}
+              aria-label="双栏编辑器"
+              aria-pressed={dualPane}
+              title="双栏编辑器：两栏各有独立语句，结果区共用"
+            >
+              <FiColumns size={12} />
+            </button>
+          )}
           <button
             className="flex items-center justify-center w-6 h-6 text-secondary hover:text-ink rounded hover:bg-raised"
             onClick={() => adjustFont(-1)}
@@ -924,9 +1081,25 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                     </span>
                   </label>
 
+                  <label className="flex items-start gap-2 p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5"
+                      checked={settings.vimMode}
+                      onChange={e =>
+                        onSettingsChange({ ...settings, vimMode: e.target.checked })
+                      }
+                    />
+                    <span>
+                      Vim 键位
+                      <span className="block text-2xs text-muted">
+                        普通 / 插入 / 可视模式；Esc 回普通模式，i 进插入
+                      </span>
+                    </span>
+                  </label>
+
                   <label className="block p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">
-                    <span>结果默认返回行数</span>
-                    <span className="block text-2xs text-muted mb-1">
+                    <span>结果默认返回行数</span>                    <span className="block text-2xs text-muted mb-1">
                       仅对 SELECT 生效，0 表示不限制
                     </span>
                     <input
@@ -1070,7 +1243,31 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
         </div>
       </div>
 
-      <div ref={hostRef} className="flex-1 min-h-0 overflow-hidden" />
+      {/* W2-a: two independent editors, one shared result grid. The active
+          pane carries a thin accent bar on its top edge, so "which one runs"
+          is visible without reading a label. */}
+      {dualPane ? (
+        <div className="flex-1 min-h-0 flex overflow-hidden divide-x divide-line">
+          <div className="flex-1 min-w-0 flex flex-col">
+            <div className={`h-0.5 shrink-0 ${activePane === 1 ? 'bg-accent' : 'bg-transparent'}`} />
+            <div
+              ref={hostRef}
+              className="flex-1 min-h-0 overflow-hidden"
+              onMouseDown={() => onActivePaneChange?.(1)}
+            />
+          </div>
+          <div className="flex-1 min-w-0 flex flex-col">
+            <div className={`h-0.5 shrink-0 ${activePane === 2 ? 'bg-accent' : 'bg-transparent'}`} />
+            <div
+              ref={host2Ref}
+              className="flex-1 min-h-0 overflow-hidden"
+              onMouseDown={() => onActivePaneChange?.(2)}
+            />
+          </div>
+        </div>
+      ) : (
+        <div ref={hostRef} className="flex-1 min-h-0 overflow-hidden" />
+      )}
 
       {paramDialog && (
         <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50">

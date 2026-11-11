@@ -421,6 +421,13 @@ export interface Tab {
   id: string;
   title: string;
   query: string;
+  // W2-a: the dual-pane editor. `dualPane` shows a second editor beside the
+  // first; `query2` holds that pane's statement; `activePane` says which one a
+  // run acts on and which one the editor treats as focused. The result grid is
+  // shared — only the statement is duplicated, never the result model.
+  dualPane?: boolean;
+  query2?: string;
+  activePane?: 1 | 2;
   // Database the query runs against; empty means the connection's own.
   database?: string;
   // True while the statement is in flight, so the grid does not show the

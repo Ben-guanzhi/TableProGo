@@ -91,6 +91,7 @@ import { applyTheme } from './theme';
 import toast from 'react-hot-toast';
 import { runGuarded, runStreamed } from './lib/queryRun';
 import { isMagicCommand, parseMagicCommand, runMagicCommand, MAGIC_HELP } from './lib/magicCommands';
+import { activePaneOf, paneSQL, toggleDualPane } from './lib/dualPane';
 import { download, downloadBlob } from './datagrid/download';
 import { toCSV, toJSON, toMarkdown, toTSV } from './gridView';
 import {
@@ -722,7 +723,11 @@ function App() {
     // The editor passes the statement it actually shows: a named-parameter
     // substitution lands in the editor and this call lands in the same React
     // batch, so tab.query would still be the pre-substitution text.
-    const sql = sqlOverride ?? tab.query;
+    //
+    // W2-a: in dual mode the statement comes from the ACTIVE pane, and the
+    // editor hands over an explicit override from that pane — so an override
+    // always belongs to the pane it came from, never to the other one.
+    const sql = sqlOverride ?? paneSQL(tab, activePaneOf(tab));
     // W1-a: a `\`-statement is a magic command, never SQL. It is answered by
     // handleMagicCommand and stops here — the database never sees the backslash.
     if (isMagicCommand(sql)) {
@@ -1957,6 +1962,22 @@ function App() {
                   onManagePasscode={() => setPasscodeDialogOpen(true)}
                   getTables={completionTables}
                   getColumns={completionColumns}
+                  // W2-a: the dual-pane editor's state lives on the tab, so a
+                  // tab switch preserves both statements and which pane ran.
+                  dualPane={activeTabData.dualPane}
+                  activePane={activeTabData.activePane ?? 1}
+                  query2={activeTabData.query2}
+                  onQuery2Change={sql =>
+                    setTabs(current => current.map(tab =>
+                      tab.id === activeTab ? { ...tab, query2: sql, isDirty: true } : tab
+                    ))
+                  }
+                  onActivePaneChange={pane => setTabs(current => current.map(tab =>
+                    tab.id === activeTab && tab.dualPane ? { ...tab, activePane: pane } : tab
+                  ))}
+                  onToggleDualPane={() => setTabs(current => current.map(tab =>
+                    tab.id === activeTab ? toggleDualPane(tab) : tab
+                  ))}
                   {...txHandlers(activeTabData)}
                 />
               </div>

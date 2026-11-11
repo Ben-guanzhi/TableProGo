@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Dual-pane editor (W2-a, ported from the db-dev reference): a second editor
+  beside the first, each holding its own statement, with one shared result grid.
+  `Ctrl/Cmd+Enter` runs the pane that has focus; the active pane carries a thin
+  accent bar on its top edge so "which one runs" is visible. The state is a
+  small pure module (`dualPane.ts`, 9 cases): pane 1 is the historical `query`,
+  so a tab that never opened the second pane behaves exactly as before, and
+  leaving dual mode always lands back on pane 1. An empty active pane refuses to
+  run instead of sending blank SQL.
+- Vim keybindings in the SQL editor (W2-b): the modal engine is
+  `@replit/codemirror-vim`, mounted in its own compartment so toggling the
+  setting reconfigures the live editor instead of rebuilding it (undo history
+  and the cursor survive the toggle). Off by default — Normal mode makes the
+  editor feel broken to anyone who expected to type immediately.
+- Format presets (W2-c): `default` (one clause per line, select items broken),
+  `compact` (breaks only before FROM/WHERE/GROUP/ORDER/HAVING/SET, select list
+  inline) and `expanded` (the default layout with four-space indents). All three
+  share one tokenizer, so no preset can corrupt a literal or comment the others
+  keep intact; an unknown or empty preset falls back to the default on both
+  sides (`sqlformat.ParsePreset` / `normalizePreset`), so a settings typo can
+  never stop formatting. `POST /api/format-sql` grew an optional `preset` field
+  — existing callers keep the historical layout.
 - Magic commands (W1-a, ported from the db-dev reference): a statement that
   begins with `\` is intercepted before it ever reaches the database and
   answered as a result grid. `\dt`/`\dv` list tables and views, `\dn` lists

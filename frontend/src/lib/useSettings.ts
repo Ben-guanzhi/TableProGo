@@ -27,6 +27,10 @@ export const defaultSettings: AppSettings = {
   // frontend mirrors these only for the settings input; the sweeper is server-side.
   txTimeoutMinutes: 10,
   txWarnAheadMinutes: 0,
+  // W2-b/W2-c: modal editing off by default; the format layout starts at the
+  // clause-per-line style the backend has always produced.
+  vimMode: false,
+  formatPreset: 'default',
 };
 
 // useSettingsEffect paints the theme and follows the OS preference while the
