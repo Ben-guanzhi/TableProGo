@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -52,6 +53,11 @@ type App struct {
 	comparePlans map[string]*comparePlan
 	compareMu    sync.Mutex
 
+	// planSeq is a monotonic counter for compare-plan ids. Not time-based:
+	// back-to-back storeComparePlan calls on Windows can share a nanosecond,
+	// and the later plan would overwrite the earlier one.
+	planSeq int64
+
 	// runs holds the cancel funcs of statements still executing, keyed by
 	// connection. A connection can have more than one in flight (a tab switch
 	// starts the next statement before the previous returns), so each keeps a
@@ -76,16 +82,44 @@ type App struct {
 	// tab id so two tabs on one connection keep separate transactions.
 	txSessionsMu sync.Mutex
 	txSessions   map[string]*txn.Session
+	// txSweeperStop closes to stop the transaction-deadline sweeper
+	// (startTxSweeper). Nil before the app starts; the sweeper goroutine
+	// selects on it between ticks. Guarded by txSweeperMu: stopTxSweeper nils
+	// it, and the field must not be read unsynchronized.
+	txSweeperMu   sync.Mutex
+	txSweeperStop chan struct{}
 
-	// catalogVersion bumps on every statement that could have changed a
-	// catalog. The quick-open snapshot (search.go) is rebuilt only when this
-	// moves; between bumps, a keystroke is answered from memory.
-	catalogVersion atomic.Uint64
+	// catalogGenerations bumps on every statement that could have changed a
+	// catalog. The quick-open snapshot (search.go) is rebuilt only when the
+	// connection's own generation moves; between bumps, a keystroke is answered
+	// from memory. The counter is PER CONNECTION: a global one made a DDL on
+	// connection A invalidate connection B's snapshot, which is exactly the
+	// cross-connection coupling a per-connection cache must not have (TP-21).
+	catalogGenMu sync.Mutex
+	catalogGen  map[string]uint64
+
+	// httpSrv is the API server started by startHTTPServerOnListener. Closing
+	// it at shutdown stops accepting requests and releases the listener/port;
+	// leaving it running means the process keeps a bound socket and a live
+	// request handler while it is supposed to be gone (TP-08).
+	httpSrvMu sync.Mutex
+	httpSrv   *http.Server
+
+	// reclaimer tracks large documents (compare plans, transaction sessions)
+	// and reclaims their memory when the client goes idle. Modeled on
+	// TablePlus' LargeDocumentMemoryReclaimer (idlereclaim.go).
+	reclaimer *Reclaimer
 
 	// apiToken guards the loopback JSON API. It is minted once per process and
 	// handed to the webview in the injected <script>, so a page that merely
 	// happens to run on another localhost port cannot reach it.
 	apiToken string
+
+	// httpGate is a semaphore limiting in-flight HTTP requests. Created with
+	// the app, not lazily: a lazy init inside the handler would race when two
+	// requests arrive before the first server response (both could observe
+	// nil and create two channels).
+	httpGate chan struct{}
 }
 
 // AppSettings holds UI preferences, persisted next to the connection store.
@@ -119,6 +153,16 @@ type AppSettings struct {
 	// which means the machine slept (timers freeze) rather than the user
 	// idled — the one case in-page activity tracking gets wrong on its own.
 	LockOnSleep bool `json:"lockOnSleep"`
+	// TxTimeoutMinutes is the absolute deadline for interactive transactions
+	// (DESIGN-txn-timeout-2026-11-03, policy B): a transaction still open this
+	// many minutes after BEGIN is rolled back by the sweeper. 0 disables the
+	// governance entirely — the pre-existing unbounded behavior. The default
+	// (10) matches db-dev's manual-transaction timeout, the reference
+	// implementation the design aligns on.
+	TxTimeoutMinutes int `json:"txTimeoutMinutes"`
+	// TxWarnAheadMinutes is how long before the deadline the UI starts
+	// warning. 0 uses the built-in ratio (a sixth of the timeout).
+	TxWarnAheadMinutes int `json:"txWarnAheadMinutes"`
 }
 
 // defaultResultLimit matches what GUI clients hand out before the user says
@@ -128,6 +172,11 @@ const defaultResultLimit = 1000
 // defaultTheme follows the OS, which is what every desktop database client
 // shipped in recent years does.
 const defaultTheme = "system"
+
+// defaultTxTimeoutMinutes is the interactive transaction's absolute deadline
+// (DESIGN-txn-timeout-2026-11-03): 10 minutes, matching db-dev's manual
+// transaction — the reference implementation the design aligns on.
+const defaultTxTimeoutMinutes = 10
 
 func normalizeTheme(theme string) string {
 	switch theme {
@@ -208,6 +257,8 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 		passcodePath:  passcodePath,
 		historyPath:   historyFilePath(),
 		favoritesPath: favoritesFilePath(),
+		reclaimer:     NewReclaimer(),
+		httpGate:      make(chan struct{}, httpMaxConcurrentRequests),
 	}
 	if configPath != "" {
 		a.filePath = configPath
@@ -216,6 +267,8 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 	a.loadSettings()
 	a.loadHistory()
 	a.loadFavorites()
+	a.reclaimer.Start()
+	a.startTxSweeper()
 	return a
 }
 
@@ -224,6 +277,7 @@ func (a *App) loadSettings() {
 	a.settings.Theme = defaultTheme
 	a.settings.SafeMode = safeModeOff
 	a.settings.LockOnSleep = true // db-dev's default: a sleep jump locks unless told not to
+	a.settings.TxTimeoutMinutes = defaultTxTimeoutMinutes
 
 	data, err := os.ReadFile(a.settingsPath)
 	if err != nil {
@@ -243,6 +297,8 @@ func (a *App) loadSettings() {
 		IdleLockMinutes    *int    `json:"idleLockMinutes"`
 		LockOnHide         *bool   `json:"lockOnHide"`
 		LockOnSleep        *bool   `json:"lockOnSleep"`
+		TxTimeoutMinutes   *int    `json:"txTimeoutMinutes"`
+		TxWarnAheadMinutes *int    `json:"txWarnAheadMinutes"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		log.Printf("Failed to load settings: %v", err)
@@ -277,6 +333,12 @@ func (a *App) loadSettings() {
 	}
 	if stored.LockOnSleep != nil {
 		a.settings.LockOnSleep = *stored.LockOnSleep
+	}
+	if stored.TxTimeoutMinutes != nil && *stored.TxTimeoutMinutes >= 0 {
+		a.settings.TxTimeoutMinutes = *stored.TxTimeoutMinutes
+	}
+	if stored.TxWarnAheadMinutes != nil && *stored.TxWarnAheadMinutes >= 0 {
+		a.settings.TxWarnAheadMinutes = *stored.TxWarnAheadMinutes
 	}
 }
 
@@ -331,6 +393,9 @@ func (a *App) loadFromFile() {
 		if conns[i].SSH.Password != "" && !isSealedValue(conns[i].SSH.Password) {
 			needsSealing = true
 		}
+		if conns[i].SSH.Passphrase != "" && !isSealedValue(conns[i].SSH.Passphrase) {
+			needsSealing = true
+		}
 		password, err := unprotectSecret(conns[i].Password)
 		if err != nil {
 			// A password from another Windows account or machine cannot be
@@ -348,6 +413,13 @@ func (a *App) loadFromFile() {
 			sshPassword = ""
 		}
 		conns[i].SSH.Password = sshPassword
+		// The key passphrase rides the same layer (ssh.go's contract).
+		sshPassphrase, err := unprotectSecret(conns[i].SSH.Passphrase)
+		if err != nil {
+			log.Printf("Connection %s (ssh key): %v", conns[i].ID, err)
+			sshPassphrase = ""
+		}
+		conns[i].SSH.Passphrase = sshPassphrase
 	}
 	a.savedConnections = conns
 	a.connObserved = append([]ConnectionConfig(nil), conns...)
@@ -377,6 +449,16 @@ func (a *App) saveToFile() {
 			return
 		}
 		sealed[i].SSH.Password = sshPassword
+		// The key passphrase is a credential too, and ssh.go's contract says
+		// it goes through this same layer. Leaving it out would write it in
+		// clear text next to two sealed secrets — the same class of gap as
+		// the .bak leak fixed for fynequery.
+		sshPassphrase, err := protectSecret(sealed[i].SSH.Passphrase)
+		if err != nil {
+			log.Printf("Failed to encrypt ssh key passphrase for %s: %v", sealed[i].ID, err)
+			return
+		}
+		sealed[i].SSH.Passphrase = sshPassphrase
 	}
 
 	// The Fyne client shares this file. Fold in the connections it saved
@@ -420,6 +502,12 @@ func (a *App) saveToFile() {
 				log.Printf("Connection %s (ssh): %v", c.ID, err)
 				c.SSH.Password = ""
 			}
+			if pw, err := unprotectSecret(c.SSH.Passphrase); err == nil {
+				c.SSH.Passphrase = pw
+			} else {
+				log.Printf("Connection %s (ssh key): %v", c.ID, err)
+				c.SSH.Passphrase = ""
+			}
 			a.savedConnections = append(a.savedConnections, c)
 		}
 	}
@@ -451,14 +539,26 @@ func (a *App) Init(ctx context.Context) {
 }
 
 func (a *App) Shutdown(ctx context.Context) {
+	// Stop the API server first: while it is serving, requests can still open
+	// connections and check out pools, racing the teardown below.
+	a.closeHTTPServer()
+	a.stopTxSweeper()
+	if a.reclaimer != nil {
+		a.reclaimer.Stop()
+	}
+	// Roll back and drop every tab transaction BEFORE the pools and drivers go
+	// away: forgetSession needs a live connection to roll back against, and it
+	// takes connectionsMu on the read path, so it must run outside the write
+	// lock below. Leaving the sessions behind would leak every open tab's
+	// server-side transaction (TP-04).
+	a.forgetAllSessions()
 	a.connectionsMu.Lock()
 	defer a.connectionsMu.Unlock()
 	for id, conn := range a.connections {
-		if conn.DB != nil {
-			conn.DB.Close()
-		}
-		conn.closeKV()
-		conn.closePools()
+		// Single inverse of Connect (TP-01): this now also rolls back the tab
+		// transactions and closes the SSH tunnel, which the hand-written list
+		// here used to omit.
+		conn.close(id)
 		delete(a.connections, id)
 	}
 	log.Println("TablePro Go shutdown")

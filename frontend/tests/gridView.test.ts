@@ -109,6 +109,37 @@ test('a decimal column sorts by value while the cells stay text', () => {
   assert.deepEqual(plain, [1, 2, 0, 4, 3]);
 });
 
+// A double's 53-bit mantissa samples a DECIMAL(38) at ~15 significant digits:
+// Number() collapsed distinct 38-digit values to the same double, and the sort
+// then treated them as ties. The comparator must stay exact at that precision —
+// including the boundary where one value still fits a double and the other does
+// not, and including negatives.
+test('a DECIMAL(38) column orders values a double cannot tell apart', () => {
+  const decCols = [{ name: 'amount', isDecimal: true }];
+  // 9007199254740992 (2^53) and 9007199254740993 (2^53+1) are one double apart;
+  // 9007199254740992.5 is a third distinct value the mantissa also merges.
+  const bigRows: any[][] = [
+    ['9007199254740992'],
+    ['9007199254740993'],
+    ['9007199254740992.5'],
+    ['-9007199254740993'],
+    ['9007199254740991'],
+  ];
+  const asc = buildView(bigRows, decCols, {}, { column: 'amount', dir: 'asc' });
+  assert.deepEqual(asc, [3, 4, 0, 2, 1]);
+  const desc = buildView(bigRows, decCols, {}, { column: 'amount', dir: 'desc' });
+  assert.deepEqual(desc, [1, 2, 0, 4, 3]);
+
+  // 38-digit magnitudes: the shorter integer part sorts first even though both
+  // numbers look identical through a double.
+  const huge: any[][] = [
+    ['12345678901234567890123456789012345678'],
+    ['12345678901234567890123456789012345679'],
+    ['1234567890123456789012345678901234567.8'],
+  ];
+  assert.deepEqual(buildView(huge, decCols, {}, { column: 'amount', dir: 'asc' }), [2, 0, 1]);
+});
+
 // Two numbers compare as numbers even in a column that also holds text, while a
 // number against text is read as its digits. That is the rule the grid has always
 // used; the cached key a sort builds must not quietly change it.

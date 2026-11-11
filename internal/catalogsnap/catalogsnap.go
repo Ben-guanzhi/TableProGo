@@ -14,6 +14,7 @@ package catalogsnap
 import (
 	"sort"
 	"sync"
+	"time"
 )
 
 // Match is one catalog hit for the quick-open box: enough to address the object
@@ -42,13 +43,21 @@ type Limits struct {
 	// the whole cost, and one slow database used to make every keystroke wait
 	// for it in turn; 0 means one at a time.
 	Concurrency int
+	// TTL is how long a built snapshot stays valid without a generation bump.
+	// 0 means no TTL (the cache is only rebuilt on generation moves). A nonzero
+	// TTL catches the case where the server's schema changes independently of
+	// the client's DDL statements — without it, the cache serves stale metadata
+	// until the next DDL statement bumps the generation.
+	TTL time.Duration
 }
 
 // Source supplies what the cache cannot know: the current generation, the
 // database list of one connection, and the catalog search of one database.
 type Source interface {
 	// Generation returns the counter that bumps when a catalog may have changed.
-	Generation() uint64
+	// It is scoped to connID: a cache belongs to one connection, so the
+	// generation it tests must describe that connection only (TP-21).
+	Generation(connID string) uint64
 	// Databases lists the databases of one connection.
 	Databases(connID string) ([]string, error)
 	// Search returns objects of one database whose name matches fragment.
@@ -57,30 +66,78 @@ type Source interface {
 
 // Cache is one connection's object list, rebuilt when the generation moves.
 type Cache struct {
-	mu    sync.Mutex
-	built bool
-	gen   uint64
-	rows  []Match
-	ok    bool
-	walks int
+	mu      sync.Mutex
+	built   bool
+	gen     uint64
+	rows    []Match
+	ok      bool
+	walks   int
+	builtAt time.Time
+	// building is non-nil while a walk is in flight. A caller that finds one
+	// in progress waits on the channel instead of holding the cache lock across
+	// the whole multi-database walk: the walk is the slow part, and the lock
+	// only needs to guard the cache's state (TP-22).
+	building chan struct{}
 }
 
 // Rows returns the cached list and whether it is usable. The first call for a
-// generation walks the catalog; the lock is held across the walk so a second
-// keystroke waits on the one builder instead of starting a duplicate walk.
+// generation walks the catalog. Concurrent callers join the walk in flight
+// instead of queueing behind the cache lock, so one keystroke's walk does not
+// serialize behind another's I/O; the lock itself is taken only to read or
+// update the cache state.
+//
+// When limits.TTL > 0, a snapshot older than TTL is rebuilt even if the
+// generation did not move — the server's schema can change independently of
+// the client's DDL statements, and the cache must not serve stale metadata.
 func (c *Cache) Rows(src Source, connID string, limits Limits) ([]Match, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	gen := src.Generation()
+	gen := src.Generation(connID)
 	if c.built && c.gen == gen {
-		return c.rows, c.ok
+		if limits.TTL > 0 && !c.builtAt.IsZero() && time.Since(c.builtAt) >= limits.TTL {
+			// Stale by TTL: rebuild even though the generation did not move.
+			c.built = false
+		} else {
+			rows, ok := c.rows, c.ok
+			c.mu.Unlock()
+			return rows, ok
+		}
 	}
+	if c.building != nil {
+		// Someone else is walking for this generation: wait for that walk and
+		// then serve its result rather than starting a duplicate.
+		building := c.building
+		c.mu.Unlock()
+		<-building
+		return c.Rows(src, connID, limits)
+	}
+	// Claim the walk: mark it in progress and release the lock for its whole
+	// duration, so a keystroke during the walk is not serialized behind it.
+	c.building = make(chan struct{})
 	c.walks++
-	c.gen = gen
 	c.built = true
+	c.gen = gen
+	c.builtAt = time.Now()
+	building := c.building
+	c.mu.Unlock()
+
+	// Release the slot and wake the joiners in one step. Order matters: clear
+	// c.building before closing, so a joiner that wakes up and re-enters sees
+	// the slot free and the cache populated instead of re-waiting on a channel
+	// that is already closed. A panicking walk must not leave joiners parked
+	// forever — the channel is the only thing they wait on.
+	defer func() {
+		c.mu.Lock()
+		c.building = nil
+		c.mu.Unlock()
+		close(building)
+	}()
+
 	c.rows, c.ok = walk(src, connID, gen, limits)
-	return c.rows, c.ok
+
+	c.mu.Lock()
+	rows, ok := c.rows, c.ok
+	c.mu.Unlock()
+	return rows, ok
 }
 
 // Walks reports how many times the catalog was actually read, which is what
@@ -102,7 +159,12 @@ func walk(src Source, connID string, gen uint64, limits Limits) ([]Match, bool) 
 	}
 	sort.Strings(databases)
 	if limits.Databases > 0 && len(databases) > limits.Databases {
-		databases = databases[:limits.Databases]
+		// The database list is truncated: a partial snapshot is not a complete
+		// one. Return ok=false so the caller falls back to live search, exactly
+		// like the PerDatabase/Total caps do. Without this, the truncated
+		// snapshot was served as complete and objects in the hidden databases
+		// were silently unreachable through quick-open.
+		return nil, false
 	}
 
 	type slot struct {

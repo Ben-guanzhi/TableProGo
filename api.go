@@ -1,10 +1,8 @@
 package main
 
 import (
-	"tablepro-go/internal/llm"
-	"tablepro-go/internal/sqlformat"
-
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
@@ -14,6 +12,10 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"time"
+
+	"tablepro-go/internal/llm"
+	"tablepro-go/internal/sqlformat"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
@@ -769,8 +771,15 @@ func (a *App) routes() *http.ServeMux {
 	// Interactive transactions (txn.go): per-tab, so two editor tabs on one
 	// connection keep separate transactions.
 	post(a, mux, "/api/begin-tx", 400, func(a *App, body txRequest) (any, error) {
-		status, err := a.BeginTransaction(body.ConnID, body.TabID, body.Database)
-		return map[string]string{"status": status}, err
+		// Status + structured detail in one round trip: the frontend's Begin
+		// then status read used to be two awaits in one try block, and a
+		// failed second left the transaction open server-side with no badge
+		// (see BeginTransactionDetail).
+		status, detail, err := a.BeginTransactionDetail(body.ConnID, body.TabID, body.Database)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"status": status, "detail": detail}, nil
 	})
 	post(a, mux, "/api/commit-tx", 400, func(a *App, body txRequest) (any, error) {
 		status, err := a.CommitTransaction(body.ConnID, body.TabID)
@@ -781,7 +790,13 @@ func (a *App) routes() *http.ServeMux {
 		return map[string]string{"status": status}, err
 	})
 	post(a, mux, "/api/tx-status", 400, func(a *App, body txRequest) (any, error) {
-		return map[string]string{"status": a.TransactionStatus(body.TabID)}, nil
+		// The poll the frontend already runs doubles as an opportunistic
+		// sweep: a window that was asleep still converges its deadlines
+		// within one poll of being overdue (the 10s ticker catches the
+		// no-window case). Sweep's lock discipline makes the double arrival
+		// safe — exactly one of the two sweeps acts.
+		a.sweepExpiredTransactions()
+		return a.TransactionStatusDetail(body.TabID), nil
 	})
 	// Tab close: roll back any transaction the tab still holds and drop its
 	// session state — without this a server-side transaction hung until
@@ -911,12 +926,74 @@ func (a *App) routes() *http.ServeMux {
 }
 
 func (a *App) startHTTPServerOnListener(listener net.Listener) {
-	srv := &http.Server{Handler: corsMiddleware(authMiddleware(a.apiToken, a.routes()))}
+	srv := &http.Server{
+		Handler:      concurrencyGate(a, corsMiddleware(authMiddleware(a.apiToken, a.routes()))),
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 0, // streaming endpoints hold the connection for the whole stream
+		IdleTimeout:  120 * time.Second,
+	}
+	a.httpSrv = srv
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("HTTP server error: %v", err)
 		}
 	}()
+}
+
+// closeHTTPServer stops the API server: it stops accepting requests and closes
+// the listener so the port is released before the process exits. It is part of
+// Shutdown — a server left running keeps a bound socket and a live request
+// handler alive after the connections are gone (TP-08).
+func (a *App) closeHTTPServer() {
+	a.httpSrvMu.Lock()
+	srv := a.httpSrv
+	a.httpSrv = nil
+	a.httpSrvMu.Unlock()
+	if srv == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), httpShutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown: %v", err)
+	}
+}
+
+// httpMaxConcurrentRequests bounds the number of in-flight HTTP requests.
+// Without it, a burst of UI requests (many tabs, quick-open keystrokes, cancel
+// spam) maps 1:1 to DB goroutines and pool checkouts, which can exhaust the
+// server's connection limit.
+const httpMaxConcurrentRequests = 32
+
+// httpShutdownTimeout bounds how long Shutdown waits for in-flight requests to
+// drain before closing the listener. Streaming endpoints hold a connection for
+// the whole stream, so the wait is short: past it the socket is closed and the
+// stream fails rather than delaying the exit.
+const httpShutdownTimeout = 3 * time.Second
+
+// concurrencyGate wraps the handler chain with a semaphore that admits at most
+// httpMaxConcurrentRequests requests at once. Requests beyond the limit wait
+// for a slot; if none arrives within 30s, the request is rejected.
+//
+// newAppWithPaths creates the gate at startup, so the normal path never enters
+// the fallback below; a literal-built App (test helpers) may skip it, and the
+// fallback keeps those usable. The gate lives on the App so every server this
+// process builds shares one admission budget.
+func concurrencyGate(a *App, next http.Handler) http.Handler {
+	gate := a.httpGate
+	if gate == nil {
+		gate = make(chan struct{}, httpMaxConcurrentRequests)
+		a.httpGate = gate
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case gate <- struct{}{}:
+			defer func() { <-gate }()
+			next.ServeHTTP(w, r)
+		case <-time.After(30 * time.Second):
+			writeError(w, http.StatusServiceUnavailable, "server busy: too many concurrent requests")
+		}
+	})
 }
 
 // apiTokenHeader carries the per-process token from the webview to the API.

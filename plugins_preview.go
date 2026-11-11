@@ -16,7 +16,7 @@ import (
 )
 
 // previewViaPlugin reads one page through the plugin's BrowseRows.
-func (a *App) previewViaPlugin(conn *Connection, database, schema, table string, limit, offset int, filters []TableFilter) QueryResult {
+func (a *App) previewViaPlugin(ctx context.Context, conn *Connection, database, schema, table string, limit, offset int, filters []TableFilter) QueryResult {
 	drv, err := a.pluginDriver(conn)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
@@ -40,7 +40,7 @@ func (a *App) previewViaPlugin(conn *Connection, database, schema, table string,
 		req.Filter = append(req.Filter, expr)
 	}
 
-	browsed, err := drv.BrowseRows(context.Background(), schema, table, req)
+	browsed, err := drv.BrowseRows(ctx, schema, table, req)
 	if err != nil {
 		return QueryResult{Error: err.Error()}
 	}

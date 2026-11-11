@@ -87,6 +87,13 @@ func render(dbType, colType, quoted string, f Condition) (string, error) {
 		if sqltext.NewColumnType(colType).IsNumeric() {
 			return "", fmt.Errorf("“包含”不适用于 %s 列，改用等于或大小比较", colType)
 		}
+		// T-SQL's LIKE has no ESCAPE clause and does not treat the backslash as
+		// an escape, so the dialect-generic "/" escape (and the clause) are
+		// both rejected there. Escape the wildcards with bracket character
+		// classes instead, and omit the clause. See containsPatternMssql.
+		if sqltext.Normalize(dbType) == sqltext.SQLServer {
+			return quoted + " LIKE " + sqltext.QuotedLiteral(dbType, containsPatternMssql(f.Value)), nil
+		}
 		return quoted + " LIKE " + sqltext.QuotedLiteral(dbType, containsPattern(f.Value)) +
 			" ESCAPE " + sqltext.QuotedLiteral(dbType, likeEscape), nil
 	case Eq, Ne, GT, GTE, LT, LTE:
@@ -118,6 +125,17 @@ func render(dbType, colType, quoted string, f Condition) (string, error) {
 // the text "100%" rather than everything.
 func containsPattern(value string) string {
 	escaped := strings.NewReplacer(likeEscape, likeEscape+likeEscape, "%", likeEscape+"%", "_", likeEscape+"_").Replace(value)
+	return "%" + escaped + "%"
+}
+
+// containsPatternMssql is containsPattern for T-SQL. T-SQL's LIKE has no ESCAPE
+// clause and does not treat the backslash as an escape character at all, so
+// neither the dialect-generic "/" escape nor the clause it names is valid
+// there. T-SQL's only escape mechanism is the bracket character class, so [%],
+// [_] and [[] are the literal forms; the order matters, because the "[" class
+// must be produced before the "%"/"_" replacements are scanned.
+func containsPatternMssql(value string) string {
+	escaped := strings.NewReplacer("[", "[[]", "%", "[%]", "_", "[_]").Replace(value)
 	return "%" + escaped + "%"
 }
 

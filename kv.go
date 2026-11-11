@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"sort"
@@ -87,10 +88,18 @@ func redisDBIndex(database string) (int, error) {
 	return idx, nil
 }
 
+// closeKV closes the connection's key/value driver. It does NOT clear c.KV:
+// teardown runs under connectionsMu while other goroutines may still hold this
+// *Connection from an earlier lookup and read c.KV; writing the field here would
+// race them. Callers evict the connection from the map, so nothing new reads it.
 func (c *Connection) closeKV() {
 	if c.KV != nil {
-		_ = c.KV.Close()
-		c.KV = nil
+		// The inverse of acquiring the key/value driver. A failed close leaks
+		// the server connection behind a disconnected-looking connection, so it
+		// is logged rather than swallowed (TP-25).
+		if err := c.KV.Close(); err != nil {
+			log.Printf("close %s: key/value driver: %v", c.ID, err)
+		}
 	}
 }
 
@@ -354,7 +363,24 @@ func kvWindow(ctx context.Context, p dbcore.KeyPageReader, key string,
 				}
 			}
 			scan = cont
-			if scan == 0 || len(members) >= limit {
+			if scan == 0 {
+				break
+			}
+			if len(members) >= limit {
+				// The window is full but the cursor is not back at 0: the
+				// collection MIGHT have more. A set of exactly `limit`
+				// members that SCAN delivered over several rounds would
+				// otherwise report a false "truncated" and offer a load-more
+				// that comes back empty. One probe round settles it: an
+				// empty page + cursor 0 means the walk is done, and the
+				// filled window is the whole collection.
+				page, cont, err := p.SetPage(ctx, key, scan, 1)
+				if err != nil {
+					return dbcore.RedisValue{}, "", err
+				}
+				if len(page) == 0 && cont == 0 {
+					scan = 0
+				}
 				break
 			}
 		}
@@ -375,7 +401,20 @@ func kvWindow(ctx context.Context, p dbcore.KeyPageReader, key string,
 				fields[f.Name] = f.Value
 			}
 			scan = cont
-			if scan == 0 || len(fields) >= limit {
+			if scan == 0 {
+				break
+			}
+			if len(fields) >= limit {
+				// Same probe as the set branch: a hash of exactly `limit`
+				// fields delivered over several rounds must not report a
+				// false truncated.
+				page, cont, err := p.HashPage(ctx, key, scan, 1)
+				if err != nil {
+					return dbcore.RedisValue{}, "", err
+				}
+				if len(page) == 0 && cont == 0 {
+					scan = 0
+				}
 				break
 			}
 		}

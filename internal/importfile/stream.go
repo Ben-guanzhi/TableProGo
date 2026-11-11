@@ -26,12 +26,40 @@ const StreamChunkSize = 1000
 // UTF-8 vs GB18030 in practice and costs one read.
 const sniffSize = 64 * 1024
 
+// looksLikeUTF16NoBOM reports whether data looks like UTF-16 without a BOM.
+// UTF-16 ASCII text has NUL at every other byte position: UTF-16LE puts the
+// ASCII char in the low byte (NUL at odd indices), UTF-16BE puts it in the
+// high byte (NUL at even indices). If more than 70% of the pairs have a NUL
+// on one side, the file is likely UTF-16.
+func looksLikeUTF16NoBOM(data []byte) (le bool, ok bool) {
+	if len(data) < 8 {
+		return false, false
+	}
+	evenNULs, oddNULs := 0, 0
+	pairs := len(data) / 2
+	for i := 0; i < len(data)-1; i += 2 {
+		if data[i] == 0 {
+			evenNULs++
+		}
+		if data[i+1] == 0 {
+			oddNULs++
+		}
+	}
+	if oddNULs > pairs*7/10 {
+		return true, true // UTF-16LE: NULs at odd positions
+	}
+	if evenNULs > pairs*7/10 {
+		return false, true // UTF-16BE: NULs at even positions
+	}
+	return false, false
+}
+
 // DecodingReader transparently decodes common non-UTF-8 import files: a BOM
 // picks UTF-8 (stripped) or UTF-16; without a BOM the first sniffSize bytes
 // are probed, and bytes that are not valid UTF-8 fall back to GB18030 (a
 // superset of GBK and GB2312, the usual encoding of Chinese-language exports).
-// A BOM-less UTF-16 file is left alone: guessing it from NUL bytes alone has
-// too many false positives.
+// A BOM-less UTF-16 file is detected by NUL density: UTF-16 ASCII text has NUL
+// at every other byte position, which is a strong signal even without a BOM.
 func DecodingReader(r io.Reader) io.Reader {
 	head := make([]byte, 3)
 	n, _ := io.ReadFull(r, head)
@@ -53,6 +81,19 @@ func DecodingReader(r io.Reader) io.Reader {
 	m, _ := io.ReadFull(r, sniff)
 	sniff = sniff[:m]
 	combined := append(head, sniff...)
+
+	// A UTF-16 file without a BOM passes utf8.Valid (NUL is valid UTF-8), so
+	// it would be returned as-is with NUL-separated lines. Detect it by NUL
+	// density: UTF-16 ASCII text has NUL at every other byte position.
+	if le, ok := looksLikeUTF16NoBOM(combined); ok {
+		decoder := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM)
+		if !le {
+			decoder = unicode.UTF16(unicode.BigEndian, unicode.IgnoreBOM)
+		}
+		return transform.NewReader(io.MultiReader(bytes.NewReader(combined), r),
+			decoder.NewDecoder())
+	}
+
 	// A multi-byte rune split by the sniff boundary would fail utf8.Valid on a
 	// genuine UTF-8 file; drop up to three trailing bytes before concluding.
 	if !utf8.Valid(combined) {

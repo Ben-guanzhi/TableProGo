@@ -44,15 +44,15 @@ func TestCatalogVersionOnlyBumpsForCatalogChangingStatements(t *testing.T) {
 	conn := sqliteDB(t, "conn_0", "scratch")
 	a := searchApp(conn)
 
-	base := a.catalogVersion.Load()
+	base := a.Generation("conn_0")
 	if r := a.runQuery(context.Background(), "", "conn_0", "CREATE TABLE t(v integer)", ""); r.Error != "" {
 		t.Fatalf("create: %v", r.Error)
 	}
-	if got := a.catalogVersion.Load(); got != base+1 {
+	if got := a.Generation("conn_0"); got != base+1 {
 		t.Fatalf("CREATE bumped version to %d, want %d", got, base+1)
 	}
 
-	base = a.catalogVersion.Load()
+	base = a.Generation("conn_0")
 	for _, q := range []string{
 		"INSERT INTO t VALUES (1)",
 		"UPDATE t SET v = 2",
@@ -62,14 +62,14 @@ func TestCatalogVersionOnlyBumpsForCatalogChangingStatements(t *testing.T) {
 			t.Fatalf("%q: %v", q, r.Error)
 		}
 	}
-	if got := a.catalogVersion.Load(); got != base {
+	if got := a.Generation("conn_0"); got != base {
 		t.Fatalf("DML bumped version to %d, want unchanged %d", got, base)
 	}
 
 	if r := a.runQuery(context.Background(), "", "conn_0", "DROP TABLE t", ""); r.Error != "" {
 		t.Fatalf("drop: %v", r.Error)
 	}
-	if got := a.catalogVersion.Load(); got != base+1 {
+	if got := a.Generation("conn_0"); got != base+1 {
 		t.Fatalf("DROP bumped version to %d, want %d", got, base+1)
 	}
 }

@@ -66,13 +66,35 @@ export function findNamedParams(sql: string): string[] {
 
 // substituteParams replaces every `:name` with the given value. A value that
 // looks like a number stays unquoted; anything else becomes a single-quoted
-// literal with the quotes doubled, the one spelling every SQL dialect shares.
-// An unknown name (no value given) is left untouched, so the dialog can be
-// answered partially and the remaining markers stay visible.
-export function substituteParams(sql: string, values: Record<string, string>): string {
+// literal with the quotes doubled and, where the engine needs it, the
+// backslash doubled too. An unknown name (no value given) is left untouched,
+// so the dialog can be answered partially and the remaining markers stay
+// visible.
+//
+// The backslash is NOT literal on MySQL: its default sql_mode leaves
+// NO_BACKSLASH_ESCAPES off, so '\' closes the quote early — `:p` = `C:\logs\`
+// rendered as 'C:\logs\' swallows the closing quote and either fails to parse
+// or absorbs the rest of the clause into the literal. That is a wrong
+// statement, not just a red squiggle. The server's own renderer
+// (dbcore/sqltext's QuoteLiteral -> quoteLiteralMySQL) doubles both, so the
+// frontend matches it instead of claiming one spelling fits every dialect;
+// a nil kind (params typed before the first connection was chosen) keeps the
+// conservative ANSI spelling.
+export function substituteParams(
+  sql: string,
+  values: Record<string, string>,
+  kind?: string,
+): string {
   const numeric = (v: string) => /^[+-]?(\d+(\.\d+)?|\.\d+)$/.test(v.trim());
-  const literal = (v: string) =>
-    numeric(v) ? v.trim() : `'${v.split("'").join("''")}'`;
+  const mysqlLiteral = (v: string) =>
+    kind === 'mysql' || kind === 'mariadb' || kind === 'tidb';
+  const literal = (v: string) => {
+    if (numeric(v)) return v.trim();
+    const escaped = mysqlLiteral(kind ?? '')
+      ? v.split('\\').join('\\\\').split("'").join("''")
+      : v.split("'").join("''");
+    return `'${escaped}'`;
+  };
 
   // Same scanner as findNamedParams, but rewriting as it goes.
   let out = '';

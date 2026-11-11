@@ -320,6 +320,13 @@ func tokenize(sql string) []token {
 			for i++; i < len(sql); i++ {
 				buf.WriteByte(sql[i])
 				if sql[i] == ']' {
+					// SQL Server escapes ] inside [ident] as ]]: consume both
+					// and continue, or break at the real closing bracket.
+					if i+1 < len(sql) && sql[i+1] == ']' {
+						buf.WriteByte(sql[i+1])
+						i++
+						continue
+					}
 					break
 				}
 			}

@@ -257,6 +257,12 @@ func (a *App) RunMCPStdio(in io.Reader, out io.Writer) error {
 
 // ---------- HTTP transport ----------
 
+// mcpMaxBodyBytes bounds one JSON-RPC request body. A request past it is
+// refused with 413 rather than truncated: a LimitReader would hand the parser
+// a fragment, which can only fail as a JSON syntax error (-32700) and hides
+// the real reason from the client (SEC-02).
+const mcpMaxBodyBytes = 4 << 20
+
 // serveMCP handles one JSON-RPC request over the loopback API. It exists so the
 // running app can be inspected by an MCP client without restarting it as a child
 // process.
@@ -265,9 +271,16 @@ func (a *App) serveMCP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	// One byte over the cap tells "at the limit" from "past it" without
+	// reading an unbounded body.
+	body, err := io.ReadAll(io.LimitReader(r.Body, mcpMaxBodyBytes+1))
 	if err != nil {
 		writeError(w, 400, err.Error())
+		return
+	}
+	if len(body) > mcpMaxBodyBytes {
+		writeError(w, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("MCP request body exceeds %d bytes", mcpMaxBodyBytes))
 		return
 	}
 	resp := a.mcpHTTPServerFor().Handle(body)

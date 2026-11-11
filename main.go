@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -180,4 +181,10 @@ func main() {
 	if err := wailsApp.Run(); err != nil {
 		log.Fatal(err)
 	}
+
+	// The Wails run has ended: release the API listener, the connections and
+	// every transaction the tabs left open. Without this the process keeps a
+	// bound socket and its server-side transactions alive after the window is
+	// gone (TP-08).
+	svc.Shutdown(context.Background())
 }

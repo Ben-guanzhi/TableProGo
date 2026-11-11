@@ -11,6 +11,11 @@ import (
 // The SSH password is a credential: it must be sealed on disk exactly like the
 // database password, and restored on load. Linux/macOS use the keyring or the
 // documented plaintext fallback, so this assertion is Windows-only (DPAPI).
+//
+// The key passphrase is the third credential in the same struct and rides the
+// same layer (ssh.go's contract). It was missing from both the seal and the
+// unseal path, so it landed in the state file in clear text next to two sealed
+// secrets — the same class of gap as the fynequery .bak leak.
 func TestSSHPasswordSealedOnDisk(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("DPAPI sealing is Windows-only; other platforms fall back to keyring/plaintext")
@@ -23,7 +28,10 @@ func TestSSHPasswordSealedOnDisk(t *testing.T) {
 		savedConnections: []ConnectionConfig{{
 			ID: "c1", Name: "tunneled", Type: "postgresql", Host: "db", Port: 5432,
 			Username: "u", Password: "db-secret",
-			SSH: SSHConfig{Enabled: true, Host: "bastion", Port: 22, User: "deploy", Password: "ssh-secret"},
+			SSH: SSHConfig{
+				Enabled: true, Host: "bastion", Port: 22, User: "deploy",
+				Password: "ssh-secret", KeyFile: "/keys/id_ed25519", Passphrase: "key-secret",
+			},
 		}},
 	}
 	app.saveToFile()
@@ -32,10 +40,14 @@ func TestSSHPasswordSealedOnDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read state: %v", err)
 	}
-	for _, secret := range []string{"db-secret", "ssh-secret"} {
+	for _, secret := range []string{"db-secret", "ssh-secret", "key-secret"} {
 		if strings.Contains(string(raw), secret) {
 			t.Fatalf("%q written in clear text: %s", secret, raw)
 		}
+	}
+	// The key path is not a secret and must stay readable.
+	if !strings.Contains(string(raw), "/keys/id_ed25519") {
+		t.Fatalf("the key path should survive: %s", raw)
 	}
 
 	loaded := &App{filePath: path, connections: map[string]*Connection{}}
@@ -49,6 +61,9 @@ func TestSSHPasswordSealedOnDisk(t *testing.T) {
 	}
 	if got.SSH.Password != "ssh-secret" {
 		t.Errorf("ssh password round-trip = %q", got.SSH.Password)
+	}
+	if got.SSH.Passphrase != "key-secret" {
+		t.Errorf("ssh key passphrase round-trip = %q", got.SSH.Passphrase)
 	}
 	if !got.SSH.Enabled || got.SSH.User != "deploy" {
 		t.Errorf("ssh settings lost: %+v", got.SSH)

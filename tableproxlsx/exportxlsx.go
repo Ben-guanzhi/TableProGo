@@ -185,6 +185,17 @@ func workbookCellValue(kind cellKind, value interface{}, styles workbookStyles) 
 				return nil
 			}
 			if number, err := strconv.ParseFloat(trimmed, 64); err == nil {
+				// A numeric cell that the float64 cannot carry exactly goes in
+				// as text: XLSX numbers are doubles, and writing the rounded
+				// value would make the export silently lossy where the SQL/CSV
+				// export paths keep the digits. The loss test compares VALUE,
+				// not spelling — "12.50" and "12.5" are the same number and
+				// stay numeric — by ordering the original digits against the
+				// float's own rendering exactly (integer length, then digits,
+				// then fraction; no big.Int needed).
+				if exactDecimalCompare(trimmed, strconv.FormatFloat(number, 'f', -1, 64)) != 0 {
+					return v
+				}
 				return number
 			}
 			// Text in a numeric column is a display problem, not a reason to
@@ -217,6 +228,62 @@ func workbookRow(kinds []cellKind, row []interface{}, styles workbookStyles) []i
 		cells[i] = workbookCellValue(kinds[i], value, styles)
 	}
 	return cells
+}
+
+// exactDecimalCompare orders two decimal digit texts by VALUE, exactly, at any
+// precision: normal form is (sign, integer digits with leading zeros stripped,
+// fraction digits); same-sign comparison takes the longer integer part first,
+// then the lexically greater digit string, then the fraction. Both inputs have
+// already passed ParseFloat, so the shape (optional sign, digits, at most one
+// dot) is given. No big.Int: every value stays a string.
+func exactDecimalCompare(a, b string) int {
+	parse := func(s string) (neg bool, intPart, fracPart string) {
+		body := strings.TrimPrefix(strings.TrimPrefix(s, "+"), "-")
+		neg = strings.HasPrefix(s, "-")
+		if i := strings.IndexByte(body, '.'); i >= 0 {
+			intPart, fracPart = body[:i], body[i+1:]
+		} else {
+			intPart = body
+		}
+		// Leading zeros in the integer part and TRAILING zeros in the fraction
+		// are spelling, not value: "012.50" and "12.5" are the same number.
+		intPart = strings.TrimLeft(intPart, "0")
+		fracPart = strings.TrimRight(fracPart, "0")
+		return neg, intPart, fracPart
+	}
+	na, ia, fa := parse(a)
+	nb, ib, fb := parse(b)
+	if na != nb {
+		if na {
+			return -1
+		}
+		return 1
+	}
+	mag := func() int {
+		if len(ia) != len(ib) {
+			if len(ia) < len(ib) {
+				return -1
+			}
+			return 1
+		}
+		if ia != ib {
+			if ia < ib {
+				return -1
+			}
+			return 1
+		}
+		if fa != fb {
+			if fa < fb {
+				return -1
+			}
+			return 1
+		}
+		return 0
+	}()
+	if na {
+		return -mag
+	}
+	return mag
 }
 
 // displayUnits is how wide a value looks in a column, counted in the ASCII

@@ -20,7 +20,16 @@ func seekKeysOf(dbType string, defs ...ColumnInfo) []keyColumn {
 // keep using OFFSET, and a type that merely looks like a number must not slip
 // through the gate.
 func TestSeekableKeyTypeGate(t *testing.T) {
-	integers := []string{"INTEGER", "int", "BIGINT", "smallint", "INT8", "SERIAL", "BIGSERIAL", "ROWID", "bigint(20) unsigned"}
+	// The spellings below are the ones the drivers actually report: information_
+	// schema.COLUMN_TYPE says "bigint unsigned" while go-sql-driver's
+	// DatabaseTypeName says "UNSIGNED BIGINT". A MySQL BIGINT UNSIGNED primary
+	// key must be seeked, not silently degrade to OFFSET.
+	integers := []string{
+		"INTEGER", "int", "BIGINT", "smallint", "INT8", "SERIAL", "BIGSERIAL",
+		"ROWID", "bigint(20) unsigned", "bigint unsigned", "UNSIGNED BIGINT",
+		"unsigned big int", "int unsigned", "UNSIGNED INT", "MEDIUMINT unsigned",
+		"big int", "tinyint unsigned", "smallint unsigned",
+	}
 	for _, colType := range integers {
 		if kind := seekableKeyType(colType); kind != keyInteger {
 			t.Errorf("%s: want an integer key, got %v", colType, kind)

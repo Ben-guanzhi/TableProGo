@@ -158,25 +158,39 @@ func (a *App) ImportFile(req ImportRequest) (ImportResult, error) {
 	ctx, done := a.beginRunIn(context.Background(), req.ConnID, "import")
 	defer done()
 
+	w := &importWriter{
+		ctx: ctx, drv: drv, dbType: conn.Type, schema: schema, table: req.Table,
+		opts: opts, skipErrors: req.Options.SkipErrors, res: &res,
+	}
+	// Open the import's transaction BEFORE the destructive truncate, so the
+	// truncate is part of it and rolls back with the row inserts when a later
+	// row fails. Executing the truncate first (autocommit) used to leave the
+	// table empty and the failed import's rows gone for good (TP-03).
+	if err := w.begin(); err != nil {
+		res.Error = err.Error()
+		return res, err
+	}
 	if opts.Mode == "truncate" {
+		if w.txDrv == nil {
+			// There is no transaction to protect the truncate: with skipErrors
+			// (or a driver without transaction support) every row is its own
+			// statement, so a failure cannot rewind the truncate. Refuse rather
+			// than truncate a table and lose its contents on the next bad row.
+			w.abort()
+			err := fmt.Errorf("import: truncate mode needs transaction support; turn off skip-errors")
+			res.Error = err.Error()
+			return res, err
+		}
 		stmt, terr := tableprosql.TruncateStatement(conn.Type, importfile.TableRef(conn.Type, schema, req.Table))
 		if terr != nil {
 			res.Error = terr.Error()
 			return res, terr
 		}
-		if _, err := drv.Execute(ctx, stmt); err != nil {
+		if _, err := w.txDrv.ExecuteIn(w.tx, ctx, stmt); err != nil {
+			w.abort()
 			res.Error = err.Error()
 			return res, err
 		}
-	}
-
-	w := &importWriter{
-		ctx: ctx, drv: drv, dbType: conn.Type, schema: schema, table: req.Table,
-		opts: opts, skipErrors: req.Options.SkipErrors, res: &res,
-	}
-	if err := w.begin(); err != nil {
-		res.Error = err.Error()
-		return res, err
 	}
 	if opts.Format == "json" {
 		err = a.importJSONRows(req, opts, w)

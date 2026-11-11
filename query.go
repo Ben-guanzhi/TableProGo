@@ -3,11 +3,16 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dbcore/dbcore"
+	"github.com/dbcore/dbcore/dberror"
 
 	tableprosql "github.com/dbcore/dbcore/sqltext"
 
@@ -106,6 +111,12 @@ func (a *App) Preview(connID string, database string, schema string, table strin
 const (
 	defaultPreviewRows = 100
 	maxPreviewRows     = 5000
+	// maxMaterializeRows is the hard bound on how many rows the non-streaming
+	// execute path will materialize, regardless of ResultLimit. When the user
+	// sets ResultLimit=0 (no limit), a SELECT * on a huge table would otherwise
+	// OOM the client process. The streaming path (dbcore StreamQuerier) has no
+	// such bound because it emits batches incrementally.
+	maxMaterializeRows = 10000
 )
 
 // Without a usable cursor the page is read exactly as it always was.
@@ -136,7 +147,7 @@ func (a *App) previewPage(connID, tabID, database string, schema string, table s
 	// dialect knowledge for an engine it does not compile, so the page cannot be
 	// built from a WHERE and an ORDER BY here.
 	if pluginConnection(conn) {
-		return a.previewViaPlugin(conn, database, schema, table, limit, offset, filters)
+		return a.previewViaPlugin(ctx, conn, database, schema, table, limit, offset, filters)
 	}
 
 	db := conn.DB
@@ -346,6 +357,38 @@ func (a *App) runQuery(ctx context.Context, tabID, connID, query, database strin
 	}
 
 	start := time.Now()
+	result := a.runStatementForQuery(ctx, conn, database, drv, txID, query, start)
+
+	// Auto-reconnect: when a statement fails because the connection died (server
+	// crashed, network dropped, firewall killed the socket), reconnect and retry
+	// once. Without this the user sees a raw transport error and must manually
+	// reconnect — which is exactly what the DBA architecture analysis flagged.
+	if result.Error != "" && txID == "" && dberror.Classify(fmt.Errorf("%s", result.Error)) == dberror.ConnectionBroken {
+		log.Printf("runQuery: connection %q died, attempting reconnect", connID)
+		if rerr := a.Connect(connID); rerr != nil {
+			log.Printf("runQuery: reconnect failed: %v", rerr)
+			return result
+		}
+		// Get the fresh connection and driver after reconnect.
+		conn2, cerr := a.connection(connID)
+		if cerr != nil {
+			return result
+		}
+		drv2, derr := a.execDriver(conn2, database)
+		if derr != nil {
+			return QueryResult{Error: derr.Error()}
+		}
+		retryStart := time.Now()
+		return a.runStatementForQuery(ctx, conn2, database, drv2, "", query, retryStart)
+	}
+
+	return result
+}
+
+// runStatementForQuery runs one statement (read or write) through the driver
+// and applies the row-cap truncation for read queries. Split from runQuery so
+// the reconnect path can retry cleanly.
+func (a *App) runStatementForQuery(ctx context.Context, conn *Connection, database string, drv dbcore.SQLDriver, txID string, query string, start time.Time) QueryResult {
 	if dbcore.IsReadQuery(query) {
 		limit := a.GetSettings().ResultLimit
 		fetch := limit
@@ -365,14 +408,9 @@ func (a *App) runQuery(ctx context.Context, tabID, connID, query, database strin
 	}
 	result := a.runStatement(ctx, conn, database, drv, txID, query, start)
 	if result.Error == "" && !movesDataOnly(query) {
-		// A statement that ran can have moved a catalog (CREATE/DROP/RENAME,
-		// and the menu's actions arrive through here too). Plain row DML
-		// (INSERT/UPDATE/DELETE/MERGE/REPLACE) cannot, so it must not
-		// invalidate: the next quick-open keystroke would otherwise rebuild
-		// every connection's snapshot after each edit. Anything else — known
-		// DDL or an exotic statement — still bumps, keeping the "stale list"
-		// risk on the conservative side.
-		a.catalogVersion.Add(1)
+		// Invalidate this connection's quick-open snapshot only: the cache is
+		// per connection (TP-21).
+		a.bumpCatalog(conn.ID)
 	}
 	return result
 }
@@ -389,16 +427,26 @@ func (a *App) runStatement(
 	query string,
 	start time.Time,
 ) QueryResult {
+	var result QueryResult
 	if txID == "" {
-		return runDriverStatement(ctx, drv, query, start)
+		result = runDriverStatement(ctx, drv, query, start)
+	} else {
+		m, err := a.txManagerFor(conn, database)
+		if err != nil {
+			return QueryResult{Error: err.Error()}
+		}
+		res, err := m.ExecuteInTx(ctx, txID, query)
+		result = queryResultFrom(res, err)
+		result.ExecutionTime = time.Since(start).Seconds()
 	}
-	m, err := a.txManagerFor(conn, database)
-	if err != nil {
-		return QueryResult{Error: err.Error()}
+	// Hard bound: even when ResultLimit=0, the non-streaming execute path must
+	// not materialize an unbounded result set. The dbcore driver drains the
+	// whole cursor; this is the backstop that stops it at maxMaterializeRows.
+	if result.Error == "" && len(result.Rows) > maxMaterializeRows {
+		result.Rows = result.Rows[:maxMaterializeRows]
+		result.RowCount = maxMaterializeRows
+		result.Truncated = true
 	}
-	res, err := m.ExecuteInTx(ctx, txID, query)
-	result := queryResultFrom(res, err)
-	result.ExecutionTime = time.Since(start).Seconds()
 	return result
 }
 
@@ -482,7 +530,15 @@ func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interfa
 		valuePtrs[i] = &values[i]
 	}
 	var resultRows [][]interface{}
+	truncated := false
 	for rows.Next() {
+		if len(resultRows) >= maxMaterializeRows {
+			// Hard bound: even when ResultLimit=0, the non-streaming path must
+			// not materialize an unbounded result set. Stop reading and mark
+			// truncation so the caller knows the answer was cut short.
+			truncated = true
+			break
+		}
 		if err := rows.Scan(valuePtrs...); err != nil {
 			return QueryResult{Error: err.Error()}
 		}
@@ -491,7 +547,7 @@ func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interfa
 		for i, v := range values {
 			switch val := v.(type) {
 			case []byte:
-				row[i] = string(val)
+				row[i] = blobCell(val)
 			case time.Time:
 				row[i] = val.Format(time.RFC3339)
 			case int64:
@@ -513,6 +569,7 @@ func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interfa
 		Columns:       colInfos,
 		Rows:          resultRows,
 		RowCount:      len(resultRows),
+		Truncated:     truncated,
 		ExecutionTime: elapsed,
 	}
 }
@@ -608,6 +665,10 @@ func queryResultFrom(res *dbcore.QueryResult, err error) QueryResult {
 		Columns:      make([]Column, len(res.Columns)),
 		AffectedRows: res.AffectedRows,
 		LastInsertID: res.LastInsertID,
+		// The kernel's bounded reader stops at DriverMaxRows and flags it:
+		// propagating the flag here is what lets the grid say "the result
+		// was cut" instead of showing a full-looking page.
+		Truncated: res.Truncated,
 	}
 	for i, c := range res.Columns {
 		out.Columns[i] = Column{
@@ -660,6 +721,30 @@ func jsonSafeUint(v uint64) interface{} {
 	return v
 }
 
+// blobCell renders a binary cell for the wire. JSON strings cannot carry
+// invalid UTF-8: encoding/json replaces every bad byte with U+FFFD, so raw
+// binary arrived as mojibake and a copy/edit round-tripped the corruption.
+// Valid-UTF-8 bytes (a TEXT column the driver handed over as []byte) stay
+// text; anything else renders as a hex preview prefixed `\x` — display and
+// copy stay faithful, and the prefix keeps the value from being mistaken for
+// (and saved back as) text. Shared with the streaming and preview paths.
+func blobCell(b []byte) string {
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	const hexPreview = 64
+	const prefix = `\x`
+	n := len(b)
+	if n > hexPreview {
+		n = hexPreview
+	}
+	out := prefix + hex.EncodeToString(b[:n])
+	if len(b) > hexPreview {
+		out += fmt.Sprintf("…(%d bytes)", len(b))
+	}
+	return out
+}
+
 func cellValue(v dbcore.Value) interface{} {
 	switch v.Kind {
 	case dbcore.ValInt:
@@ -669,7 +754,7 @@ func cellValue(v dbcore.Value) interface{} {
 	case dbcore.ValText:
 		return v.S
 	case dbcore.ValBlob:
-		return string(v.B)
+		return blobCell(v.B)
 	case dbcore.ValBool:
 		return v.Bool
 	case dbcore.ValTime:

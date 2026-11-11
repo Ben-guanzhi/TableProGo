@@ -121,3 +121,34 @@ func TestDisconnectAllRoute(t *testing.T) {
 		t.Fatalf("second disconnect-all: %d", rec.Code)
 	}
 }
+
+// Disconnect must publish a fresh handle rather than nilling DB/KV on the
+// shared *Connection: readers that already fetched the object keep reading
+// fields nobody writes after teardown, which is the connection lock
+// discipline's core requirement. This test pins both halves - the entry
+// survives with a nil DB, and the old object is not the one in the map.
+func TestDisconnectSwapsHandleWithoutMutatingInPlace(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	old := app.connections["c1"]
+	if _, err := old.DB.Exec(`SELECT 1`); err != nil {
+		t.Fatalf("connection not live: %v", err)
+	}
+	if err := app.Disconnect("c1"); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	if got := app.connections["c1"]; got == old {
+		t.Fatal("Disconnect mutated the shared *Connection in place; it must publish a fresh handle")
+	}
+	if got := app.connections["c1"]; got.DB != nil || got.KV != nil {
+		t.Fatal("the surviving handle still holds a live driver")
+	}
+	// The old object is immutable now: its DB points at a closed pool, so an
+	// in-flight reader gets an error instead of racing the teardown.
+	if _, err := old.DB.Exec(`SELECT 1`); err == nil {
+		t.Fatal("the old handle still answered a statement after disconnect")
+	}
+	// Identity survives the swap so the sidebar still renders the connection.
+	if got := app.connections["c1"]; got.Name != "safe" || got.Type != "sqlite" {
+		t.Fatalf("handle identity lost: name=%q type=%q", got.Name, got.Type)
+	}
+}

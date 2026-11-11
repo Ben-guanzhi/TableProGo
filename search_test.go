@@ -27,6 +27,7 @@ func searchApp(conns ...*Connection) *App {
 	a := &App{savedConnections: []ConnectionConfig{}}
 	a.connections = map[string]*Connection{}
 	for _, conn := range conns {
+		conn.connected = true
 		a.connections[conn.ID] = conn
 	}
 	return a

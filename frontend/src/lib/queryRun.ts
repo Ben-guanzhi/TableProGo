@@ -52,6 +52,11 @@ export async function runGuarded(
 // immediately. A Safe Mode pause arrives as an error event with nothing
 // executed; it is confirmed here and re-sent through the buffered confirmed
 // endpoint.
+//
+// cancel (optional AbortSignal) aborts the browser side of the stream: the
+// server-side statement is stopped through /api/cancel-query as before, and
+// this signal ends the fetch/reader immediately instead of draining whatever
+// the server still pushes afterwards.
 export async function runStreamed(
   connId: string,
   sql: string,
@@ -63,6 +68,7 @@ export async function runStreamed(
   tabId = '',
   txActive = false,
   confirm: (message: string) => boolean | Promise<boolean> = () => false,
+  cancel?: AbortSignal,
 ): Promise<QueryResult> {
   let columns: Column[] = [];
   let rows: any[][] = [];
@@ -97,9 +103,18 @@ export async function runStreamed(
         onPartial(partial());
       },
       onRows: batch => {
-        rows = rows.concat(batch);
-        onPartial(partial());
+        // Push, not concat: concat creates a new array each batch (O(n) per
+        // batch, O(n²) total). For a 100k-row result this is 500 × 100k =
+        // 50M element copies. Push is O(1) amortized per row.
+        rows.push(...batch);
+        // Defer the caller's callback so the reader loop never blocks on
+        // DOM/React work: if onPartial is slow, the browser's receive buffer
+        // grows while the reader.read() loop is stuck. queueMicrotask runs
+        // after the current event handler, giving the caller a chance to
+        // process without delaying the next reader.read().
+        queueMicrotask(() => onPartial(partial()));
       },
+      signal: cancel,
     },
     // The run registers under this tab's id: /api/cancel-query with a tabId
     // stops exactly this statement, not a neighbouring tab's.
@@ -107,9 +122,21 @@ export async function runStreamed(
   );
   if (done.type === 'error' && done.needsConfirmation) {
     const paused: QueryResult = { ...emptyResult(), error: done.error, needsConfirmation: true };
+    // The confirmed re-send must stay on the path the original statement was
+    // going to take: the streaming endpoint paused a statement that may belong
+    // to the tab's transaction (stream.go routes a write through
+    // ExecuteQueryInTab when the tab holds one). Re-sending through the
+    // connection-scoped /api/execute-confirmed ran it in autocommit — the user
+    // confirmed a write they believed was governed by their transaction, and
+    // rollback could no longer undo it. The tab-scoped confirmed variant keeps
+    // the transaction governing it; a background run (no tabId) has nothing to
+    // escape and keeps the connection-scoped route.
     const answer = confirmThenRun(
       paused,
-      async () => (await ExecuteQueryConfirmed(connId, sql, database)) as unknown as QueryResult,
+      tabId
+        ? async () =>
+            (await ExecuteQueryInTabConfirmed(connId, tabId, sql, database)) as unknown as QueryResult
+        : async () => (await ExecuteQueryConfirmed(connId, sql, database)) as unknown as QueryResult,
       confirm,
     );
     return await answer;

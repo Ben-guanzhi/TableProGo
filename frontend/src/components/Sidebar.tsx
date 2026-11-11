@@ -226,7 +226,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   // catalog calls and owns the loading/error state around them.
   const loaders: Loaders = {
     databases: connId => GetDatabases(connId),
-    schemas: (connId, database) => GetSchemas(connId, database),
+    // `?? []` on every catalog answer: a Go nil slice encodes as JSON null,
+    // and the tree loader reads `.length` on the raw result. Tables and
+    // columns already normalized; schemas joins them so a missing schema
+    // layer (mysql/sqlite/oracle) degrades to "list tables directly" instead
+    // of throwing on the branch expand.
+    schemas: async (connId, database) => ((await GetSchemas(connId, database)) ?? []),
     tables: async (connId, database, schema) =>
       ((await GetTables(connId, database, schema)) ?? []) as unknown as { name: string; type: string }[],
     columns: async (connId, database, schema, table) =>

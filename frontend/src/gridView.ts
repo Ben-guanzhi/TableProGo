@@ -64,30 +64,90 @@ interface CellKey {
 
 // Exact-decimal cells arrive as their digit TEXT (a JSON number would round
 // them through float64 — the loss ValDecimal exists to prevent). The result's
-// column metadata says which columns are decimal; on those, parse the text as
-// a number for ORDERING only — the cell still displays and copies verbatim,
-// and the parse is allowed to be off by an ULP because sort order is all it
-// feeds. Without the flag, a text column's "9" keeps beating "100" lexically,
-// which is correct there and wrong here.
-const decimalNum = (value: any): number | null => {
-  if (typeof value === 'number') return value;
-  if (typeof value !== 'string' || !/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(value.trim())) {
-    return null;
+// column metadata says which columns are decimal; on those the cellKey keeps
+// small values as numbers and big ones as their exact digit text, and the
+// comparator below orders either form exactly. Number() alone is not good
+// enough: a double's 53-bit mantissa samples a DECIMAL(38) at ~15 significant
+// digits, so two distinct 38-digit values collapse to the same number and sort
+// as equal — the "off by an ULP" comment the old parse carried is true for
+// DECIMAL(18,2) and false at the precision the ValDecimal path exists to carry.
+
+// What a sort needs from a cell, in the form worth computing once per row: two
+// numbers compare as numbers, anything else as text, so both are kept. NULL is
+// flagged rather than left as the empty string cellText gives it. A numeric
+// cell whose digit text is too big for a double keeps that text in decText —
+// the exact comparator takes over whenever either side carries one.
+interface CellKey {
+  isNull: boolean;
+  num: number | null;
+  decText: string | null;
+  text: string;
+}
+
+const DECIMAL_SHAPE = /^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/;
+
+const cellKey = (value: any, numeric?: boolean): CellKey => {
+  let decText: string | null = null;
+  let num: number | null = null;
+  if (typeof value === 'number') {
+    num = value;
+  } else if (numeric && typeof value === 'string') {
+    const t = value.trim();
+    if (DECIMAL_SHAPE.test(t)) {
+      const n = Number(t);
+      if (Number.isFinite(n) && Math.abs(n) < Number.MAX_SAFE_INTEGER) {
+        num = n;
+      } else {
+        decText = t; // exact tail: too big for a double, compared as digits
+      }
+    }
   }
-  const n = Number(value);
-  return Number.isNaN(n) ? null : n;
+  return { isNull: isNullValue(value), num, decText, text: cellText(value) };
 };
 
-const cellKey = (value: any, numeric?: boolean): CellKey => ({
-  isNull: isNullValue(value),
-  num: typeof value === 'number' ? value : numeric ? decimalNum(value) : null,
-  text: cellText(value),
-});
+// The exact comparator for decimal digit texts. Both sides have already passed
+// the shape test (or came from a number, spelled back out): possibly signed,
+// possibly with a fraction. Normal form compares VALUE, not spelling — leading
+// zeros in the integer part and trailing zeros in the fraction fold away
+// ("012.50" and "12.5" tie) — then same-sign comparison takes the longer
+// integer part first, then the lexically greater digit string, then the
+// fraction. Exact at any precision, no BigInt — every value stays a string.
+const compareDecimalText = (a: string, b: string): number => {
+  const parse = (s: string): { neg: boolean; int: string; frac: string } => {
+    const body = s.trim();
+    const neg = body.startsWith('-');
+    const unsigned = body.replace(/^[+-]/, '');
+    const [i, f = ''] = unsigned.split('.');
+    return {
+      neg,
+      int: i.replace(/^0+(?=\d)/, ''),
+      frac: f.replace(/0+$/, ''),
+    };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  if (pa.neg !== pb.neg) return pa.neg ? -1 : 1;
+  const mag = (x: { int: string; frac: string }, y: { int: string; frac: string }): number => {
+    if (x.int.length !== y.int.length) return x.int.length - y.int.length;
+    if (x.int !== y.int) return x.int < y.int ? -1 : 1;
+    return x.frac < y.frac ? -1 : x.frac > y.frac ? 1 : 0;
+  };
+  const cmp = mag(pa, pb);
+  return pa.neg ? -cmp : cmp;
+};
 
 const compareKeys = (a: CellKey, b: CellKey, dir: number): number => {
   if (a.isNull || b.isNull) {
     if (a.isNull && b.isNull) return 0;
     return a.isNull ? 1 : -1;
+  }
+  // Either side exact ⇒ compare exactly. Mixed magnitudes (one inside the
+  // double range, one beyond) compare correctly too: the exact parser takes
+  // the number spelled back out as digits.
+  if (a.decText !== null || b.decText !== null) {
+    const sa = a.decText ?? String(a.num);
+    const sb = b.decText ?? String(b.num);
+    return dir * compareDecimalText(sa, sb);
   }
   if (a.num !== null && b.num !== null) return dir * (a.num - b.num);
   return dir * a.text.localeCompare(b.text);

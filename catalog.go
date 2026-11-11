@@ -225,8 +225,12 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 	}
 	if query == "" {
 		// mysql uses the database as its schema, sqlite has a single main schema,
-		// oracle is introspected through the connected user.
-		return nil, nil
+		// oracle is introspected through the connected user. An empty slice, not
+		// nil: Go encodes a nil slice as JSON null, and the tree loader reads
+		// `.length` on the answer — a null would throw and leave the branch
+		// permanently unloadable (the frontend's `?? []` covered tables and
+		// columns but missed this one).
+		return []string{}, nil
 	}
 	if conn.Type == "sqlserver" {
 		db = conn.DB
@@ -242,7 +246,7 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 	}
 	defer rows.Close()
 
-	var schemas []string
+	schemas := []string{}
 	for rows.Next() {
 		var name string
 		if err := rows.Scan(&name); err != nil {

@@ -263,7 +263,10 @@ func (a *App) ApplySync(req ApplySyncRequest) (ApplySyncResult, error) {
 }
 
 // storeComparePlan files a plan under a fresh id so the apply step can refer to
-// it without the client carrying SQL.
+// it without the client carrying SQL. The id is a monotonic counter, not
+// time.Now().UnixNano(): on Windows the clock resolution is coarse enough that
+// back-to-back calls return the same value, and the later plan would silently
+// overwrite the earlier one.
 func (a *App) storeComparePlan(target CompareTarget, kind, schema string, statements []schemadiff.Statement) string {
 	a.compareMu.Lock()
 	defer a.compareMu.Unlock()
@@ -278,13 +281,35 @@ func (a *App) storeComparePlan(target CompareTarget, kind, schema string, statem
 				oldest, oldestAt = id, p.createdAt
 			}
 		}
+		oldestPlan := a.comparePlans[oldest]
 		delete(a.comparePlans, oldest)
+		// The evicted plan's memory becomes unreachable; hand it to the
+		// reclaimer so idle GC can collect it.
+		if a.reclaimer != nil {
+			a.reclaimer.SetActive(oldestPlan, false, 0, true)
+			a.reclaimer.Release(comparePlanBytes(oldestPlan))
+		}
 	}
-	id := fmt.Sprintf("plan-%d", time.Now().UnixNano())
-	a.comparePlans[id] = &comparePlan{
+	a.planSeq++
+	id := fmt.Sprintf("plan-%d", a.planSeq)
+	plan := &comparePlan{
 		target: target, kind: kind, schema: schema, statements: statements, createdAt: time.Now(),
 	}
+	a.comparePlans[id] = plan
+	if a.reclaimer != nil {
+		a.reclaimer.SetActive(plan, true, comparePlanBytes(plan), true)
+	}
 	return id
+}
+
+// comparePlanBytes estimates the plan's memory footprint: statements dominate
+// (each is a SQL string of a few hundred bytes), plus the plan's metadata.
+func comparePlanBytes(p *comparePlan) int64 {
+	est := int64(len(p.statements) * 512)
+	if est < 0 {
+		est = 0
+	}
+	return est
 }
 
 func (a *App) loadComparePlan(id string) (*comparePlan, bool) {

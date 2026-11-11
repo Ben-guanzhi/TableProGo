@@ -105,6 +105,22 @@ func (a *App) buildStructureEdits(req StructureEditRequest) (StructureEditResult
 			return res, fmt.Errorf("列 %s 重复出现", name)
 		}
 		kept[key] = true
+		// The type and default are free-text form fields rendered straight into
+		// DDL the editor then EXECUTES: a separator inside either (`int; DROP
+		// TABLE users;--`) would run a second statement server-side. Validate
+		// before rendering, and refuse instead of smuggling SQL through.
+		if err := ddl.ValidateColumnType(dbType, want.Type); err != nil {
+			return res, fmt.Errorf("第 %d 行的列类型不合法：%w", i+1, err)
+		}
+		if err := ddl.ValidateDefault(want.DefaultValue); err != nil {
+			return res, fmt.Errorf("第 %d 行的列默认值不合法：%w", i+1, err)
+		}
+		// A name the engine cannot quote would land in the statement bare via
+		// the reading-aid fallback (a newline inside a column name), which is a
+		// second injection vector. Refuse it here, where the statement runs.
+		if _, err := ddl.ValidatedIdent(dbType, name); err != nil {
+			return res, fmt.Errorf("第 %d 行的列名不合法：%w", i+1, err)
+		}
 		before, exists := currentByName[key]
 		if !exists {
 			col := ddl.Column{Name: name, Type: want.Type, Nullable: want.Nullable, DefaultValue: want.DefaultValue}

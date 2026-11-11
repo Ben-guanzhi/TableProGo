@@ -244,6 +244,64 @@ func TestQueryRefusesWrites(t *testing.T) {
 	}
 }
 
+// A multi-statement string cannot be classified by its first keyword:
+// `SELECT 1; DROP TABLE x` starts with SELECT, so the first-keyword check
+// alone would call it a read and hand the whole batch to the driver — engines
+// that accept multi-statement strings (go-mssqldb batch, PG simple protocol)
+// would run the write half. Both tools refuse the batch outright; each call
+// carries exactly one statement.
+func TestMultiStatementBatchesAreRefused(t *testing.T) {
+	s, cat := newTestServer(Options{Level: ReadWrite, Confirm: func(string, string) bool { return true }})
+	// The read-leading batch must not reach the database even though the
+	// first keyword is SELECT.
+	text, isErr := callResult(t, s, "query", map[string]interface{}{
+		"connection": "c1",
+		"sql":        "SELECT 1; DROP TABLE orders",
+	})
+	if !isErr || !strings.Contains(text, "只接受一条语句") {
+		t.Fatalf("query must refuse a batch: text=%q isErr=%v", text, isErr)
+	}
+	if len(cat.queries) != 0 {
+		t.Fatalf("the batch reached the database: %v", cat.queries)
+	}
+	// The execute tool refuses too — write-leading and read-leading alike.
+	for _, sql := range []string{"DROP TABLE orders; DROP TABLE users", "SELECT 1; SELECT 2"} {
+		text, isErr = callResult(t, s, "execute", map[string]interface{}{
+			"connection": "c1", "sql": sql,
+		})
+		if !isErr || !strings.Contains(text, "只接受一条语句") {
+			t.Fatalf("execute must refuse the batch %q: text=%q", sql, text)
+		}
+	}
+	if len(cat.queries) != 0 {
+		t.Fatalf("batches reached the database: %v", cat.queries)
+	}
+}
+
+// A ';' inside a string literal, a comment or a dollar quote is not a statement
+// boundary: those reads must still pass.
+func TestSemicolonsInsideLiteralsAndCommentsAreNotBoundaries(t *testing.T) {
+	s, cat := newTestServer(Options{})
+	for _, sql := range []string{
+		"SELECT 'a;b' FROM orders",
+		"SELECT \"x;y\" FROM orders",
+		"SELECT `a;b` FROM orders",   // backtick identifier (MySQL)
+		"SELECT 1 -- a; comment",     // line comment
+		"SELECT 1 /* a; comment */",  // block comment
+		`SELECT $tag$;body;$tag$`,    // PG dollar quote
+		"SELECT 'it''s;fine' FROM t", // doubled quote inside the literal
+	} {
+		if _, isErr := callResult(t, s, "query", map[string]interface{}{
+			"connection": "c1", "sql": sql,
+		}); isErr {
+			t.Fatalf("single statement with an embedded ';' must pass: %q", sql)
+		}
+	}
+	if len(cat.queries) != 7 {
+		t.Fatalf("queries = %v", cat.queries)
+	}
+}
+
 func TestQueryPassesTheRowLimit(t *testing.T) {
 	s, cat := newTestServer(Options{MaxRows: 77})
 	if _, isErr := callResult(t, s, "query", map[string]interface{}{

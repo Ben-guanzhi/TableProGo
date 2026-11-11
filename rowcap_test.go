@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -52,6 +53,65 @@ func TestRowCapProbesForMoreRows(t *testing.T) {
 	}
 }
 
+// A leading comment used to defeat the row cap: the cap's SELECT prefix test
+// ran before the comment was stripped, so the statement ran uncapped while
+// IsReadQuery — which strips trivia first — routed the same statement into the
+// capped branch. The user's configured ResultLimit silently never applied.
+func TestRowCapAppliesWithLeadingComments(t *testing.T) {
+	conn := sqliteDB(t, "conn_cap_comment", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE many (id integer primary key)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO many (id) VALUES (1),(2),(3),(4),(5),(6),(7),(8)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	a := searchApp(conn)
+	a.settings.ResultLimit = 3
+
+	shapes := []struct {
+		name string
+		sql  string
+	}{
+		{"plain", "SELECT id FROM many"},
+		{"line-comment", "-- note\nSELECT id FROM many"},
+		{"block-comment", "/* hint */ SELECT id FROM many"},
+		{"oracle-hint", "/*+ MAX_EXECUTION_TIME(1000) */ SELECT id FROM many"},
+	}
+	for _, s := range shapes {
+		res := a.ExecuteQuery(conn.ID, s.sql, conn.Database)
+		if res.Error != "" {
+			t.Fatalf("%s: %v", s.name, res.Error)
+		}
+		if len(res.Rows) != 3 || !res.Truncated {
+			t.Errorf("%s: got %d rows, truncated %v; want 3 rows and truncated=true",
+				s.name, len(res.Rows), res.Truncated)
+		}
+	}
+}
+
+// A CTE's own LIMIT caps the CTE, not the rows the caller sees, so the outer
+// statement still needs the cap.
+func TestRowCapAppliesAcrossCteLimit(t *testing.T) {
+	conn := sqliteDB(t, "conn_cap_cte", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE many (id integer primary key)`); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO many (id) VALUES (1),(2),(3),(4),(5)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	a := searchApp(conn)
+	a.settings.ResultLimit = 2
+
+	res := a.ExecuteQuery(conn.ID, "WITH c AS (SELECT id FROM many LIMIT 10) SELECT id FROM c", conn.Database)
+	if res.Error != "" {
+		t.Fatalf("query: %v", res.Error)
+	}
+	if len(res.Rows) != 2 || !res.Truncated {
+		t.Errorf("a CTE-internal LIMIT must not suppress the outer cap: got %d rows, truncated %v",
+			len(res.Rows), res.Truncated)
+	}
+}
+
 // A CTE reads rows too. It used to fail the statement classifier and run as a
 // command, which executed it and threw the result away: the grid stayed empty
 // with no error to explain it. WITH takes the capped-select path now.
@@ -85,5 +145,33 @@ func TestCteRunsThroughTheSelectPath(t *testing.T) {
 	// grid may write is only recognised for a plain SELECT ... FROM.
 	if ref := parseQuerySource(conn.ID, cte, conn.Database); ref.Table != "" {
 		t.Errorf("must not map rows read through a CTE back to a table: %+v", ref)
+	}
+}
+
+// When ResultLimit=0 (explicitly no limit), the non-streaming execute path must
+// still bound materialized rows: a SELECT * on a huge table would otherwise OOM
+// the client. The hard cap is maxMaterializeRows; exceeding it stops reading
+// and marks Truncated.
+func TestRunSelectCtxHardBoundsMaterialization(t *testing.T) {
+	conn := sqliteDB(t, "conn_hardbound", "scratch")
+	a := searchApp(conn)
+	a.settings.ResultLimit = 0 // explicitly no limit
+
+	// A recursive CTE generates maxMaterializeRows+1 rows: one more than the
+	// hard bound, so the path must truncate.
+	const n = maxMaterializeRows + 1
+	cte := fmt.Sprintf(
+		"WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x < %d) SELECT x FROM seq",
+		n,
+	)
+	result := a.ExecuteQuery(conn.ID, cte, conn.Database)
+	if result.Error != "" {
+		t.Fatalf("cte: %s", result.Error)
+	}
+	if len(result.Rows) != maxMaterializeRows {
+		t.Errorf("got %d rows, want maxMaterializeRows=%d", len(result.Rows), maxMaterializeRows)
+	}
+	if !result.Truncated {
+		t.Error("the result must be marked Truncated when the hard bound is hit")
 	}
 }

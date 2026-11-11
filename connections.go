@@ -46,6 +46,13 @@ type Connection struct {
 	KV     dbcore.KVDriver  `json:"-"`
 	Config ConnectionConfig `json:"-"`
 
+	// connected is set when Connect stores the connection in the map and
+	// cleared when Disconnect replaces it with a disconnectedHandle. It
+	// distinguishes a live connection from a handle that only carries the
+	// saved config, so isConnected does not report a plugin engine as live
+	// just because its type is still registered after the child was torn down.
+	connected bool
+
 	// tunnel is non-nil when the connection is routed through an SSH jump host;
 	// dialHost/dialPort then point at its loopback listener.
 	tunnel    *sshTunnel `json:"-"`
@@ -70,12 +77,31 @@ type Connection struct {
 	plugin       dbcore.SQLDriver
 	pluginConn   *plugindriver.ConnDriver
 	pluginConnID string
+	// pluginPath is the executable path of the plugin process this connection
+	// uses, so closePlugin can release the shared-host reference by key.
+	pluginPath string
+	// pluginKind is the engine the plugin process serves; together with
+	// pluginPath it forms the registry key (hostKey). closePlugin needs it to
+	// release the exact entry acquireHost used.
+	pluginKind string
+
+	// keepaliveStop signals the keepalive goroutine to stop. Nil means no
+	// goroutine is running. The keepalive pings the server periodically so
+	// half-open sockets are detected before the next statement would fail.
+	keepaliveStop chan struct{}
 
 	// pools caches one *sql.DB per database (internal/pool); poolsOnce builds it
 	// on first use so a connection that never browses another database pays
-	// nothing.
-	poolsOnce sync.Once
-	pools     *pool.Set
+	// nothing. poolsMu serializes creation (ensurePools, called from query
+	// paths outside connectionsMu) against teardown (closePools, called under
+	// connectionsMu), so the field is never written and read concurrently.
+	// poolsClosed is set by closePools; poolSet then returns nil so a stale
+	// reader that still holds the *Connection cannot re-open a pool on a
+	// connection the user just disconnected.
+	poolsMu     sync.Mutex
+	poolsOnce   sync.Once
+	pools       *pool.Set
+	poolsClosed bool
 
 	// catalog caches this connection's whole object list for quick-open,
 	// rebuilt only when App.catalogVersion moves past its generation
@@ -93,6 +119,10 @@ type ConnectionConfig struct {
 	Password string `json:"password"`
 	Database string `json:"database"`
 	SSLMode  string `json:"sslMode"`
+	// IsolationLevel optionally sets the transaction isolation level for this
+	// connection's transactions (read_uncommitted/read_committed/
+	// repeatable_read/serializable/""). Empty means the engine's default.
+	IsolationLevel string `json:"isolationLevel,omitempty"`
 	// Group labels the sidebar section the connection renders under (P2-3);
 	// "" is the ungrouped section, so old connection files keep their layout.
 	Group   string            `json:"group,omitempty"`
@@ -232,6 +262,9 @@ func (a *App) GetConnections() []ConnectionConfig {
 		// The SSH password is a credential too: never send it back to the UI.
 		// UpdateConnection restores it when the field comes back blank.
 		clean.SSH.Password = ""
+		// The key passphrase is the third credential in the same struct; it
+		// takes the same route (blanked here, preserved on a blank update).
+		clean.SSH.Passphrase = ""
 		result[i] = clean
 	}
 	return result
@@ -263,6 +296,12 @@ func (a *App) UpdateConnection(config ConnectionConfig) error {
 			if config.SSH.Password == "" {
 				config.SSH.Password = c.SSH.Password
 			}
+			// Blank means "keep the stored one" for the key passphrase too:
+			// GetConnections blanks it, so a dialog save always comes back
+			// empty and overwriting would silently drop the credential.
+			if config.SSH.Passphrase == "" {
+				config.SSH.Passphrase = c.SSH.Passphrase
+			}
 			a.savedConnections[i] = config
 			a.invalidateConnFilterCacheLocked()
 			a.saveToFile()
@@ -273,28 +312,76 @@ func (a *App) UpdateConnection(config ConnectionConfig) error {
 }
 
 func (a *App) DeleteConnection(id string) error {
+	// The teardown runs OUTSIDE the map lock: DB.Close drains the pool set
+	// (up to CloseGrace 30s with a stalled statement in flight) and
+	// closePlugin waits on the plugin process's polite-close window. Holding
+	// connectionsMu through them queued every Connect/Disconnect/list
+	// operation behind one slow disconnect — the same shape the Connect dial
+	// moving outside the lock already fixed. The connection is first evicted
+	// from the map under the lock (so nothing new reaches it), then closed
+	// lock-free.
 	a.connectionsMu.Lock()
-	defer a.connectionsMu.Unlock()
-
+	conn, found := a.connections[id]
+	var index = -1
 	for i, c := range a.savedConnections {
 		if c.ID == id {
-			if conn, ok := a.connections[id]; ok {
-				if conn.DB != nil {
-					conn.DB.Close()
-				}
-				conn.closeKV()
-				conn.closePools()
-				conn.closePlugin()
-				closeTxns(id)
-				conn.tunnel.Close()
-				delete(a.connections, id)
-			}
-			a.savedConnections = append(a.savedConnections[:i], a.savedConnections[i+1:]...)
-			a.saveToFile()
-			return nil
+			index = i
+			break
 		}
 	}
-	return fmt.Errorf("connection not found: %s", id)
+	if index < 0 {
+		a.connectionsMu.Unlock()
+		return fmt.Errorf("connection not found: %s", id)
+	}
+	if found {
+		conn.stopKeepalive()
+		delete(a.connections, id)
+	}
+	a.savedConnections = append(a.savedConnections[:index], a.savedConnections[index+1:]...)
+	a.saveToFile()
+	a.connectionsMu.Unlock()
+
+	if found {
+		conn.closeAllHandles(id)
+	}
+	return nil
+}
+
+// close tears down every live resource of this connection in LIFO order. It is
+// the single inverse of Connect, so the inverse cannot be forgotten at a call
+// site.
+//
+// The on-demand acquisitions (tab transaction managers, per-database pools, the
+// plugin child) are released before the primary DB/KV driver, and a server-side
+// transaction is rolled back BEFORE its driver is closed: a plugin engine's
+// transaction lives in the child process, so rolling back after closePlugin
+// hits a dead driver and leaves the server-side transaction orphaned (TP-02).
+//
+// Callers run it OUTSIDE connectionsMu — it can block on pool drains and the
+// plugin's close window. Eviction from the connections map must happen first
+// (under the lock), so nothing new reaches the connection while this runs;
+// readers that already hold the *Connection see closed handles, which is the
+// same outcome Disconnect's in-place teardown produces.
+func (c *Connection) close(connID string) {
+	c.stopKeepalive()
+	closeTxns(connID)
+	c.closePools()
+	c.closePlugin()
+	if c.DB != nil {
+		if err := c.DB.Close(); err != nil {
+			// The inverse of an acquisition must be loud when it fails: a
+			// silently leaked handle keeps a server connection alive after the
+			// client believes it disconnected (TP-25).
+			log.Printf("close %s: database handle: %v", connID, err)
+		}
+	}
+	c.closeKV()
+	c.tunnel.Close()
+}
+
+// closeAllHandles is the DeleteConnection-facing form of close.
+func (c *Connection) closeAllHandles(connID string) {
+	c.close(connID)
 }
 
 // dialTarget returns the endpoint the drivers should dial: the tunnel's loopback
@@ -432,29 +519,24 @@ func (a *App) Connect(id string) error {
 		}
 	}
 	if !stillWanted {
-		if conn.KV != nil {
-			conn.KV.Close()
-		}
-		if conn.DB != nil {
-			conn.DB.Close()
-		}
-		conn.closePlugin()
-		conn.tunnel.Close()
+		// The connection was deleted while the dial ran: release exactly what
+		// this call acquired. Routing through close() (rather than the partial
+		// list the ghost path used to spell out) means the pools and the tab
+		// transactions are reclaimed here too (TP-03).
+		conn.close(id)
 		a.connectionsMu.Unlock()
 		return nil
 	}
 	if existing, ok := a.connections[id]; ok {
-		if existing.DB != nil {
-			existing.DB.Close()
-		}
-		existing.closeKV()
-		existing.closePools()
-		existing.closePlugin()
-		closeTxns(id)
-		existing.tunnel.Close()
+		existing.close(id)
 	}
 	a.connections[id] = conn
+	conn.connected = true
 	a.currentConnID = id
+	// Start keepalive while the write lock is still held: it snapshots c.DB /
+	// c.KV and writes c.keepaliveStop, both of which must not race a concurrent
+	// Disconnect that tears this connection down under the same lock.
+	conn.startKeepalive()
 	a.connectionsMu.Unlock()
 
 	return nil
@@ -473,22 +555,46 @@ func (a *App) Disconnect(connID string) error {
 	defer a.connectionsMu.Unlock()
 
 	if conn, ok := a.connections[connID]; ok {
-		if conn.DB != nil {
-			conn.DB.Close()
-			conn.DB = nil
-		}
-		conn.closeKV()
-		conn.closePools()
-		conn.closePlugin()
-		// A manager wraps a driver built from the DB just closed; leaving it
-		// registered would make the next statement fail with "database is closed".
-		closeTxns(connID)
-		conn.tunnel.Close()
+		// Release the connection's whole acquisition set in LIFO order via the
+		// single inverse (TP-01): stop the keepalive, roll back the tab
+		// transactions, close the per-database pools, then the plugin child,
+		// then the primary driver and the tunnel.
+		conn.close(connID)
+		// Copy-on-write the handle instead of nilling fields in place. Other
+		// goroutines may still hold this *Connection from an earlier lookup and
+		// read conn.DB/conn.KV under no lock, so the old object must become
+		// immutable. The map entry survives (lookups report "not connected"),
+		// which is the contract DisconnectAll's route test pins.
+		a.connections[connID] = disconnectedHandle(conn)
 	}
 	if a.currentConnID == connID {
 		a.currentConnID = ""
 	}
 	return nil
+}
+
+// disconnectedHandle is the published replacement for a connection whose
+// resources were just closed. It carries the connection's identity and saved
+// config (so the sidebar still renders it and lookups report "not connected")
+// but no live DB/KV/pool/plugin handle. Building a fresh object - rather than
+// nilling fields on the old one - is what makes teardown race-free: readers
+// that already fetched the old *Connection keep reading fields nobody writes
+// after this point.
+func disconnectedHandle(c *Connection) *Connection {
+	return &Connection{
+		ID:       c.ID,
+		Name:     c.Name,
+		Type:     c.Type,
+		Host:     c.Host,
+		Port:     c.Port,
+		Username: c.Username,
+		Password: c.Password,
+		Database: c.Database,
+		SSLMode:  c.SSLMode,
+		Options:  c.Options,
+		SSH:      c.SSH,
+		Config:   c.Config,
+	}
 }
 
 // DisconnectAll closes every open connection. The idle lock calls it (P2-9):
@@ -510,13 +616,19 @@ func (a *App) DisconnectAll() {
 // a database pool, a key/value driver, or an engine served by a registered plugin
 // (plugins.go). The plugin case deliberately checks the registration rather than the
 // running process: the child is started lazily on first use, so requiring a running
-// process here would deadlock the call that would have started it.
+// process here would deadlock the call that would have started it. A plugin engine
+// has no DB/KV handle until the child starts, so the connected flag (set by Connect,
+// cleared by Disconnect's disconnectedHandle) distinguishes a live plugin connection
+// from a handle that only carries the registered type.
 func (c *Connection) isConnected() bool {
 	if c == nil {
 		return false
 	}
 	if c.DB != nil || c.KV != nil {
 		return true
+	}
+	if !c.connected {
+		return false
 	}
 	return pluginConnection(c)
 }
@@ -574,10 +686,16 @@ func (a *App) kvConnection(connID string) (*Connection, error) {
 // open connections, so a fan-out (per-database metadata browse, concurrent
 // grid requests) could open one server-side connection per goroutine.
 // Values mirror the conservative caps the reference desktop clients use.
+// ConnMaxIdleTime reaps connections that sit idle past it: servers kill idle
+// sessions on their own schedule (MySQL wait_timeout, PG idle reaper), and a
+// reaped connection only surfaces as a transport error on the next statement —
+// retiring it client-side first keeps the pool's sessions fresh. It must stay
+// shorter than ConnMaxLifetime or it would never be the binding constraint.
 const (
 	dbMaxOpenConns        = 10
 	dbMaxIdleConns        = 5
 	dbConnMaxLifetime     = 30 * time.Minute
+	dbConnMaxIdleTime     = 5 * time.Minute
 	maxPoolsPerConnection = 32
 )
 
@@ -642,6 +760,15 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 	case "sqlite":
 		driver = "sqlite3"
 		dsn = dbcoresqlite.DSN(spec)
+		// The kernel DSN is the bare file path; mattn/go-sqlite3 (the driver
+		// this binary registers) takes its pragmas as DSN parameters, which
+		// run on EVERY physical connection the pool opens. Exec-ing them once
+		// here only touched the first connection — the pool's secondary
+		// connections kept busy_timeout=0 and concurrent writes failed with
+		// SQLITE_BUSY immediately.
+		if config.Database != "" && config.Database != ":memory:" {
+			dsn += "?_journal_mode=WAL&_busy_timeout=5000&_synchronous=NORMAL"
+		}
 	case "sqlserver":
 		driver = "sqlserver"
 		dsn = dbcoremssql.DSN(spec)
@@ -657,6 +784,15 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 	}
 	db.SetMaxOpenConns(dbMaxOpenConns)
 	db.SetMaxIdleConns(dbMaxIdleConns)
+	// SQLite `:memory:` is per-connection: every pool connection would see its
+	// own separate empty database, so a concurrent query could land on a fresh
+	// handle and observe a table that was just created on another. Pin the pool
+	// to a single connection (polydb's dbsqlite driver does the same).
+	if config.Type == "sqlite" && (config.Database == "" || config.Database == ":memory:") {
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
+	}
 	db.SetConnMaxLifetime(dbConnMaxLifetime)
+	db.SetConnMaxIdleTime(dbConnMaxIdleTime)
 	return db, nil
 }

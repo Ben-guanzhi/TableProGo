@@ -43,6 +43,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
     sslMode: 'false',
     options: {},
     ssh: { ...emptySSH },
+    isolationLevel: '',
   });
 
   const [testing, setTesting] = useState(false);
@@ -66,6 +67,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
         options: initialConfig.options || {},
         ssh: initialConfig.ssh ? { ...emptySSH, ...initialConfig.ssh } : { ...emptySSH },
         databaseFilter: initialConfig.databaseFilter,
+        isolationLevel: initialConfig.isolationLevel ?? '',
       });
     }
   }, [initialConfig]);
@@ -312,6 +314,29 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
                   </>
                 )}
               </select>
+            </div>
+          )}
+
+          {config.type !== 'sqlite' && config.type !== 'redis' && (
+            <div>
+              <label htmlFor="conn-isolation" className="block text-sm text-secondary mb-1">
+                事务隔离级别
+              </label>
+              <select
+                id="conn-isolation"
+                className="w-full px-3 py-2 bg-raised rounded border border-line-strong focus:border-accent focus:outline-none"
+                value={config.isolationLevel ?? ''}
+                onChange={(e) => setConfig({ ...config, isolationLevel: e.target.value })}
+              >
+                <option value="">引擎默认</option>
+                <option value="read_uncommitted">READ UNCOMMITTED</option>
+                <option value="read_committed">READ COMMITTED</option>
+                <option value="repeatable_read">REPEATABLE READ</option>
+                <option value="serializable">SERIALIZABLE</option>
+              </select>
+              <p className="mt-1 text-xs text-secondary">
+                作用于本连接开启的每个事务；留空跟随引擎默认（MySQL REPEATABLE READ、其余 READ COMMITTED）。
+              </p>
             </div>
           )}
 

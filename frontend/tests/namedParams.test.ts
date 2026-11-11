@@ -36,3 +36,30 @@ test('substitution never touches casts or string contents', () => {
 test('an empty value leaves the marker in place', () => {
   assert.equal(substituteParams('a = :x', { x: '' }), 'a = :x');
 });
+
+// MySQL's default sql_mode treats '\' as an escape: a value ending in one
+// would swallow the closing quote and rewrite the statement. The MySQL family
+// doubles the backslash (matching the server's own QuoteLiteral); ANSI engines
+// keep it literal.
+test('backslash doubling follows the engine family', () => {
+  assert.equal(
+    substituteParams("p = :v", { v: 'C:\\logs\\' }, 'mysql'),
+    "p = 'C:\\\\logs\\\\'",
+  );
+  assert.equal(
+    substituteParams("p = :v", { v: 'C:\\logs\\' }, 'mariadb'),
+    "p = 'C:\\\\logs\\\\'",
+  );
+  assert.equal(
+    substituteParams("p = :v", { v: 'C:\\logs\\' }, 'tidb'),
+    "p = 'C:\\\\logs\\\\'",
+  );
+});
+
+test('ANSI engines keep the backslash literal', () => {
+  assert.equal(substituteParams("p = :v", { v: 'C:\\logs\\' }, 'postgresql'), "p = 'C:\\logs\\'");
+  assert.equal(substituteParams("p = :v", { v: 'C:\\logs\\' }, 'sqlite'), "p = 'C:\\logs\\'");
+  assert.equal(substituteParams("p = :v", { v: 'C:\\logs\\' }, 'sqlserver'), "p = 'C:\\logs\\'");
+  // No kind yet (dialog answered before a connection was picked): ANSI.
+  assert.equal(substituteParams("p = :v", { v: 'C:\\logs\\' }), "p = 'C:\\logs\\'");
+});

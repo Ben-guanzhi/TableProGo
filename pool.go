@@ -4,6 +4,7 @@ package main
 // (which databases need a session of their own) and the connection wiring.
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -41,10 +42,20 @@ func (a *App) queryPool(conn *Connection, database string) (*sql.DB, error) {
 
 // perDatabasePool is the connection's pool cache, wired to this app's opener.
 // The opener copies the saved config, swaps the database and dials through the
-// same SSH tunnel the main session uses.
+// same SSH tunnel the main session uses. The dial gate wait runs under the
+// app's context so a shutdown cancels it instead of leaving a goroutine parked
+// on the global gate (TP-11).
 func (a *App) perDatabasePool(conn *Connection, database string) (*sql.DB, error) {
 	conn.ensurePools()
-	db, err := conn.pools.Get(database)
+	set := conn.poolSet()
+	if set == nil {
+		return nil, fmt.Errorf("not connected")
+	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db, err := set.GetContext(ctx, database)
 	if err != nil {
 		return nil, fmt.Errorf("open database %q: %w", database, err)
 	}
@@ -52,8 +63,12 @@ func (a *App) perDatabasePool(conn *Connection, database string) (*sql.DB, error
 }
 
 // ensurePools lazily builds the cache. The opener closes over conn so it always
-// reads the current tunnel endpoint and saved config.
+// reads the current tunnel endpoint and saved config. poolsMu pairs with
+// closePools: creation happens on query paths that do not hold connectionsMu,
+// so teardown and creation must not interleave on the pools field.
 func (c *Connection) ensurePools() {
+	c.poolsMu.Lock()
+	defer c.poolsMu.Unlock()
 	c.poolsOnce.Do(func() {
 		c.pools = pool.New(func(database string) (*sql.DB, error) {
 			config := c.Config
@@ -72,7 +87,22 @@ func (c *Connection) ensurePools() {
 	})
 }
 
+// poolSet returns the connection's pool cache, or nil once it has been closed.
+// It is the only sanctioned way for a query path to reach the cache: the field
+// is written by ensurePools outside connectionsMu, so reads must take poolsMu.
+func (c *Connection) poolSet() *pool.Set {
+	c.poolsMu.Lock()
+	defer c.poolsMu.Unlock()
+	if c.poolsClosed {
+		return nil
+	}
+	return c.pools
+}
+
 func (c *Connection) closePools() {
+	c.poolsMu.Lock()
+	defer c.poolsMu.Unlock()
+	c.poolsClosed = true
 	if c.pools != nil {
 		c.pools.Close()
 	}

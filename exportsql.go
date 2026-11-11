@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/dbcore/dbcore/sqltext"
+	"tablepro-go/internal/changes"
 )
 
 // insertExportMaxRows bounds what one INSERT-script export may render. The grid
@@ -25,7 +28,7 @@ func insertScript(
 	rows [][]interface{},
 ) (string, error) {
 	idents := make([]string, len(resultColumns))
-	colTypes := make([]string, len(resultColumns))
+	numeric := make([]bool, len(resultColumns))
 	seen := make(map[string]bool, len(resultColumns))
 	for i, col := range resultColumns {
 		lower := strings.ToLower(col)
@@ -43,7 +46,10 @@ func insertScript(
 			return "", err
 		}
 		idents[i] = ident
-		colTypes[i] = colType
+		// The numeric verdict is a property of the column, not the cell: fold
+		// the declared type once here instead of once per row per cell (a
+		// 10 000-row export otherwise folds the same five types 50 000 times).
+		numeric[i] = sqltext.TypeIsNumeric(colType)
 	}
 
 	// The head is the same text in every row: it was re-joined per row before,
@@ -65,7 +71,7 @@ func insertScript(
 		}
 		script.WriteString(head)
 		for j, value := range row {
-			literal, err := valueLiteral(dbType, colTypes[j], value)
+			literal, err := changes.NumericColumnLiteral(dbType, numeric[j], value)
 			if err != nil {
 				return "", fmt.Errorf("第 %d 行的 %s：%w", i+1, resultColumns[j], err)
 			}

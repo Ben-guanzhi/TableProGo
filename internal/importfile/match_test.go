@@ -98,8 +98,10 @@ func suggestions(ms []ColumnMap) []string {
 	return out
 }
 
-// The canonical drift: three normalized edits, exactly at the threshold.
-func TestSuggestFuzzyThreeEditDrift(t *testing.T) {
+// The canonical drift: cust_name → customer_name is four normalized edits
+// (insertion 'o', insertion 'r', substitution 's'→'o', deletion of the 'e'
+// before '_'), beyond the threshold of three — so no match is suggested.
+func TestSuggestFuzzyFourEditDrift(t *testing.T) {
 	got := MatchColumns(
 		[]string{"id", "cust_name"},
 		[]string{"id", "customer_name"},

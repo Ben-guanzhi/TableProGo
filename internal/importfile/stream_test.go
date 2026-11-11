@@ -45,6 +45,24 @@ func TestDecodingReaderUTF16BOM(t *testing.T) {
 	}
 }
 
+// UTF-16 without a BOM used to pass the utf8.Valid check (NUL is valid UTF-8)
+// and come back as NUL-separated lines. The NUL density heuristic detects it.
+func TestDecodingReaderUTF16NoBOM(t *testing.T) {
+	utf8CSV := "id,label\n1,ok\n"
+	enc := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM).NewEncoder()
+	utf16, err := enc.Bytes([]byte(utf8CSV))
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	cols, rows, err := ParseCSV(DecodingReader(bytes.NewReader(utf16)), Options{HasHeader: true, Delimiter: ","})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if cols[0] != "id" || len(rows) != 1 || *rows[0][1] != "ok" {
+		t.Fatalf("decoded = %v, %v", cols, rows)
+	}
+}
+
 // CSVStream hands out chunks of StreamChunkSize rows, keeps the header out of
 // the data, and still calls the sink for a header-only file (setup must run).
 func TestCSVStreamChunking(t *testing.T) {

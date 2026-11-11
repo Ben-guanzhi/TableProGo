@@ -17,13 +17,14 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/plugindriver"
 )
 
 // pluginSpec describes how to launch one engine's plugin.
@@ -50,6 +51,7 @@ var plugins = &pluginRegistry{specs: map[string]pluginSpec{}}
 // LoadPlugins reads the environment for plugin declarations. Called once at startup.
 func (r *pluginRegistry) Load() []error {
 	var errs []error
+	declared := map[string]string{}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, kv := range os.Environ() {
@@ -68,6 +70,15 @@ func (r *pluginRegistry) Load() []error {
 			errs = append(errs, fmt.Errorf("plugin for %s: %w", typ, err))
 			continue
 		}
+		// Two declarations for the same engine type used to collide silently,
+		// with the last one winning. Report the conflict instead of picking one
+		// (TP-19): a silent last-wins is how a stale plugin shadows a new one.
+		if first, dup := declared[typ]; dup {
+			errs = append(errs, fmt.Errorf(
+				"plugin for %s declared twice: %q and %q (refusing to pick silently)", typ, first, path))
+			continue
+		}
+		declared[typ] = path
 		r.specs[typ] = pluginSpec{Path: path, Kind: typ}
 	}
 	return errs
@@ -98,27 +109,13 @@ func (r *pluginRegistry) unregister(typ string) {
 	delete(r.specs, typ)
 }
 
-// startPlugin launches the plugin for a connection and keeps it on the Connection.
-// The process lives as long as the connection, so browsing does not pay a launch per
-// keystroke.
+// startPlugin is the connection-scoped entry point for a plugin-backed engine.
+// It routes through startPluginConn, the registry path, so there is exactly one
+// way to acquire a plugin process. The old direct plugindriver.Start here
+// bypassed pluginHosts' reference counting and had no inverse in the registry
+// (TP-17).
 func (c *Connection) startPlugin(spec pluginSpec) (dbcore.SQLDriver, error) {
-	c.pluginMu.Lock()
-	defer c.pluginMu.Unlock()
-	if c.plugin != nil {
-		return c.plugin, nil
-	}
-	drv, err := plugindriver.Start(context.Background(), spec.Path, nil)
-	if err != nil {
-		return nil, err
-	}
-	if string(drv.Kind()) != spec.Kind && spec.Kind != "" {
-		// The banner is authoritative: a plugin that claims a different engine would
-		// have this client render its dialect wrong.
-		_ = drv.Close()
-		return nil, fmt.Errorf("plugin %s speaks %q, but it is registered as %q", spec.Path, drv.Kind(), spec.Kind)
-	}
-	c.plugin = drv
-	return drv, nil
+	return c.startPluginConn(spec)
 }
 
 // pluginDriver returns the connection's plugin driver, starting it on first use.
@@ -129,7 +126,40 @@ func (a *App) pluginDriver(conn *Connection) (dbcore.SQLDriver, error) {
 	if !ok {
 		return nil, fmt.Errorf("%w: no plugin is registered for %q", dbcore.ErrNotSupported, conn.Type)
 	}
-	return conn.startPluginConn(spec)
+	drv, err := conn.startPluginConn(spec)
+	if err != nil {
+		return nil, err
+	}
+	if conn.pluginDead() {
+		// The child died (crash, OOM kill, an external kill). Its driver would
+		// answer every later call with an error and the connection would look
+		// healthy forever, so drop the dead handle and reopen on a fresh
+		// process (TP-15).
+		log.Printf("plugin %s: process died; reopening %s", conn.Type, conn.Name)
+		conn.closePlugin()
+		drv, err = conn.startPluginConn(spec)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return drv, nil
+}
+
+// pluginDead reports whether this connection's plugin process has died since it
+// was opened. It is the lazy-restart probe: the child is shared across
+// connections of one engine, so a dead host is only known by asking it.
+func (c *Connection) pluginDead() bool {
+	c.pluginMu.Lock()
+	defer c.pluginMu.Unlock()
+	if c.pluginConn != nil {
+		return c.pluginConn.Dead()
+	}
+	if c.plugin != nil {
+		if d, ok := c.plugin.(interface{ Dead() bool }); ok {
+			return d.Dead()
+		}
+	}
+	return false
 }
 
 // closePlugin shuts the child process down; called from Disconnect. The
@@ -140,18 +170,82 @@ func (c *Connection) closePlugin() {
 	drv := c.plugin
 	host := c.pluginConn
 	connID := c.pluginConnID
+	pluginPath := c.pluginPath
+	pluginKind := c.pluginKind
 	c.plugin = nil
 	c.pluginConn = nil
 	c.pluginConnID = ""
+	c.pluginPath = ""
+	c.pluginKind = ""
 	c.pluginMu.Unlock()
 	if drv != nil {
-		_ = drv.Close()
+		if err := drv.Close(); err != nil {
+			log.Printf("close plugin %s: driver: %v", pluginPath, err)
+		}
 	}
 	if host != nil {
 		if connID != "" {
-			_ = host.CloseConn(context.Background(), connID)
+			if err := host.CloseConn(context.Background(), connID); err != nil {
+				log.Printf("close plugin %s: connection %s: %v", pluginPath, connID, err)
+			}
 		}
-		_ = host.Close()
+		// Release the host reference: the process is shared across connections
+		// of the same engine via pluginHosts, so it is only closed when the
+		// last connection of that engine goes away.
+		pluginHosts.releaseHost(pluginPath, pluginKind)
+	}
+}
+
+// keepaliveInterval is how often the keepalive goroutine pings the server.
+// 30s is frequent enough to detect half-open sockets before the next statement,
+// but not so frequent that it adds measurable load.
+const keepaliveInterval = 30 * time.Second
+
+// startKeepalive launches a goroutine that pings the server periodically.
+// The driver is snapshotted into locals here: the goroutine outlives the
+// connection's lock, and reads of c.DB/c.KV after that would race the
+// connect/disconnect writes that run under connectionsMu. Keepalive is always
+// stopped before the driver is closed (Connect tears down the replaced
+// connection; Disconnect/Shutdown tear down the live one), so the snapshot is
+// never pinged after Close.
+func (c *Connection) startKeepalive() {
+	db, kv := c.DB, c.KV
+	if db == nil && kv == nil {
+		return
+	}
+	stop := make(chan struct{})
+	c.keepaliveStop = stop
+	go func() {
+		ticker := time.NewTicker(keepaliveInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				var err error
+				if db != nil {
+					err = db.PingContext(ctx)
+				} else if kv != nil {
+					err = kv.Ping(ctx)
+				}
+				cancel()
+				if err != nil {
+					log.Printf("keepalive: connection %q ping failed: %v", c.ID, err)
+				}
+			}
+		}
+	}()
+}
+
+// stopKeepalive signals the keepalive goroutine to stop. Safe to call when no
+// goroutine is running. Callers must hold connectionsMu: the field is written
+// under that lock by startKeepalive.
+func (c *Connection) stopKeepalive() {
+	if c.keepaliveStop != nil {
+		close(c.keepaliveStop)
+		c.keepaliveStop = nil
 	}
 }
 

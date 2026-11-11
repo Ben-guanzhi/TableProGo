@@ -101,13 +101,33 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 			haveBatch = true
 		}
 	}
+	// Foreign keys batch the same way (K-1.2): without it the FK phase stays
+	// one ListForeignKeys per table and the diagram is O(T) round trips no
+	// matter how the columns phase behaves. Unlike the columns batch, an empty
+	// group here is a real state (the table has no foreign keys), not a batch
+	// miss, so group presence — not group contents — decides the fallback.
+	batchFK := make(map[string][]dbcore.ForeignKeyInfo)
+	haveBatchFK := false
+	if bf, ok := dbcore.AsBatchForeignKeys(drv); ok {
+		all, err := bf.BatchForeignKeys(ctx, listSchema)
+		if err != nil {
+			log.Printf("er: batch foreign keys unavailable, falling back per table: %v", err)
+		} else {
+			for _, grp := range all {
+				batchFK[grp.Table] = grp.ForeignKeys
+			}
+			haveBatchFK = true
+		}
+	}
 
 	tables := make([]ERTable, 0, len(found))
 	for _, t := range found {
 		if t.Type == "view" || t.Type == "materialized_view" {
 			continue
 		}
-		erTable, err := erTableOf(ctx, drv, schema, t, batchCols[t.Name], haveBatch)
+		erTable, err := erTableOf(ctx, drv, schema, t,
+			batchCols[t.Name], haveBatch,
+			batchFK[t.Name], haveBatchFK)
 		if err != nil {
 			// One unreadable table (a dropped-in-flight object, a permission
 			// gap) must not throw away the whole diagram — the same discipline
@@ -123,9 +143,10 @@ func (a *App) GetERDiagram(connID, database, schema string) (ERSchema, error) {
 // erTableOf reads one table's columns and foreign keys and projects them onto the
 // diagram model. It reuses the driver already opened for the schema, so the whole
 // diagram is one pool's worth of metadata calls rather than one per table.
-// Columns arrive pre-read when the driver served the whole schema in one batch
-// (colsKnown); otherwise they are read per table here.
-func erTableOf(ctx context.Context, drv dbcore.SQLDriver, schema string, t dbcore.TableInfo, cols []dbcore.ColumnInfo, colsKnown bool) (ERTable, error) {
+// Columns and foreign keys arrive pre-read when the driver served the whole
+// schema in one batch (colsKnown / fksKnown); otherwise they are read per table
+// here.
+func erTableOf(ctx context.Context, drv dbcore.SQLDriver, schema string, t dbcore.TableInfo, cols []dbcore.ColumnInfo, colsKnown bool, fks []dbcore.ForeignKeyInfo, fksKnown bool) (ERTable, error) {
 	if !colsKnown {
 		var err error
 		cols, err = drv.ListColumns(ctx, schema, t.Name)
@@ -143,9 +164,12 @@ func erTableOf(ctx context.Context, drv dbcore.SQLDriver, schema string, t dbcor
 		})
 	}
 
-	fks, err := drv.ListForeignKeys(ctx, schema, t.Name)
-	if err != nil {
-		return ERTable{}, err
+	if !fksKnown {
+		var err error
+		fks, err = drv.ListForeignKeys(ctx, schema, t.Name)
+		if err != nil {
+			return ERTable{}, err
+		}
 	}
 	foreignKeys := make([]ERFK, 0, len(fks))
 	for _, fk := range fks {

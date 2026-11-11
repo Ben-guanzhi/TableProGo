@@ -45,6 +45,8 @@ const ALLOW = new Set([
   'ASC', 'DESC', 'ON DELETE', 'ON UPDATE', 'AUTO_INCREMENT', 'SERIAL',
   'BIGINT', 'VARCHAR', 'TEXT', 'INT', 'BOOLEAN', 'TIMESTAMP', 'DATE', 'TIME',
   'DECIMAL', 'NUMERIC', 'FLOAT', 'DOUBLE', 'JSONB', 'BLOB', 'BYTEA',
+  // SQL standard isolation levels (connection dialog's select options)
+  'READ UNCOMMITTED', 'READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE',
   // Redis commands and key types shown in the UI
   'TTL', 'SADD', 'SREM', 'SMEMBERS', 'XADD', 'XRANGE', 'EXPIREAT', 'TYPE',
   'KEYS', 'SCAN', 'HSET', 'HGET', 'HGETALL', 'LPUSH', 'RPUSH', 'LRANGE',

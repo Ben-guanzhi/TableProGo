@@ -79,6 +79,17 @@ func TestFilterConditionsByDialect(t *testing.T) {
 			filter:  Condition{Column: "note", Op: Contains, Value: "100%_a/"},
 			want:    `"note" LIKE '%100/%/_a//%' ESCAPE '/'`,
 		},
+		{
+			// T-SQL's LIKE has no ESCAPE clause and does not treat the
+			// backslash as an escape, so the "/" escape cannot be used there:
+			// the wildcards are escaped with bracket character classes and the
+			// clause is omitted entirely.
+			name:    "sql server contains uses bracket classes and no ESCAPE",
+			dbType:  "sqlserver",
+			colType: "nvarchar",
+			filter:  Condition{Column: "note", Op: Contains, Value: "100%_a[b"},
+			want:    `[note] LIKE N'%100[%][_]a[[]b%'`,
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

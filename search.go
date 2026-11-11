@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/dbcore/dbcore"
 	fuzzy "github.com/dbcore/dbcore/fuzzy"
@@ -46,6 +47,11 @@ const (
 	searchRankPool = 200
 )
 
+// catalogSnapshotTTL is how long the quick-open snapshot stays valid without
+// a generation bump. Without a TTL, the cache serves stale metadata if the
+// server's schema changes independently of the client's DDL statements.
+const catalogSnapshotTTL = 5 * time.Minute
+
 // catalogLimits are the caps the snapshot honours.
 func (a *App) catalogLimits() catalogsnap.Limits {
 	return catalogsnap.Limits{
@@ -53,11 +59,31 @@ func (a *App) catalogLimits() catalogsnap.Limits {
 		Total:       searchSnapshotCap,
 		Databases:   searchDatabaseCap,
 		Concurrency: searchLoadConcurrency,
+		TTL:         catalogSnapshotTTL,
 	}
 }
 
+// bumpCatalog marks this connection's catalog as possibly changed. Only that
+// connection's quick-open snapshot is invalidated: the cache is per connection,
+// so the generation it compares against must be too (TP-21).
+func (a *App) bumpCatalog(connID string) {
+	a.catalogGenMu.Lock()
+	defer a.catalogGenMu.Unlock()
+	if a.catalogGen == nil {
+		a.catalogGen = map[string]uint64{}
+	}
+	a.catalogGen[connID]++
+}
+
+// generationFor reads one connection's catalog generation.
+func (a *App) generationFor(connID string) uint64 {
+	a.catalogGenMu.Lock()
+	defer a.catalogGenMu.Unlock()
+	return a.catalogGen[connID]
+}
+
 // generation implements catalogsnap.Source.
-func (a *App) Generation() uint64 { return a.catalogVersion.Load() }
+func (a *App) Generation(connID string) uint64 { return a.generationFor(connID) }
 
 // Databases implements catalogsnap.Source.
 func (a *App) Databases(connID string) ([]string, error) { return a.GetDatabases(connID) }

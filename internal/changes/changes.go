@@ -62,6 +62,13 @@ type ChangeSet struct {
 // text keeps its digits (ExactNumberLiteral), because a double cannot hold it
 // past 2^53 and cannot name a DECIMAL's twentieth digit at all.
 func ValueLiteral(dbType, colType string, value interface{}) (string, error) {
+	return NumericColumnLiteral(dbType, sqltext.TypeIsNumeric(colType), value)
+}
+
+// NumericColumnLiteral is ValueLiteral with the numeric-column verdict hoisted: a caller
+// rendering many cells of one column (an export asks the same type once per
+// row) precomputes the flag once and drops the per-cell type fold.
+func NumericColumnLiteral(dbType string, numeric bool, value interface{}) (string, error) {
 	switch v := value.(type) {
 	case nil:
 		return "NULL", nil
@@ -96,7 +103,7 @@ func ValueLiteral(dbType, colType string, value interface{}) (string, error) {
 	case uint64:
 		return strconv.FormatUint(v, 10), nil
 	case string:
-		if isNumericColumn(colType) {
+		if numeric {
 			trimmed := strings.TrimSpace(v)
 			if trimmed == "" {
 				return "NULL", nil
@@ -106,7 +113,7 @@ func ValueLiteral(dbType, colType string, value interface{}) (string, error) {
 			}
 			number, err := strconv.ParseFloat(trimmed, 64)
 			if err != nil {
-				return "", fmt.Errorf("%q is not a valid %s", v, colType)
+				return "", fmt.Errorf("%q is not a valid number", v)
 			}
 			return NumberLiteral(number), nil
 		}
@@ -132,7 +139,7 @@ func Predicate(dbType, colType, quotedColumn string, value interface{}) (string,
 }
 
 func isNumericColumn(colType string) bool {
-	return sqltext.NewColumnType(colType).IsNumeric()
+	return sqltext.TypeIsNumeric(colType)
 }
 
 // NumberLiteral renders a float as a plain number (no scientific notation),
@@ -217,7 +224,12 @@ func newContext(dbType, name string, resultColumns, keyColumns []string, types m
 		positions: make(map[string]int, len(resultColumns)),
 	}
 	for i, col := range resultColumns {
-		c.positions[strings.ToLower(col)] = i
+		folded := strings.ToLower(col)
+		if _, exists := c.positions[folded]; exists {
+			return nil, fmt.Errorf("the result has two columns whose names fold to %q (%s); "+
+				"editing is ambiguous", folded, col)
+		}
+		c.positions[folded] = i
 	}
 	// A table with no key is still usable here: only the statements that locate
 	// an existing row by key need one, and an insert does not.

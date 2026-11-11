@@ -53,6 +53,72 @@ func TestStructureEditBuildsStatements(t *testing.T) {
 	}
 }
 
+// The structure editor renders free-text type/default fields straight into DDL
+// it then EXECUTES: a separator inside either would run a second statement
+// server-side. The preview must refuse, not smuggle SQL through.
+func TestStructureEditRefusesStatementInjection(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	seedParts(t, app.connections["c1"])
+
+	// Type carrying a statement separator.
+	res, err := app.PreviewStructureEdit(StructureEditRequest{
+		ConnID: "c1", Table: "parts",
+		Columns: []ColumnEdit{
+			{Name: "id", Type: "INTEGER", Nullable: true},
+			{Name: "name", Type: "TEXT", DefaultValue: "'x'"},
+			{Name: "note", Type: "int; DROP TABLE users;--", Nullable: true, IsNew: true},
+		},
+	})
+	if err == nil {
+		t.Fatalf("an injected type must be refused, got %v", res.Statements)
+	}
+	for _, st := range res.Statements {
+		if strings.Contains(st, "DROP TABLE") {
+			t.Fatalf("injected statement leaked into the plan: %v", res.Statements)
+		}
+	}
+
+	// Default carrying a separator.
+	res, err = app.PreviewStructureEdit(StructureEditRequest{
+		ConnID: "c1", Table: "parts",
+		Columns: []ColumnEdit{
+			{Name: "id", Type: "INTEGER", Nullable: true},
+			{Name: "name", Type: "TEXT", DefaultValue: "'x'"},
+			{Name: "note", Type: "TEXT", DefaultValue: "1); DROP TABLE users;--", Nullable: true, IsNew: true},
+		},
+	})
+	if err == nil {
+		t.Fatalf("an injected default must be refused, got %v", res.Statements)
+	}
+
+	// A column name the engine cannot quote (newline) would land bare via the
+	// reading-aid fallback.
+	res, err = app.PreviewStructureEdit(StructureEditRequest{
+		ConnID: "c1", Table: "parts",
+		Columns: []ColumnEdit{
+			{Name: "id", Type: "INTEGER", Nullable: true},
+			{Name: "name", Type: "TEXT", DefaultValue: "'x'"},
+			{Name: "a\nint; DROP TABLE users;--", Type: "TEXT", Nullable: true, IsNew: true},
+		},
+	})
+	if err == nil {
+		t.Fatalf("an unquotable column name must be refused, got %v", res.Statements)
+	}
+
+	// Legitimate types still pass: the validation must not over-reach.
+	res, err = app.PreviewStructureEdit(StructureEditRequest{
+		ConnID: "c1", Table: "parts",
+		Columns: []ColumnEdit{
+			{Name: "id", Type: "INTEGER", Nullable: true},
+			{Name: "name", Type: "TEXT", DefaultValue: "'x'"},
+			{Name: "score", Type: "DECIMAL(10,2)", Nullable: true, DefaultValue: "0", IsNew: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("a legitimate parameterized type must pass: %v", err)
+	}
+}
+
 // SQLite cannot ALTER a column: the edit comes back as a warning, never as a
 // fake statement.
 func TestStructureEditWarnsOnUnsupportedAlter(t *testing.T) {

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +94,52 @@ func TestStreamOwnLimitRunsUntouched(t *testing.T) {
 	}
 	if rows != 8 {
 		t.Fatalf("streamed %d rows, want 8", rows)
+	}
+}
+
+// ResultLimit=0 means "no cap" to the user, but the buffered path still stops
+// materializing at maxMaterializeRows. The stream path used to read and ship the
+// whole result set — the cap condition was gated on limit > 0 — so this pins the
+// hard bound.
+func TestStreamZeroLimitHardBound(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	app.settings.ResultLimit = 0 // explicit no-limit
+
+	const n = maxMaterializeRows + 5
+	cte := "WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x<" + strconv.Itoa(n) + ") SELECT x FROM seq"
+	events := collectStream(t, app, cte)
+	done := events[len(events)-1]
+	if done.Type != "done" || done.RowCount != maxMaterializeRows || !done.Truncated {
+		t.Fatalf("done = %+v, want rowCount=%d truncated", done, maxMaterializeRows)
+	}
+	rows := 0
+	for _, ev := range events {
+		rows += len(ev.Rows)
+	}
+	if rows != maxMaterializeRows {
+		t.Fatalf("streamed %d rows, want %d", rows, maxMaterializeRows)
+	}
+}
+
+// A statement carrying its own LIMIT above the hard bound is still capped by the
+// stream path, the way the buffered path hard-bounds it after materialization.
+func TestStreamZeroLimitOwnHugeLimitCapped(t *testing.T) {
+	app, _ := newTestAppWithSQLite(t, safeModeOff)
+	app.settings.ResultLimit = 0
+
+	const n = maxMaterializeRows + 5
+	cte := "WITH RECURSIVE seq(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM seq WHERE x<" + strconv.Itoa(n) + ") SELECT x FROM seq LIMIT " + strconv.Itoa(n)
+	events := collectStream(t, app, cte)
+	done := events[len(events)-1]
+	if done.Type != "done" || done.RowCount != maxMaterializeRows || !done.Truncated {
+		t.Fatalf("done = %+v, want rowCount=%d truncated", done, maxMaterializeRows)
+	}
+	rows := 0
+	for _, ev := range events {
+		rows += len(ev.Rows)
+	}
+	if rows != maxMaterializeRows {
+		t.Fatalf("streamed %d rows, want %d", rows, maxMaterializeRows)
 	}
 }
 
@@ -241,5 +288,44 @@ func TestBigIntCrossesAsTextEveryExit(t *testing.T) {
 	cv := cellValue(dbcore.Value{Kind: dbcore.ValInt, I: big})
 	if got := cv.(string); got != "9007199254740993" {
 		t.Errorf("cellValue(2^53+1) = %q", got)
+	}
+}
+
+// Binary bytes that are not valid UTF-8 cannot cross as a JSON string (the
+// encoder replaces bad bytes with U+FFFD): the old string(v.B) rendered
+// mojibake and a copy/edit round-tripped the corruption. blobCell keeps
+// valid-UTF-8 bytes as text (a TEXT column the driver hands over as []byte)
+// and renders the rest as a hex preview — display and copy stay faithful.
+func TestBlobCellKeepsBinaryFaithful(t *testing.T) {
+	// Valid UTF-8 stays text.
+	if got := blobCell([]byte("plain text")); got != "plain text" {
+		t.Errorf("utf8 blob = %q", got)
+	}
+	// Invalid UTF-8 becomes a hex preview, not U+FFFD mojibake.
+	raw := []byte{0xFF, 0xFE, 0x00, 0x41}
+	got := blobCell(raw)
+	want := `\xfffe0041`
+	if !strings.HasPrefix(got, `\x`) || !strings.Contains(got, want) {
+		t.Errorf("binary blob = %q, want a \\x hex preview containing %s", got, want)
+	}
+	if strings.ContainsRune(got, '\uFFFD') {
+		t.Errorf("binary blob leaked a replacement character: %q", got)
+	}
+	// A longer blob truncates the preview and states the full size.
+	long := make([]byte, 128)
+	for i := range long {
+		long[i] = byte(0x80 + i%0x40) // invalid-UTF-8 territory
+	}
+	got = blobCell(long)
+	if !strings.HasSuffix(got, "(128 bytes)") {
+		t.Errorf("long blob preview = %q, want a size suffix", got)
+	}
+	// All three exits agree.
+	same := []byte{0xDE, 0xAD, 0xBE, 0xEF}
+	if cellValue(dbcore.Value{Kind: dbcore.ValBlob, B: same}).(string) != blobCell(same) {
+		t.Error("cellValue and blobCell disagree")
+	}
+	if streamCell(same).(string) != blobCell(same) {
+		t.Error("streamCell and blobCell disagree")
 	}
 }

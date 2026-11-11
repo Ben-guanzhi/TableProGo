@@ -24,6 +24,11 @@ func friendlyDBError(err error) string {
 		return fmt.Sprintf("外键冲突：引用的行不存在，或还有行引用它（先处理引用再删改）。(%s)", msg)
 	case dberror.Deadlock:
 		return fmt.Sprintf("发生死锁：另一条事务持有冲突的锁，重试本语句通常可以解决。(%s)", msg)
+	case dberror.SerializationFailure:
+		// PG 40001 / Oracle ORA-08177 / MSSQL snapshot conflict: the server
+		// aborted the statement because another transaction changed something
+		// this transaction was reading. Like a deadlock, retrying usually works.
+		return fmt.Sprintf("序列化冲突：另一条事务修改了本事务读取的数据，重试本语句通常可以解决。(%s)", msg)
 	case dberror.ConnectionBroken:
 		return fmt.Sprintf("连接已断开：服务端或网络中断，请重新连接后重试。(%s)", msg)
 	case dberror.Timeout:

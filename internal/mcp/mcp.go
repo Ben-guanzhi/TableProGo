@@ -435,6 +435,136 @@ func (s *Server) describeTable(connID, database, schema, table string) (string, 
 // turn an UPDATE into a read.
 var readOnlyPrefixes = []string{"SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "EXPLAIN", "PRAGMA", "TABLE", "VALUES"}
 
+// isSingleStatement reports whether sql carries exactly one statement: top-level
+// semicolons are counted by a scanner that skips string literals, quoted
+// identifiers, comments and dollar quotes — the constructs that legally contain
+// a ';'. A multi-statement string must be refused outright, not classified by
+// its first keyword: `SELECT 1; DROP TABLE x` starts with SELECT, so the
+// first-keyword check alone would call it a read and hand the whole string to
+// the driver — several engines (go-mssqldb batch, PostgreSQL simple protocol)
+// run both halves, which turns the read-only gate into a write path. This is
+// the same scanner shape the editor's script runner (sqlscript.Split) uses.
+func isSingleStatement(sql string) bool {
+	var quote byte
+	var dollarTag string
+	inLine, inBlock := false, false
+	depth := 0 // parens don't hide semicolons at depth 0 from engines, so count all
+	for i := 0; i < len(sql); i++ {
+		ch := sql[i]
+		var next byte
+		if i+1 < len(sql) {
+			next = sql[i+1]
+		}
+		if inLine {
+			if ch == '\n' {
+				inLine = false
+			}
+			continue
+		}
+		if inBlock {
+			if ch == '*' && next == '/' {
+				inBlock = false
+				i++
+			}
+			continue
+		}
+		if dollarTag != "" {
+			if ch == '$' && strings.HasPrefix(sql[i:], dollarTag) {
+				i += len(dollarTag) - 1
+				dollarTag = ""
+			}
+			continue
+		}
+		switch {
+		case quote != 0:
+			if ch == '\\' && quote == '\'' && i+1 < len(sql) {
+				i++ // escaped char inside a string literal
+				continue
+			}
+			if ch == quote {
+				if i+1 < len(sql) && sql[i+1] == quote {
+					i++ // doubled quote
+					continue
+				}
+				quote = 0
+			}
+		case ch == '-' && next == '-':
+			inLine = true
+			i++
+		case ch == '/' && next == '*':
+			inBlock = true
+			i++
+		case ch == '$':
+			tag := dollarTagAt(sql, i)
+			if tag != "" {
+				dollarTag = tag
+				i += len(tag) - 1
+			}
+		case ch == '\'' || ch == '"' || ch == '`':
+			quote = ch
+		case ch == ';':
+			// A trailing semicolon is punctuation, not a second statement:
+			// "SELECT 1;" is what editors and models routinely produce. Only a
+			// ';' with real content after it (ignoring further ';', whitespace
+			// and comments) starts a second statement.
+			if !isBlankRest(sql[i+1:]) {
+				return false
+			}
+			return true
+		case ch == '(':
+			depth++
+		case ch == ')':
+			depth--
+		}
+	}
+	return true
+}
+
+// isBlankRest reports whether rest holds nothing but semicolons, whitespace and
+// comments — the tail of a single statement.
+func isBlankRest(rest string) bool {
+	for i := 0; i < len(rest); i++ {
+		ch := rest[i]
+		switch {
+		case ch == ';' || ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n':
+			continue
+		case ch == '-' && i+1 < len(rest) && rest[i+1] == '-':
+			if nl := strings.IndexByte(rest[i:], '\n'); nl >= 0 {
+				i += nl
+				continue
+			}
+			return true
+		case ch == '/' && i+1 < len(rest) && rest[i+1] == '*':
+			end := strings.Index(rest[i+2:], "*/")
+			if end < 0 {
+				return true // unterminated block comment: nothing follows
+			}
+			i += 2 + end + 1
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// dollarTagAt returns the dollar-quote tag starting at sql[i] ('$'), or "" —
+// $$, $tag$, $fn$ and friends (PostgreSQL).
+func dollarTagAt(sql string, i int) string {
+	if i >= len(sql) || sql[i] != '$' {
+		return ""
+	}
+	for j := i + 1; j < len(sql); j++ {
+		c := sql[j]
+		if c == '$' {
+			return sql[i : j+1]
+		}
+		if !isWordByte(c) {
+			return ""
+		}
+	}
+	return ""
+}
+
 // IsReadStatement reports whether sql only reads. It is exported so the client can
 // reuse the same rule for its own write guard.
 func IsReadStatement(sql string) bool {
@@ -487,6 +617,11 @@ func (s *Server) query(connID, database, sql string) (string, error) {
 	if strings.TrimSpace(sql) == "" {
 		return "", fmt.Errorf("缺少参数 sql")
 	}
+	// A multi-statement string cannot be classified by its first keyword: the
+	// write after the ';' would ride along (see isSingleStatement).
+	if !isSingleStatement(sql) {
+		return "", fmt.Errorf("query 一次只接受一条语句（检测到多余的分号）；请拆开后逐条调用")
+	}
 	if !IsReadStatement(sql) {
 		return "", fmt.Errorf("query 只接受只读语句（SELECT/WITH/SHOW/DESCRIBE/EXPLAIN）；写操作请用 execute")
 	}
@@ -503,6 +638,11 @@ func (s *Server) execute(connID, database, sql string) (string, error) {
 	}
 	if strings.TrimSpace(sql) == "" {
 		return "", fmt.Errorf("缺少参数 sql")
+	}
+	// Same multi-statement refusal: each statement in a batch needs its own
+	// classification, so the tool accepts one statement per call.
+	if !isSingleStatement(sql) {
+		return "", fmt.Errorf("execute 一次只接受一条语句（检测到多余的分号）；请拆开后逐条调用")
 	}
 	// A statement that reads is not a write; refusing it here would make the tool
 	// surprising. It goes through the same read path (no confirmation needed).

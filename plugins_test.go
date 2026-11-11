@@ -11,7 +11,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/dbcore/dbcore/plugindriver"
 )
 
 // fakePluginMain is a plugin that claims the engine "fakeengine" and answers the
@@ -270,6 +273,41 @@ func TestPluginConnectionClosesOnDisconnect(t *testing.T) {
 	}
 }
 
+// A plugin connection whose child was torn down must not look connected: the
+// old isConnected only checked the registered type, so the next query silently
+// restarted the plugin subprocess instead of failing with "not connected".
+func TestPluginConnectionNotConnectedAfterDisconnect(t *testing.T) {
+	buildFakeEnginePlugin(t)
+	conn := &Connection{ID: "fake7", Name: "fake", Type: "fakeengine", Database: "main"}
+	a := searchApp(conn)
+
+	// Before any query the child is not running yet, but the connection is live.
+	if !conn.isConnected() {
+		t.Fatal("a connected plugin connection must report connected")
+	}
+	// Drive one query so the child actually starts.
+	if _, err := a.GetDatabases(conn.ID); err != nil {
+		t.Fatalf("schemas: %v", err)
+	}
+	if err := a.Disconnect(conn.ID); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	// The map now holds a disconnectedHandle; it must not report connected.
+	a.connectionsMu.RLock()
+	handle := a.connections[conn.ID]
+	a.connectionsMu.RUnlock()
+	if handle == nil {
+		t.Fatal("the handle must remain in the map after disconnect")
+	}
+	if handle.isConnected() {
+		t.Fatal("a disconnected plugin connection must not report connected")
+	}
+	// And a query through it must fail rather than restart the plugin.
+	if _, err := a.GetDatabases(conn.ID); err == nil {
+		t.Fatal("querying a disconnected plugin connection must fail")
+	}
+}
+
 // A plugin that declares a different engine than it is registered for is refused:
 // this client would otherwise render its dialect wrong.
 func TestPluginKindMismatchIsRefused(t *testing.T) {
@@ -289,5 +327,66 @@ func TestPluginKindMismatchIsRefused(t *testing.T) {
 	// the registration instead of guessing.
 	if !strings.Contains(err.Error(), "fakeengine") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// Concurrent cold starts of the same plugin path must converge on ONE process:
+// the registry lock guards bookkeeping only, the slow banner wait runs outside
+// it (a wedged plugin used to queue every same-engine connection behind its
+// 10s deadline). The loser retires its own process and joins the winner.
+func TestAcquireHostConvergesConcurrentColdStarts(t *testing.T) {
+	buildFakeEnginePlugin(t)
+	spec := func() pluginSpec {
+		plugins.mu.RLock()
+		defer plugins.mu.RUnlock()
+		return plugins.specs["fakeengine"]
+	}()
+	path := spec.Path
+
+	const n = 4
+	type result struct {
+		host *plugindriver.ConnDriver
+		err  error
+	}
+	results := make(chan result, n)
+	var startGate sync.WaitGroup
+	startGate.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			startGate.Done()
+			startGate.Wait()
+			host, err := pluginHosts.acquireHost(path, spec.Kind)
+			results <- result{host, err}
+		}()
+	}
+	seen := make(map[*plugindriver.ConnDriver]bool)
+	for i := 0; i < n; i++ {
+		r := <-results
+		if r.err != nil {
+			t.Fatalf("acquireHost: %v", r.err)
+		}
+		seen[r.host] = true
+	}
+	if len(seen) != 1 {
+		t.Fatalf("%d distinct hosts for one plugin path: concurrent cold starts did not converge", len(seen))
+	}
+
+	// Every caller's refcount lands on the one entry; releasing them all
+	// closes the process (the temp dir cleanup needs that on Windows).
+	pluginHosts.mu.Lock()
+	entry := pluginHosts.hosts[hostKey(path, spec.Kind)]
+	refs := entry.refCount
+	pluginHosts.mu.Unlock()
+	if refs != n {
+		t.Fatalf("refCount = %d, want %d", refs, n)
+	}
+	for i := 0; i < n; i++ {
+		pluginHosts.releaseHost(path, spec.Kind)
+	}
+	pluginHosts.mu.Lock()
+	_, stillThere := pluginHosts.hosts[hostKey(path, spec.Kind)]
+	pluginHosts.mu.Unlock()
+	if stillThere {
+		t.Fatal("the host must be closed once the last reference drops")
 	}
 }

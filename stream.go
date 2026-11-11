@@ -174,6 +174,15 @@ func (a *App) StreamQuery(ctx context.Context, connID, tabID, query, database st
 			truncated = true
 			break
 		}
+		// Hard materialization bound, independent of the statement's own LIMIT:
+		// the buffered path stops at maxMaterializeRows even when ResultLimit=0
+		// (the user asked for no cap) or the query carries its own huge LIMIT.
+		// Without this the stream endpoint read and shipped the whole result set
+		// while the buffered path capped it.
+		if emitted+len(batch) >= maxMaterializeRows {
+			truncated = true
+			break
+		}
 		row := make([]interface{}, len(values))
 		for i, v := range values {
 			row[i] = streamCell(v)
@@ -253,7 +262,7 @@ func streamCell(v interface{}) interface{} {
 	case nil:
 		return nil
 	case []byte:
-		return string(val)
+		return blobCell(val)
 	case time.Time:
 		return val.Format(time.RFC3339)
 	case int64:

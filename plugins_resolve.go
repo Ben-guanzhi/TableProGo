@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync"
 
 	"github.com/dbcore/dbcore"
 	"github.com/dbcore/dbcore/plugindriver"
@@ -68,22 +69,145 @@ func RegisteredPlugins() []string {
 	return out
 }
 
-// startPluginConn launches a plugin in connection-oriented mode (one process
-// serving several connections, the way a browser-style host does) and opens the
-// connection this Connection represents on it. The bound driver is returned; it
-// is what every catalog and query call goes through.
+// pluginHostRegistry keeps one plugin process per plugin path, shared by all
+// connections that use it. Without it, every tab of the same plugin engine
+// spawns its own child process — and closing one tab's connection kills a
+// process that other tabs may still be using. With the registry, the process
+// lives until the last connection of that engine goes away.
+type pluginHostRegistry struct {
+	mu    sync.Mutex
+	hosts map[string]*pluginHostEntry
+}
+
+type pluginHostEntry struct {
+	host     *plugindriver.ConnDriver
+	refCount int
+	// withdrawing marks an entry whose process is being torn down but which is
+	// still recorded, so a concurrent acquireHost waits on done instead of
+	// starting a second process for the same key (TP-16).
+	withdrawing bool
+	done         chan struct{} // closed once host.Close() returned
+}
+
+// hostKey identifies a plugin process by executable AND the engine it serves.
+// Keying on the path alone collides when one binary serves two engine types
+// (TP-29); the NUL separator keeps the composite unambiguous.
+func hostKey(path, kind string) string { return path + "\x00" + kind }
+
+var pluginHosts = &pluginHostRegistry{
+	hosts: make(map[string]*pluginHostEntry),
+}
+
+// acquireHost returns a shared host for the plugin path, incrementing its
+// reference count. The caller must call releaseHost when done.
+//
+// The cold start runs OUTSIDE the registry lock: StartConn waits for the
+// child's banner (up to 10s) and a wedged plugin hangs it entirely. Holding
+// the lock through it queued every other connection of the same engine —
+// including the ones that would have found the warm host on the fast path.
+// Two concurrent cold starts for the same path can both run; the loser closes
+// its process and joins the winner under the lock.
+func (r *pluginHostRegistry) acquireHost(path, kind string) (*plugindriver.ConnDriver, error) {
+	key := hostKey(path, kind)
+	for {
+		r.mu.Lock()
+		entry, ok := r.hosts[key]
+		if ok {
+			if entry.withdrawing {
+				// A withdrawal is in flight for this key: wait for the old
+				// process to finish closing instead of starting a second one
+				// (TP-16).
+				done := entry.done
+				r.mu.Unlock()
+				<-done
+				continue
+			}
+			entry.refCount++
+			host := entry.host
+			r.mu.Unlock()
+			return host, nil
+		}
+		r.mu.Unlock()
+
+		host, err := plugindriver.StartConn(context.Background(), path, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		r.mu.Lock()
+		if winner, wok := r.hosts[key]; wok {
+			// A concurrent cold start won the race: join it, retire ours.
+			winner.refCount++
+			r.mu.Unlock()
+			_ = host.Close()
+			return winner.host, nil
+		}
+		r.hosts[key] = &pluginHostEntry{host: host, refCount: 1}
+		r.mu.Unlock()
+		return host, nil
+	}
+}
+
+// releaseHost decrements the reference count for the plugin key and closes
+// the host when it reaches zero.
+func (r *pluginHostRegistry) releaseHost(path, kind string) {
+	key := hostKey(path, kind)
+	r.mu.Lock()
+	entry, ok := r.hosts[key]
+	if !ok || entry.withdrawing {
+		r.mu.Unlock()
+		return
+	}
+	entry.refCount--
+	if entry.refCount > 0 {
+		r.mu.Unlock()
+		return
+	}
+	// Mark the entry withdrawing and keep it recorded until the process is
+	// actually gone: a concurrent acquireHost then waits on entry.done rather
+	// than starting a second process for the same key (TP-16).
+	entry.withdrawing = true
+	entry.done = make(chan struct{})
+	host := entry.host
+	r.mu.Unlock()
+
+	_ = host.Close()
+
+	r.mu.Lock()
+	delete(r.hosts, key)
+	close(entry.done)
+	r.mu.Unlock()
+}
+
+// startPluginConn launches a plugin in connection-oriented mode and opens the
+// connection this Connection represents on it. The plugin process is shared
+// across all connections of the same engine via pluginHosts, so a second tab
+// does not spawn a second child. The bound driver is returned; it is what every
+// catalog and query call goes through.
+//
+// pluginMu guards the three handle fields only: the acquire/Open work runs
+// OUTSIDE it. Open carries the database's own TCP + SSH + handshake latency
+// (10s+ on a cold plugin), and holding the per-connection lock through it
+// serialized every other call on this Connection — including the Close side,
+// whose closePlugin must take the same lock. Re-entry is idempotent: a second
+// caller while the first is still opening re-runs the check and either joins
+// the finished handle or opens a duplicate connection that CloseConn reclaims
+// via the same registry accounting.
 func (c *Connection) startPluginConn(spec pluginSpec) (dbcore.SQLDriver, error) {
 	c.pluginMu.Lock()
-	defer c.pluginMu.Unlock()
 	if c.pluginConn != nil && c.pluginConnID != "" {
-		return c.pluginConn.Bind(c.pluginConnID, c.Database), nil
+		drv := c.pluginConn.Bind(c.pluginConnID, c.Database)
+		c.pluginMu.Unlock()
+		return drv, nil
 	}
-	host, err := plugindriver.StartConn(context.Background(), spec.Path, nil)
+	c.pluginMu.Unlock()
+
+	host, err := pluginHosts.acquireHost(spec.Path, spec.Kind)
 	if err != nil {
 		return nil, err
 	}
 	if string(host.Kind()) != spec.Kind && spec.Kind != "" {
-		_ = host.Close()
+		pluginHosts.releaseHost(spec.Path, spec.Kind)
 		return nil, fmt.Errorf("plugin %s speaks %q, but it is registered as %q", spec.Path, host.Kind(), spec.Kind)
 	}
 	connID, _, err := host.Open(context.Background(), plugindriver.ConnectParams{
@@ -96,10 +220,23 @@ func (c *Connection) startPluginConn(spec pluginSpec) (dbcore.SQLDriver, error) 
 		Options:  c.Options,
 	})
 	if err != nil {
-		_ = host.Close()
+		pluginHosts.releaseHost(spec.Path, spec.Kind)
 		return nil, err
+	}
+
+	c.pluginMu.Lock()
+	// A concurrent opener may have won: keep one handle, return the other.
+	if c.pluginConn != nil && c.pluginConnID != "" {
+		c.pluginMu.Unlock()
+		_ = host.CloseConn(context.Background(), connID)
+		pluginHosts.releaseHost(spec.Path, spec.Kind)
+		return c.pluginConn.Bind(c.pluginConnID, c.Database), nil
 	}
 	c.pluginConn = host
 	c.pluginConnID = connID
-	return host.Bind(connID, c.Database), nil
+	c.pluginPath = spec.Path
+	c.pluginKind = spec.Kind
+	drv := host.Bind(connID, c.Database)
+	c.pluginMu.Unlock()
+	return drv, nil
 }

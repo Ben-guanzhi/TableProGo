@@ -19,10 +19,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/dbcore/dbcore"
 	tableprosql "github.com/dbcore/dbcore/sqltext"
 )
 
@@ -96,12 +98,35 @@ func (a *App) SearchTableData(ctx context.Context, connID, database, keyword str
 
 	start := time.Now()
 	totalHits := 0
+	// Columns for the whole schema in one round trip when the driver supports
+	// it (K-1): the search otherwise pays one GetColumns per table — up to
+	// searchDataMaxTables round trips before the first table is searched. A
+	// failed or absent batch degrades to the per-table read inside
+	// searchOneTable, so a driver without the capability behaves exactly as
+	// before. The search only asks whether a column is descriptive, so the
+	// batch's catalog shape (Name + Type) is everything it consumes.
+	batchCols := map[string][]ColumnInfo{}
+	if drv, drvErr := a.sqlDriver(conn, database); drvErr == nil {
+		if bc, ok := dbcore.AsBatchColumns(drv); ok {
+			schema := resolveSchema(conn, database, "")
+			if all, batchErr := bc.BatchColumns(runCtx, schema); batchErr == nil {
+				for _, c := range all {
+					batchCols[c.Table] = append(batchCols[c.Table], ColumnInfo{
+						Name: c.Name,
+						Type: c.Type,
+					})
+				}
+			} else {
+				log.Printf("datasearch: batch columns unavailable, falling back per table: %v", batchErr)
+			}
+		}
+	}
 	for i, tb := range tables {
 		if runCtx.Err() != nil {
 			return emit(SearchDataEvent{Type: "done", Cancelled: true, Elapsed: secondsSince(start)})
 		}
 		progress := SearchDataEvent{Type: "table", Scanned: i + 1, Total: len(tables), Schema: tb.Schema, Table: tb.Name}
-		hits, err := searchOneTable(runCtx, a, conn, database, tb, keyword)
+		hits, err := searchOneTable(runCtx, a, conn, database, tb, keyword, batchCols[tb.Name])
 		if err != nil {
 			// One unreachable or broken object (a view over a dropped table is
 			// the classic) must not kill the whole search — report and move on.
@@ -132,11 +157,16 @@ func secondsSince(start time.Time) float64 {
 
 // searchOneTable runs the keyword against the descriptive columns of one
 // object. Objects with none (pure number/blob ledgers) answer zero hits
-// without touching the server.
-func searchOneTable(ctx context.Context, a *App, conn *Connection, database string, tb TableInfo, keyword string) (QueryResult, error) {
-	columns, err := a.GetColumns(conn.ID, database, tb.Schema, tb.Name)
-	if err != nil {
-		return QueryResult{}, err
+// without touching the server. Columns arrive pre-read when the driver served
+// the whole schema in one batch (batch != nil); otherwise they are read here.
+func searchOneTable(ctx context.Context, a *App, conn *Connection, database string, tb TableInfo, keyword string, batch []ColumnInfo) (QueryResult, error) {
+	columns := batch
+	if columns == nil {
+		var err error
+		columns, err = a.GetColumns(conn.ID, database, tb.Schema, tb.Name)
+		if err != nil {
+			return QueryResult{}, err
+		}
 	}
 	var textCols []string
 	for _, col := range columns {

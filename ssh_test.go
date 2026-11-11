@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -171,6 +172,57 @@ func TestSSHTunnelForwardsBytes(t *testing.T) {
 	if string(buf) != "ping-through-ssh" {
 		t.Fatalf("echo = %q", buf)
 	}
+}
+
+// Every tunnelled connection runs two io.Copy goroutines. The pipe's signal
+// channel is buffered for exactly two sends, so both copiers can finish even
+// when only one direction ends first. This test pins that property: a future
+// change that drops the buffer to one, or waits for both directions, would
+// park a goroutine per tunnelled connection for the life of the process.
+//
+// (Written while chasing a suspected leak that turned out not to exist — the
+// original buffered-by-two channel is correct. Kept as the regression guard
+// the next reader would otherwise have to re-derive.)
+//
+// The test servers are started ONCE, outside the loop: their accept loops and
+// per-connection handlers would otherwise be counted as the tunnel's leak.
+func TestSSHTunnelDoesNotLeakCopierGoroutines(t *testing.T) {
+	echoHost, echoPort := startEchoServer(t)
+	sshHost, sshPort := startSSHServer(t, "tester", "secret")
+	// Settle the server goroutines before taking the baseline.
+	time.Sleep(100 * time.Millisecond)
+	base := runtime.NumGoroutine()
+
+	const rounds = 20
+	for i := 0; i < rounds; i++ {
+		tun, lh, lp, err := openSSHTunnel(SSHConfig{
+			Enabled: true, Host: sshHost, Port: sshPort, User: "tester", Password: "secret",
+		}, echoHost, echoPort)
+		if err != nil {
+			t.Fatalf("round %d: open tunnel: %v", i, err)
+		}
+		conn, err := net.Dial("tcp", net.JoinHostPort(lh, strconv.Itoa(lp)))
+		if err != nil {
+			tun.Close()
+			t.Fatalf("round %d: dial: %v", i, err)
+		}
+		_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+		_, _ = conn.Write([]byte("x"))
+		buf := make([]byte, 1)
+		_, _ = io.ReadFull(conn, buf)
+		_ = conn.Close()
+		tun.Close()
+	}
+	// Give the copiers a moment to unwind after their conns closed.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= base+rounds/2 { // slack for server-side per-conn handlers
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("goroutines grew from %d to %d over %d tunnels (copier leak)",
+		base, runtime.NumGoroutine(), rounds)
 }
 
 // The wrong password must fail the handshake, not hang.
