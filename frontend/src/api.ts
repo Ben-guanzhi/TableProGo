@@ -202,6 +202,18 @@ export async function DeleteFavorite(id: string): Promise<void> {
   await post('/api/favorites/delete', { id });
 }
 
+// W1-b: rename a folder across every entry it holds, or dissolve it (entries
+// move back to the ungrouped list). Both answer with the moved count.
+export async function RenameFavoriteFolder(from: string, to: string): Promise<number> {
+  const data = await post('/api/favorites/folder/rename', { from, to });
+  return data.moved ?? 0;
+}
+
+export async function UnfileFavoriteFolder(folder: string): Promise<number> {
+  const data = await post('/api/favorites/folder/unfile', { folder });
+  return data.moved ?? 0;
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 export async function FormatSQL(sql: string): Promise<string> {

@@ -82,11 +82,17 @@ import {
   RenameKVKey,
   DeleteKVKey,
   SetKVKeyTTL,
+  GetSchemas,
+  GetRoutines,
+  ExportWorkbook,
 } from './api';
 import { mergeKVWindow } from './kvPaging';
 import { applyTheme } from './theme';
 import toast from 'react-hot-toast';
 import { runGuarded, runStreamed } from './lib/queryRun';
+import { isMagicCommand, parseMagicCommand, runMagicCommand, MAGIC_HELP } from './lib/magicCommands';
+import { download, downloadBlob } from './datagrid/download';
+import { toCSV, toJSON, toMarkdown, toTSV } from './gridView';
 import {
   BeginTransaction,
   CommitTransaction,
@@ -582,6 +588,134 @@ function App() {
     );
   };
 
+  // W1-a: 魔法命令（\dt \dv \d \dn \df \di \copy \?）——以 \ 开头的语句被
+  // 拦截为结果网格，从不作为 SQL 发往数据库。目录问题走 App 自己的 HTTP
+  // API（GetTables/GetTableStructure/GetRoutines），方言与目录保持单点；
+  // \copy 的导出直接复用既有流式导出管道。解析与执行拆在 magicCommands.ts
+  // （纯函数可单测），这里只做接线。
+  const handleMagicCommand = async (tab: Tab, sql: string) => {
+    if (!activeConnection) return;
+    const database = tabDatabase(tab);
+    const tabId = tab.id;
+    const connId = activeConnection.id;
+    const schemaOf = () => {
+      // The tab's database picker holds the schema choice for PG-family
+      // engines; MySQL-family uses the database itself.
+      return tabDatabase(tab);
+    };
+    const fetchers = {
+      listTables: async () => {
+        const list = await GetTables(connId, database, '');
+        return list as unknown as { name: string }[];
+      },
+      listViews: async () => {
+        const list = await GetTables(connId, database, '');
+        return (list as unknown as { name: string; type?: string }[])
+          .filter(x => x.type === 'view');
+      },
+      listSchemas: async () => {
+        if (activeConnection.type === 'sqlite') return [database || 'main'];
+        return await GetSchemas(connId, database);
+      },
+      listRoutines: async () => {
+        const routines = await GetRoutines(connId, database, schemaOf());
+        return (routines as unknown as { name: string; kind: string }[]) ?? [];
+      },
+      describe: (table: string) =>
+        GetTableStructure(connId, database, '', table) as unknown as Promise<TableStructure>,
+      sourceTable: () => tab.tableRef?.table ?? '',
+      copyTable: async (table: string, format: string, where: string) => {
+        // \copy exports the whole table through the preview endpoint in
+        // page-size chunks: it streams the rows the same way a data page
+        // reads. A `LIMIT n` tail caps the total; a raw WHERE predicate is
+        // refused here (the preview endpoint takes structured filters, not
+        // SQL text — free-text WHERE would be a second, ungated SQL path).
+        if (where && !/^LIMIT\s+\d+$/i.test(where)) {
+          throw new Error('\\copy 仅支持 limit <N> 过滤（结构化筛选请用数据页的筛选条）');
+        }
+        const cap = where ? Number(where.match(/^LIMIT\s+(\d+)$/i)![1]) : 200000;
+        const seen: any[][] = [];
+        let names: string[] = [];
+        try {
+          const structure = (await GetTableStructure(
+            connId,
+            database,
+            '',
+            table,
+          )) as unknown as TableStructure;
+          names = (structure.columns ?? []).map(c => c.name);
+        } catch (error) {
+          throw new Error(`读取表结构失败: ${(error as Error).message}`);
+        }
+        const pageSize = 1000;
+        for (let offset = 0; offset < cap; offset += pageSize) {
+          const page = (await PreviewTable(
+            { connId, database, schema: '', table },
+            Math.min(pageSize, cap - offset),
+            offset,
+            [],
+            {},
+            tabId,
+          )) as unknown as QueryResult;
+          if (page.error) throw new Error(page.error);
+          const rows = (page.rows ?? []) as any[][];
+          seen.push(...rows);
+          if (rows.length < pageSize) break;
+        }
+        const cols = names.map(name => ({ name, type: 'text' }));
+        const stem = `${database}-${table}`.replace(/[\\/:*?"<>|]+/g, '_');
+        if (format === 'csv') {
+          download(`${stem}.csv`, 'text/csv;charset=utf-8', toCSV(cols, seen));
+        } else if (format === 'tsv') {
+          download(`${stem}.tsv`, 'text/tab-separated-values;charset=utf-8', toTSV(cols, seen));
+        } else if (format === 'json' || format === 'jsonl') {
+          const text = format === 'json'
+            ? toJSON(cols, seen)
+            : seen.map(row => JSON.stringify(Object.fromEntries(cols.map((c, i) => [c.name, row[i] ?? null])))).join('\n');
+          download(`${stem}.${format}`, 'application/json', text);
+        } else if (format === 'markdown') {
+          download(`${stem}.md`, 'text/markdown;charset=utf-8', toMarkdown(cols, seen));
+        } else {
+          const workbook = await ExportWorkbook(cols, seen);
+          downloadBlob(`${stem}.xlsx`, workbook);
+        }
+        return seen.length;
+      },
+    };
+    const seq = (runSeq.current.get(tabId) ?? 0) + 1;
+    runSeq.current.set(tabId, seq);
+    const stillCurrent = () => (runSeq.current.get(tabId) ?? 0) === seq;
+    setTabs(current => current.map(t => (t.id === tabId ? { ...t, loading: true } : t)));
+    try {
+      const parsed = parseMagicCommand(sql);
+      if (!parsed) throw new Error('无法解析魔法命令');
+      const result = await runMagicCommand(parsed, fetchers);
+      if (!stillCurrent()) return;
+      setTabs(current => current.map(t =>
+        t.id === tabId
+          ? { ...t, database, result, comments: undefined, source: null, loading: false }
+          : t
+      ));
+      toast.success(`魔法命令完成${result.note ? ` · ${result.note}` : ''} · ${result.rowCount} 行`);
+    } catch (error) {
+      if (!stillCurrent()) return;
+      const message = (error as Error).message;
+      setTabs(current => current.map(t =>
+        t.id === tabId
+          ? {
+              ...t,
+              database,
+              loading: false,
+              result: {
+                columns: [], rows: [], rowCount: 0, affectedRows: 0,
+                lastInsertId: 0, executionTime: 0, error: message,
+              },
+            }
+          : t
+      ));
+    }
+  };
+
   const handleExecuteQuery = async (tab: Tab, sqlOverride?: string) => {
     if (!activeConnection) return;
     const database = tabDatabase(tab);
@@ -589,6 +723,12 @@ function App() {
     // substitution lands in the editor and this call lands in the same React
     // batch, so tab.query would still be the pre-substitution text.
     const sql = sqlOverride ?? tab.query;
+    // W1-a: a `\`-statement is a magic command, never SQL. It is answered by
+    // handleMagicCommand and stops here — the database never sees the backslash.
+    if (isMagicCommand(sql)) {
+      await handleMagicCommand(tab, sql);
+      return;
+    }
     const tabId = tab.id;
     const seq = (runSeq.current.get(tabId) ?? 0) + 1;
     runSeq.current.set(tabId, seq);
@@ -1066,6 +1206,12 @@ function App() {
     // 同 handleExecuteQuery：命名参数替换落在编辑器里，同批次的闭包读不到。
     const sql = sqlOverride ?? tab.objectQuery?.trim();
     if (!ref || !sql) return;
+    // W1-a: magic commands are equally intercepted on the object query page —
+    // the tab's source table feeds \d / \di's optional argument here.
+    if (isMagicCommand(sql)) {
+      await handleMagicCommand(tab, sql);
+      return;
+    }
     const database = tabDatabase(tab);
     const key = `${tab.id}|query`;
     const seq = (objectSeq.current.get(key) ?? 0) + 1;

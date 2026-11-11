@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Magic commands (W1-a, ported from the db-dev reference): a statement that
+  begins with `\` is intercepted before it ever reaches the database and
+  answered as a result grid. `\dt`/`\dv` list tables and views, `\dn` lists
+  databases/schemas, `\d` describes a table's columns (defaulting to the
+  table the tab shows), `\di` lists its indexes, `\df` lists routines, and
+  `\copy <table> [format] [limit N]` exports a whole table to a downloaded
+  file (csv/tsv/json/jsonl/markdown/xlsx) by paging the same preview endpoint
+  the data card reads. The parser and executor are pure and unit-tested
+  (`magicCommands.ts`, 23 cases); the fetchers ride the app's own HTTP API, so
+  catalog reads stay on the shared paths. Unknown commands are refused with
+  the help text, never executed. The shortcut help panel documents the set.
+- Favorite folders can be renamed or dissolved (W1-b): a folder header gains
+  two hover actions — rename moves every entry it holds to the new title
+  (`RenameFavoriteFolder`, matched by the trimmed spelling the menu groups
+  by), and 移出文件夹 returns them to 未分组 without deleting anything
+  (`UnfileFavoriteFolder`). Both answer with the moved count for the toast;
+  empty names and unknown folders are refused with the reason.
+- TSV export (`toTSV`): the tab-separated sibling of the CSV builder, used by
+  `\copy tsv` and available to any future exporter.
+
+### Added
 - Go + Wails desktop database client
 - Multi-engine support: MySQL, PostgreSQL, SQLite, SQL Server, Oracle
 - Protocol-compatible engines in the connection dialog: OceanBase (MySQL mode,

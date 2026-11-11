@@ -625,6 +625,28 @@ func (a *App) routes() *http.ServeMux {
 	}) (any, error) {
 		return nil, a.DeleteFavorite(body.ID)
 	})
+	// W1-b: a folder is renamed across every entry it holds, or dissolved with
+	// its entries moved back to the ungrouped list. Both return the moved
+	// count so the toast can say what changed.
+	post(a, mux, "/api/favorites/folder/rename", 400, func(a *App, body struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	}) (any, error) {
+		moved, err := a.RenameFavoriteFolder(body.From, body.To)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]int{"moved": moved}, nil
+	})
+	post(a, mux, "/api/favorites/folder/unfile", 400, func(a *App, body struct {
+		Folder string `json:"folder"`
+	}) (any, error) {
+		moved, err := a.UnfileFavoriteFolder(body.Folder)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]int{"moved": moved}, nil
+	})
 
 	post(a, mux, "/api/structure-preview", 400, func(a *App, body StructureEditRequest) (any, error) {
 		return a.PreviewStructureEdit(body)

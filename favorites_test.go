@@ -53,3 +53,66 @@ func TestFavoriteFolderRoundTrips(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 }
+
+// W1-b: renaming a folder moves every entry it holds; unfile dissolves it
+// without deleting anything; both match folders by the trimmed spelling the
+// menu groups by.
+func TestFavoriteFolderRenameAndUnfile(t *testing.T) {
+	app := &App{}
+	if _, err := app.AddFavorite("c1", "shop", "日报", "SELECT 1", "报表"); err != nil {
+		t.Fatalf("add 1: %v", err)
+	}
+	if _, err := app.AddFavorite("c1", "shop", "周报", "SELECT 2", " 报表 "); err != nil {
+		t.Fatalf("add 2: %v", err)
+	}
+	if _, err := app.AddFavorite("c1", "", "游离", "SELECT 3", ""); err != nil {
+		t.Fatalf("add 3: %v", err)
+	}
+
+	moved, err := app.RenameFavoriteFolder("报表", "经营")
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	if moved != 2 {
+		t.Fatalf("rename moved %d, want 2", moved)
+	}
+	for _, f := range app.ListFavorites() {
+		if f.Name == "日报" || f.Name == "周报" {
+			if f.Folder != "经营" {
+				t.Fatalf("%s folder = %q, want 经营", f.Name, f.Folder)
+			}
+		} else if f.Folder != "" {
+			t.Fatalf("ungrouped entry grew a folder: %+v", f)
+		}
+	}
+
+	// Same-name rename is a no-op, not an error; empty names are refused.
+	if moved, err := app.RenameFavoriteFolder("经营", "经营"); err != nil || moved != 0 {
+		t.Fatalf("same-name rename = (%d, %v), want (0, nil)", moved, err)
+	}
+	if _, err := app.RenameFavoriteFolder("", "x"); err == nil {
+		t.Fatal("empty from should be refused")
+	}
+	if _, err := app.RenameFavoriteFolder("经营", ""); err == nil {
+		t.Fatal("empty to should be refused")
+	}
+	if _, err := app.RenameFavoriteFolder("不存在", "x"); err == nil || !strings.Contains(err.Error(), "不存在") {
+		t.Fatalf("unknown folder should say so, got %v", err)
+	}
+
+	moved, err = app.UnfileFavoriteFolder("经营")
+	if err != nil {
+		t.Fatalf("unfile: %v", err)
+	}
+	if moved != 2 {
+		t.Fatalf("unfile moved %d, want 2", moved)
+	}
+	for _, f := range app.ListFavorites() {
+		if f.Folder != "" {
+			t.Fatalf("after unfile every entry is ungrouped, got %+v", f)
+		}
+	}
+	if _, err := app.UnfileFavoriteFolder("经营"); err == nil {
+		t.Fatal("unfile of a missing folder should fail")
+	}
+}

@@ -34,6 +34,19 @@ const shortcuts: { group: string; items: Shortcut[] }[] = [
     ],
   },
   {
+    group: '魔法命令（以 \\ 开头，结果为网格，不作为 SQL 执行）',
+    items: [
+      { keys: ['\\dt [模式]'], label: '列出当前库的表' },
+      { keys: ['\\dv [模式]'], label: '列出当前库的视图' },
+      { keys: ['\\dn'], label: '列出库 / 模式' },
+      { keys: ['\\d <表名>'], label: '描述表结构（省略时用当前打开的表）' },
+      { keys: ['\\di <表名>'], label: '列出表的索引' },
+      { keys: ['\\df'], label: '列出函数与存储过程' },
+      { keys: ['\\copy <表> [格式] [limit <N>]'], label: '导出表数据（csv/tsv/json/jsonl/markdown/excel）' },
+      { keys: ['\\?'], label: '显示魔法命令帮助' },
+    ],
+  },
+  {
     group: '结果网格',
     items: [
       { keys: ['双击单元格'], label: '编辑该值（可写回的结果）' },

@@ -426,3 +426,17 @@ export const toJSON = (columns: ColumnLike[], rows: any[][]): string =>
     null,
     2,
   );
+
+// TSV is CSV's tab-separated sibling (\copy's tsv format). A field is quoted
+// only when it could be mistaken for several: a tab, a newline or a quote.
+const tsvCell = (value: any): string => {
+  const text = cellText(value);
+  return /[\t\r\n"]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+};
+
+export const toTSV = (columns: ColumnLike[], rows: any[][]): string => {
+  const line = (cells: string[]) => cells.join('\t');
+  const lines = [line(columns.map(c => tsvCell(c.name)))];
+  for (const row of rows) lines.push(line(columns.map((_, i) => tsvCell(row[i]))));
+  return lines.join('\r\n');
+};

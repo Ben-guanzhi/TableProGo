@@ -46,6 +46,8 @@ import {
   FiCheck,
   FiChevronDown,
   FiDatabase,
+  FiEdit2,
+  FiFolderMinus,
   FiGitCommit,
   FiLoader,
   FiLock,
@@ -58,7 +60,7 @@ import {
 } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { AddFavorite, AppSettings, DeleteFavorite,
-  Favorite, FormatSQL, ListFavorites,
+  Favorite, FormatSQL, ListFavorites, RenameFavoriteFolder, UnfileFavoriteFolder,
 } from '../api';
 import { ColumnInfo } from '../types';
 import { findNamedParams, substituteParams } from '../lib/namedParams';
@@ -401,6 +403,37 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     }
   };
 
+  // W1-b: a folder header carries its two management actions. Rename asks for
+  // the new title through the same dialog shape the save uses; unfile moves
+  // the entries back to 未分组 without deleting anything. Both report the
+  // moved count so the toast says what changed.
+  const [folderDialog, setFolderDialog] = useState<{ from: string; to: string } | null>(null);
+
+  const commitFolderRename = async () => {
+    if (!folderDialog) return;
+    const to = folderDialog.to.trim();
+    const from = folderDialog.from;
+    setFolderDialog(null);
+    if (!to || to === from) return;
+    try {
+      const moved = await RenameFavoriteFolder(from, to);
+      toast.success(`已重命名文件夹（${moved} 条收藏）`);
+      refreshFavorites();
+    } catch (error) {
+      toast.error(`重命名失败：${(error as Error).message}`);
+    }
+  };
+
+  const unfileFolder = async (folder: string) => {
+    try {
+      const moved = await UnfileFavoriteFolder(folder);
+      toast.success(`已移出文件夹（${moved} 条收藏回到未分组）`);
+      refreshFavorites();
+    } catch (error) {
+      toast.error(`移出失败：${(error as Error).message}`);
+    }
+  };
+
   // Favorites render under their folder: the grouped list is the same list the
   // user built, so the ungrouped ones stay last and grouped ones keep the order
   // they were saved in. Each item still opens in place; folders are labels.
@@ -443,8 +476,26 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
           if (items.length === 0) return null;
           return (
             <div key={folder}>
-              <div className="px-2 pt-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-muted">
-                {folder}
+              <div className="group/folder flex items-center px-2 pt-2 pb-1">
+                <span className="flex-1 text-2xs font-semibold uppercase tracking-wide text-muted truncate">
+                  {folder}
+                </span>
+                <button
+                  className="shrink-0 p-0.5 text-secondary hover:text-accent opacity-0 group-hover/folder:opacity-100"
+                  onClick={() => setFolderDialog({ from: folder, to: folder })}
+                  aria-label={`重命名文件夹 ${folder}`}
+                  title="重命名文件夹"
+                >
+                  <FiEdit2 size={10} />
+                </button>
+                <button
+                  className="shrink-0 p-0.5 text-secondary hover:text-danger opacity-0 group-hover/folder:opacity-100"
+                  onClick={() => void unfileFolder(folder)}
+                  aria-label={`移出文件夹 ${folder}`}
+                  title="移出文件夹（收藏回到未分组，不删除）"
+                >
+                  <FiFolderMinus size={10} />
+                </button>
               </div>
               {items.map(renderOne)}
             </div>
@@ -1125,6 +1176,53 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                   onClick={() => void commitFavDialog()}
                 >
                   收藏
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {folderDialog && (
+        <div className="fixed inset-0 bg-scrim/50 flex items-center justify-center z-50">
+          <div className="bg-panel rounded-lg w-full max-w-sm shadow-xl" role="dialog" aria-modal="true">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-line">
+              <h2 className="text-sm font-semibold">重命名文件夹</h2>
+              <button className="text-secondary hover:text-ink" onClick={() => setFolderDialog(null)} aria-label="取消">
+                <FiX size={16} />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <label className="block text-xs text-secondary">
+                <span className="mb-1 block">新名称（其下 {favorites.filter(f => (f.folder ?? '').trim() === folderDialog.from).length} 条收藏一并改名）</span>
+                <input
+                  type="text"
+                  autoFocus
+                  value={folderDialog.to}
+                  onChange={e => setFolderDialog({ ...folderDialog, to: e.target.value })}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void commitFolderRename();
+                    }
+                  }}
+                  className="w-full bg-canvas border border-line-strong rounded px-2 py-1.5 text-xs text-ink focus:outline-none focus:border-accent"
+                />
+              </label>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded text-xs bg-raised hover:bg-emphasis text-ink"
+                  onClick={() => setFolderDialog(null)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="px-3 py-1.5 rounded text-xs bg-accent hover:bg-accent-hover text-on-accent"
+                  onClick={() => void commitFolderRename()}
+                >
+                  重命名
                 </button>
               </div>
             </div>

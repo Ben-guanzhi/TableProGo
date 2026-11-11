@@ -121,3 +121,58 @@ func (a *App) DeleteFavorite(id string) error {
 	a.favorites = kept
 	return a.saveFavorites()
 }
+
+// RenameFavoriteFolder renames one folder across every entry it holds (W1-b).
+// The rename is by trimmed name match, the same spelling the menu groups by.
+// A new name that is empty is refused — "delete the folder" is its own
+// operation (UnfileFavoriteFolder), because a rename that silently ungroups
+// would surprise the user who meant to retitle.
+func (a *App) RenameFavoriteFolder(from, to string) (int, error) {
+	fromName := strings.TrimSpace(from)
+	toName := strings.TrimSpace(to)
+	if fromName == "" {
+		return 0, fmt.Errorf("原文件夹名不能为空")
+	}
+	if toName == "" {
+		return 0, fmt.Errorf("新文件夹名不能为空")
+	}
+	if fromName == toName {
+		return 0, nil // nothing to do, not an error
+	}
+	a.favoritesMu.Lock()
+	defer a.favoritesMu.Unlock()
+	moved := 0
+	for i := range a.favorites {
+		if strings.TrimSpace(a.favorites[i].Folder) == fromName {
+			a.favorites[i].Folder = toName
+			moved++
+		}
+	}
+	if moved == 0 {
+		return 0, fmt.Errorf("文件夹不存在: %s", fromName)
+	}
+	return moved, a.saveFavorites()
+}
+
+// UnfileFavoriteFolder removes one folder, moving its entries back to the
+// ungrouped list (W1-b). Deleting the folder deletes nothing else — the same
+// semantics the db-dev reference implementation pinned.
+func (a *App) UnfileFavoriteFolder(folder string) (int, error) {
+	name := strings.TrimSpace(folder)
+	if name == "" {
+		return 0, fmt.Errorf("文件夹名不能为空")
+	}
+	a.favoritesMu.Lock()
+	defer a.favoritesMu.Unlock()
+	moved := 0
+	for i := range a.favorites {
+		if strings.TrimSpace(a.favorites[i].Folder) == name {
+			a.favorites[i].Folder = ""
+			moved++
+		}
+	}
+	if moved == 0 {
+		return 0, fmt.Errorf("文件夹不存在: %s", name)
+	}
+	return moved, a.saveFavorites()
+}
