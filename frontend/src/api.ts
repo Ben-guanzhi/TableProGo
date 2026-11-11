@@ -266,6 +266,84 @@ export async function ParseConnectionURI(uri: string): Promise<{
   return post('/api/parse-uri', { uri });
 }
 
+// ---- W5: server-to-server table copy ----
+
+export interface TransferTarget {
+  connId: string;
+  database: string;
+  schema: string;
+}
+
+export interface TransferRequest {
+  source: TransferTarget;
+  target: TransferTarget;
+  // Empty copies every base table of the source schema.
+  tables: string[];
+  ignoreForeignKeys?: boolean;
+  skipData?: boolean;
+  // Required on apply: the backend refuses a copy nobody confirmed.
+  confirm?: boolean;
+}
+
+export interface TransferTableInfo {
+  source: string;
+  target: string;
+  // -1 when the source count could not be read.
+  rows: number;
+  deferred: boolean;
+}
+
+export interface TransferStatement {
+  table: string;
+  sql: string;
+  kind: string;
+}
+
+export interface TransferTypeLoss {
+  Table: string;
+  Column: string;
+  Source: string;
+  Target: string;
+  Reason: string;
+}
+
+// The plan a transfer WOULD run: nothing is written until Apply. Reading it is
+// what lets the user see the order, the row counts and the DDL first.
+export interface TransferPreview {
+  tables: TransferTableInfo[] | null;
+  statements: TransferStatement[] | null;
+  cycles: { Tables: string[] }[] | null;
+  warnings: string[] | null;
+  losses: TransferTypeLoss[] | null;
+  totalRows: number;
+}
+
+export interface TransferTableResult {
+  source: string;
+  target: string;
+  rowsRead: number;
+  rowsWritten: number;
+  error?: string;
+}
+
+export interface TransferResult {
+  tables: TransferTableResult[] | null;
+  rows: number;
+  aborted: boolean;
+  error?: string;
+  elapsed: string;
+}
+
+export async function PreviewTransfer(req: TransferRequest): Promise<TransferPreview> {
+  return post('/api/transfer/preview', req);
+}
+
+// Apply re-derives the plan server-side and requires confirm, so a stale or
+// forged preview cannot drive it.
+export async function ApplyTransfer(req: TransferRequest): Promise<TransferResult> {
+  return post('/api/transfer/apply', { ...req, confirm: true });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

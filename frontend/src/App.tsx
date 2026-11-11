@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiShuffle, FiTable } from 'react-icons/fi';
+import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiShare2, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -26,6 +26,7 @@ import ConnectionDialog from './components/ConnectionDialog';
 import ConfirmDialog, { ConfirmRequest } from './components/ConfirmDialog';
 import ImportDialog from './components/ImportDialog';
 import CompareView from './components/CompareView';
+import TransferDialog from './components/TransferDialog';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -176,6 +177,9 @@ function App() {
   const [databases, setDatabases] = useState<string[]>([]);
   const [quickOpen, setQuickOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  // W5: the server-to-server copy dialog. Its source defaults to the connection
+  // the navigator was on, which is where a user starts from.
+  const [showTransfer, setShowTransfer] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1795,6 +1799,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowTransfer(true)}
+              title="数据传输：把表结构和数据复制到另一个连接"
+              aria-label="数据传输"
+            >
+              <FiShare2 size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2120,6 +2132,24 @@ function App() {
       )}
 
       {showShortcuts && <ShortcutHelp onClose={() => setShowShortcuts(false)} />}
+
+      {showTransfer && (
+        <TransferDialog
+          connections={connections}
+          connectedIds={connectedIds}
+          initialSource={
+            activeConnection
+              ? {
+                  connId: activeConnection.id,
+                  database: tabDatabase(activeTabData),
+                  schema: '',
+                }
+              : undefined
+          }
+          confirm={askConfirm}
+          onClose={() => setShowTransfer(false)}
+        />
+      )}
 
       {confirmReq && (
         <ConfirmDialog request={confirmReq} onDismiss={() => setConfirmReq(null)} />

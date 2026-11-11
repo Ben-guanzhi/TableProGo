@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Server-to-server table copy (W5): preview then apply, with the plan visible
+  before anything is written. `internal/transfer` is the pure planning half
+  (17 cases): tables are ordered by FK dependency (Kahn's algorithm with a name
+  tiebreak, so the order is a function of the input), a cycle is detected as the
+  sort's residue and resolved by deferring those constraints until after every
+  row is loaded, and cross-engine type losses are reported per column rather than
+  coerced (integer widening is silent; decimal → float is not, because that is a
+  decision). The orchestrator (`transfer.go`, 9 end-to-end cases on real SQLite)
+  creates structure in plan order, copies each table's rows inside ONE
+  transaction with batched parameterized INSERTs, reconciles read/write/target
+  counts per table, and stops at the first failure with the table named. Apply
+  re-derives the plan server-side and requires `confirm`, so a stale or forged
+  preview cannot drive a copy. An engine without `ALTER TABLE ... ADD CONSTRAINT`
+  (SQLite) gets the deferred constraints skipped WITH a warning rather than
+  statements it would reject — the data still copies.
 - Multi-cursor editing (W3-a): add a cursor above/below (`Ctrl/Cmd+Alt+↑↓`),
   select the next occurrence (`Ctrl/Cmd+D`) or every occurrence
   (`Ctrl/Cmd+Shift+D`), and `Esc` back to one cursor. CodeMirror 6 ships all four

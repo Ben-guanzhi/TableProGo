@@ -541,6 +541,15 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/compare/apply", 400, func(a *App, body ApplySyncRequest) (any, error) {
 		return a.ApplySync(body)
 	})
+	// W5: server-to-server table copy. Preview is read-only and is what the UI
+	// shows; Apply re-derives the plan from the request (never trusting one),
+	// requires Confirm, and stops at the first table that fails.
+	post(a, mux, "/api/transfer/preview", 400, func(a *App, body TransferRequest) (any, error) {
+		return a.PreviewTransfer(body)
+	})
+	post(a, mux, "/api/transfer/apply", 400, func(a *App, body TransferRequest) (any, error) {
+		return a.ApplyTransfer(body)
+	})
 	post(a, mux, "/api/preview", 400, func(a *App, body previewRequest) (any, error) {
 		return a.previewPage(body.ConnID, body.TabID, body.Database, body.Schema, body.Table,
 			body.Limit, body.Offset, body.Filters, body.After, body.Before), nil
