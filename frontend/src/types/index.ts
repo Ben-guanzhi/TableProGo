@@ -19,6 +19,11 @@ export interface Connection {
   options: Record<string, string>;
   ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
+  // Transaction isolation level for this connection's transactions
+  // (read_uncommitted/read_committed/repeatable_read/serializable). Empty
+  // means the engine's default — the select in the connection dialog offers
+  // that as the explicit "default" choice.
+  isolationLevel?: string;
 }
 
 export interface SSHConfig {
@@ -46,6 +51,7 @@ export interface ConnectionConfig {
   options: Record<string, string>;
   ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
+  isolationLevel?: string;
 }
 
 export interface Column {
@@ -424,6 +430,12 @@ export interface Tab {
   // An open interactive transaction, as the backend describes it ("事务中 · 2 条语句 ·
   // app"). Empty means the tab runs in autocommit.
   txStatus?: string;
+  // The transaction's absolute deadline, as milliseconds left when the status
+  // was last read (0 = no deadline / governance off), and whether the backend
+  // already flags the warn window. The editor ticks the countdown locally;
+  // the backend sweeps past-due transactions regardless of this UI.
+  txRemainingMs?: number;
+  txWarned?: boolean;
   data?: SectionState<QueryResult>;
   // One page of the data card: rows are read by key when the page has one to
   // step from, and by OFFSET otherwise.

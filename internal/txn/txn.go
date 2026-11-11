@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Status is what the UI shows for a tab's transaction.
@@ -50,11 +51,28 @@ type Session struct {
 	// Database is the database the transaction was opened against. A session is
 	// bound to one database: statements on another pool cannot join it.
 	Database string
+	// Isolation is the level the transaction was opened with, as configured on
+	// the connection ("read_committed"… or "" for the engine's default). The
+	// UI shows it in the session's status line so the user can see which dial
+	// their transaction actually runs under.
+	Isolation string
 	// Statements counts what ran inside, so the UI can say how much is at risk
 	// before a rollback throws it away.
 	Statements int
 	// Err is the statement error that failed the transaction.
 	Err string
+
+	// --- transaction timeout (DESIGN-txn-timeout-2026-11-03, policy B) ---
+	// deadline is fixed at Begin: now + TxTimeout, an absolute limit. Running
+	// statements must NOT move it — the whole point of the absolute choice is
+	// that a transaction the user walked away from still converges, even one
+	// that keeps "running". Zero deadline (the zero value) means no limit,
+	// which keeps every existing Session literal and test working unchanged.
+	deadline  time.Time
+	warnAhead time.Duration
+	// note explains why a session ended on its own ("事务已超时并自动回滚");
+	// hand-driven commit/rollback leave it empty.
+	note string
 }
 
 // HasTx reports whether a transaction is open or aborted. Both states keep the
@@ -95,11 +113,14 @@ func (s *Session) DatabaseName() string {
 	return s.Database
 }
 
-// Opener is what the client must provide: the three calls that reach dbcore.
+// Opener is what the client must provide: the three calls that reach dbcore,
+// plus the isolation level the connection was configured with (read back for
+// the session's status line; "" = the engine's default).
 type Opener interface {
 	Begin(database string) (string, error)
 	Commit(id string) error
 	Rollback(id string) error
+	IsolationLevel() string
 }
 
 // ErrNotActive is returned for commit/rollback on a tab with no transaction.
@@ -119,7 +140,14 @@ var ErrDatabaseMismatch = errors.New("the open transaction belongs to another da
 // address the wrong transaction and the other one leaks. The lock is per-tab, so
 // this only serialises Begin against that tab's own commit/rollback/statements,
 // which already share it.
-func (s *Session) Begin(open Opener, database string) error {
+//
+// An optional final timeout argument (DESIGN-txn-timeout-2026-11-03, policy B)
+// fixes an absolute deadline at Begin: now + timeout, with warnAhead as the
+// window the UI starts warning in. Running statements never move the deadline —
+// the absolute choice is what gives a transaction the user walked away from an
+// upper bound on how long it can hold server-side resources. Passing no timeout
+// keeps the session unbounded, which is the pre-existing behavior.
+func (s *Session) Begin(open Opener, database string, timeout ...time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.Status == Active || s.Status == Failed {
@@ -132,9 +160,99 @@ func (s *Session) Begin(open Opener, database string) error {
 	s.Status = Active
 	s.ID = id
 	s.Database = database
+	s.Isolation = open.IsolationLevel()
 	s.Statements = 0
 	s.Err = ""
+	s.note = ""
+	s.deadline = time.Time{}
+	s.warnAhead = 0
+	if len(timeout) > 0 && timeout[0] > 0 {
+		s.deadline = time.Now().Add(timeout[0])
+		s.warnAhead = timeout[0] / 6 // 10m → 1m, the design's default ratio
+		if len(timeout) > 1 && timeout[1] > 0 {
+			s.warnAhead = timeout[1]
+		}
+	}
 	return nil
+}
+
+// Remaining reports how long is left before the transaction's absolute deadline;
+// negative once past it. A session without a deadline (Begin was called without
+// a timeout) reports the zero duration, which callers show as "no limit".
+func (s *Session) Remaining(now time.Time) time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deadline.IsZero() || (s.Status != Active && s.Status != Failed) {
+		return 0
+	}
+	return s.deadline.Sub(now)
+}
+
+// Warned reports whether now is inside the deadline's warn-ahead window. A
+// session without a deadline never warns; a closed one has nothing left to
+// warn about.
+func (s *Session) Warned(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deadline.IsZero() || (s.Status != Active && s.Status != Failed) {
+		return false
+	}
+	return s.deadline.Sub(now) <= s.warnAhead
+}
+
+// TimedOut reports whether the session carries an open (or aborted)
+// transaction whose absolute deadline has passed. This — not Remaining — is
+// what a sweeper asks: "no deadline" and "deadline exactly now" must not be
+// conflated, and the HasTx guard lives here so callers cannot sweep a
+// session that never had a transaction.
+func (s *Session) TimedOut(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.deadline.IsZero() || (s.Status != Active && s.Status != Failed) {
+		return false
+	}
+	return !now.Before(s.deadline)
+}
+
+// Note explains why a session ended on its own ("事务已超时并自动回滚").
+func (s *Session) Note() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.note
+}
+
+// Sweep rolls the transaction back once past its deadline and records why.
+// It returns whether it acted, so a repeated sweep is a no-op. The deadline
+// check and the close are one step under the lock — mirroring how Begin holds
+// its lock across the opener round trip — so two concurrent sweeps cannot both
+// see an open transaction and double-rollback it. A session without a deadline
+// (or already closed) is left untouched. Rolling back outside the lock keeps
+// the same discipline as Commit/Rollback: the session state resets first, the
+// network round trip runs after.
+func (s *Session) Sweep(open Opener, now time.Time) (bool, error) {
+	s.mu.Lock()
+	if s.deadline.IsZero() || (s.Status != Active && s.Status != Failed) {
+		s.mu.Unlock()
+		return false, nil
+	}
+	if now.Before(s.deadline) {
+		s.mu.Unlock()
+		return false, nil
+	}
+	id := s.ID
+	s.resetLocked()
+	s.note = "事务已超时并自动回滚"
+	s.mu.Unlock()
+	err := open.Rollback(id)
+	if err != nil {
+		// The rollback round trip failed: the server-side transaction may
+		// still be open. Surface it — the sweeper logs it, and the next
+		// sweep attempt sees a closed session, so it will not retry on its
+		// own; the user's next explicit rollback (or tab close, which
+		// forgetSession tolerates a missing id on) is the retry.
+		return true, err
+	}
+	return true, nil
 }
 
 // Commit finalizes. A failed transaction can still be committed (the engine
@@ -211,21 +329,42 @@ func (s *Session) Record(err error) {
 
 // resetLocked returns the session to autocommit; the caller holds mu.
 // ConnID is kept: it identifies the tab's connection, not the transaction.
+// note is kept too: a sweep sets it AFTER reset, and the UI reads it off the
+// closed session to explain why the transaction vanished.
 func (s *Session) resetLocked() {
 	s.Status = None
 	s.ID = ""
 	s.Database = ""
 	s.Statements = 0
 	s.Err = ""
+	s.deadline = time.Time{}
+	s.warnAhead = 0
 }
 
-// Describe is the one-line status the UI shows next to the editor.
+// Describe is the one-line status the UI shows next to the editor. A session
+// with an absolute deadline appends the remaining time — the design's "呈现 C"
+// riding on policy B — and a warning mark once inside the warn-ahead window.
 func (s *Session) Describe() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	switch s.Status {
 	case Active:
-		return fmt.Sprintf("事务中 · %d 条语句 · %s", s.Statements, s.Database)
+		line := fmt.Sprintf("事务中 · %d 条语句 · %s", s.Statements, s.Database)
+		if s.Isolation != "" {
+			line += fmt.Sprintf(" · 隔离 %s", s.Isolation)
+		}
+		if !s.deadline.IsZero() {
+			remaining := time.Until(s.deadline)
+			if remaining < 0 {
+				remaining = 0
+			}
+			mark := ""
+			if s.warnAhead > 0 && remaining <= s.warnAhead {
+				mark = " · ⚠ 即将超时"
+			}
+			line += fmt.Sprintf(" · 还剩 %s%s", remaining.Round(time.Second), mark)
+		}
+		return line
 	case Failed:
 		return fmt.Sprintf("事务已中止 · %s", firstLine(s.Err))
 	default:

@@ -87,6 +87,14 @@ interface QueryEditorProps {
   txStatus?: string;
   txActive?: boolean;
   txBusy?: boolean;
+  // Absolute-deadline countdown (DESIGN-txn-timeout-2026-11-03 phase 3):
+  // remainingMs is the deadline the backend reported; the editor ticks it down
+  // locally every second and flags the warn window, so the countdown runs
+  // without polling. The backend sweeps past-due transactions on its own —
+  // when the countdown hits zero the badge says so until the next status
+  // refresh flips the tab back to autocommit. 0 = no deadline (governance off).
+  txRemainingMs?: number;
+  txWarned?: boolean;
   onBeginTx?: () => void;
   onCommitTx?: () => void;
   onRollbackTx?: () => void;
@@ -251,6 +259,8 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     txStatus = '',
     txActive = false,
     txBusy = false,
+    txRemainingMs = 0,
+    txWarned = false,
     onBeginTx,
     onCommitTx,
     onRollbackTx,
@@ -275,6 +285,22 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
   // so a favorite saved in another tab shows up without a refresh.
   const [favorites, setFavorites] = useState<Favorite[]>([]);
   const [showFavorites, setShowFavorites] = useState(false);
+
+  // The deadline countdown ticks down locally: one re-render a second while a
+  // transaction with a deadline is open, nothing otherwise. The deadline
+  // itself comes from the backend at Begin (and any status refresh); running
+  // statements never extend it, so a plain subtraction is the whole math.
+  const [txLeftMs, setTxLeftMs] = useState(txRemainingMs);
+  useEffect(() => {
+    setTxLeftMs(txRemainingMs);
+  }, [txRemainingMs]);
+  useEffect(() => {
+    if (!txActive || txRemainingMs <= 0) return;
+    const timer = setInterval(() => {
+      setTxLeftMs((ms) => (ms > 0 ? ms - 1000 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [txActive, txRemainingMs > 0]);
 
   // Named parameters: a statement with `:name` markers asks for values before
   // it runs. The substitution lands in the editor itself, so what runs is
@@ -315,7 +341,10 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     const view = viewRef.current;
     if (!view) return;
     const sql = view.state.doc.toString();
-    const filled = substituteParams(sql, paramDialog.values);
+    // The engine's literal spelling rides along: MySQL's default sql_mode
+    // treats '\' as an escape, so a value ending in one would swallow the
+    // closing quote unless the substitution doubles it (see substituteParams).
+    const filled = substituteParams(sql, paramDialog.values, dialect);
     view.dispatch({
       changes: { from: 0, to: view.state.doc.length, insert: filled },
       selection: { anchor: Math.min(view.state.selection.main.head, filled.length) },
@@ -726,8 +755,20 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
               </button>
             )}
             {txStatus && (
-              <span className="text-2xs text-warning whitespace-nowrap" title={txStatus}>
+              <span
+                className={`text-2xs whitespace-nowrap ${
+                  txActive && txLeftMs > 0 && txLeftMs <= 60000
+                    ? 'text-danger font-semibold'
+                    : txActive && txLeftMs > 0 && (txWarned || txLeftMs <= 300000)
+                      ? 'text-warning font-semibold'
+                      : 'text-muted'
+                }`}
+                title={txStatus}
+              >
                 {txStatus}
+                {txActive && txLeftMs > 0 &&
+                  ` · ${txLeftMs >= 60000 ? `${Math.floor(txLeftMs / 60000)}分` : ''}${Math.floor((txLeftMs % 60000) / 1000)}秒`}
+                {txActive && txRemainingMs > 0 && txLeftMs <= 0 && ' · 已到时限，等待自动回滚'}
               </span>
             )}
           </div>
@@ -892,6 +933,26 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                       <option value="confirmNoWhere">无 WHERE 的写操作需确认</option>
                       <option value="blockNoWhere">禁止无 WHERE 的 UPDATE/DELETE</option>
                     </select>
+                  </label>
+
+                  <label className="block p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">
+                    <span>事务超时（分钟）</span>
+                    <span className="block text-2xs text-muted mb-1">
+                      开启事务后的绝对时限，到点自动回滚；0 表示不限制。倒计时显示在编辑器事务徽标上
+                    </span>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={settings.txTimeoutMinutes}
+                      onChange={e =>
+                        onSettingsChange({
+                          ...settings,
+                          txTimeoutMinutes: Math.max(0, Number(e.target.value) || 0),
+                        })
+                      }
+                      className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"
+                    />
                   </label>
 
                   <label className="block p-1.5 text-xs text-ink border-t border-line mt-1 pt-2">

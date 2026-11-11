@@ -92,6 +92,7 @@ import {
   ExecuteQueryInTab,
   ForgetTxSession,
   RollbackTransaction,
+  TransactionStatusDetail,
 } from './api';
 import { defaultSettings, saveSettings, useLoadSettings, useSettingsEffect } from './lib/useSettings';
 import { useIdleLock } from './lib/useIdleLock';
@@ -341,7 +342,19 @@ function App() {
     pendingEdits.current.delete(tabId);
     // The backend rolls back and forgets the tab's transaction session;
     // fire-and-forget: tab closing must not block on a network round-trip.
-    ForgetTxSession(tabId).catch(() => {});
+    // A rejected request is logged rather than swallowed: if the server
+    // still holds the session, the rollback would otherwise leak silently.
+    ForgetTxSession(tabId).catch(e =>
+      console.error('Failed to forget transaction session:', e),
+    );
+    // A statement still running under this tab is cancelled too: the server
+    // keeps reading rows (and holding its pooled connection) after the UI has
+    // moved on, and for a transaction the rollback lands underneath the still
+    // running statement. fire-and-forget, same reason as above.
+    const connId = tabs.find(t => t.id === tabId)?.connectionId;
+    if (connId) {
+      CancelQuery(connId, tabId).catch(e => console.error('Failed to cancel query:', e));
+    }
     const newTabs = tabs.filter(t => t.id !== tabId);
     setTabs(newTabs);
     if (activeTab === tabId) {
@@ -417,6 +430,8 @@ function App() {
   const txHandlers = (tab: Tab) => ({
     txActive: !!tab.txStatus,
     txStatus: tab.txStatus ?? '',
+    txRemainingMs: tab.txRemainingMs ?? 0,
+    txWarned: tab.txWarned ?? false,
     txBusy: txBusy(txPending[tab.id] ?? null),
     onBeginTx: async () => {
       if (!activeConnection) return;
@@ -424,8 +439,17 @@ function App() {
       setTxPending(p => ({ ...p, [tab.id]: pending }));
       if (pending !== null) return; // a click while in flight is a no-op
       try {
-        const status = await BeginTransaction(activeConnection.id, tab.id, tabDatabase(tab));
-        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: status } : t)));
+        // One round trip: the status and the countdown detail arrive together,
+        // so a hiccup cannot strand an open transaction behind a missing badge
+        // (the calibrator below only re-syncs tabs that already carry one).
+        const { status, detail } = await BeginTransaction(activeConnection.id, tab.id, tabDatabase(tab));
+        setTabs(current =>
+          current.map(t =>
+            t.id === tab.id
+              ? { ...t, txStatus: status, txRemainingMs: detail.remainingMs, txWarned: detail.warned }
+              : t,
+          ),
+        );
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
       } finally {
@@ -439,7 +463,7 @@ function App() {
       if (pending !== null) return;
       try {
         await CommitTransaction(activeConnection.id, tab.id);
-        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '' } : t)));
+        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '', txRemainingMs: 0, txWarned: false } : t)));
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
       } finally {
@@ -453,7 +477,7 @@ function App() {
       if (pending !== null) return;
       try {
         await RollbackTransaction(activeConnection.id, tab.id);
-        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '' } : t)));
+        setTabs(current => current.map(t => (t.id === tab.id ? { ...t, txStatus: '', txRemainingMs: 0, txWarned: false } : t)));
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
       } finally {
@@ -461,6 +485,36 @@ function App() {
       }
     },
   });
+
+  // Deadline calibration (phase 3): every 30s the open transaction's status
+  // is re-read so the local countdown re-syncs with the backend's clock. The
+  // backend's sweeper rolls a past-due transaction back on its own — the read
+  // then reports autocommit and the badge clears, which is how the UI learns
+  // the sweep happened without any push channel.
+  useEffect(() => {
+    const open = tabs.filter(t => t.txStatus);
+    if (open.length === 0) return;
+    const timer = setInterval(async () => {
+      for (const t of open) {
+        try {
+          const d = await TransactionStatusDetail(t.id);
+          setTabs(current =>
+            current.map(tab =>
+              tab.id === t.id
+                ? tab.txStatus
+                  ? { ...tab, txStatus: d.status, txRemainingMs: d.remainingMs, txWarned: d.warned }
+                  : tab // the tab closed meanwhile; leave it alone
+                : tab,
+            ),
+          );
+        } catch {
+          // A failed calibration read is not fatal: the local countdown keeps
+          // running, the next tick retries, and the backend sweeps regardless.
+        }
+      }
+    }, 30000);
+    return () => clearInterval(timer);
+  }, [tabs]);
 
   // Every switch away from a tab goes through here: the grid's edit queue
   // dies with the component, so edits the user has not applied yet are lost.

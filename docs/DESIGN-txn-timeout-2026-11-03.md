@@ -1,8 +1,16 @@
 # 事务超时治理设计（TableProGo / `internal/txn`）
 
 - 日期：2026-11-03
-- 状态：**设计稿，待评审**。本稿不含行为变更。
-- 关联：`POLISH-PLAN-2026-11-02.md` P1-6；`WORKSPACE.md` §40（wave 32 事务悬挂接线）。
+- 状态：**已落地（2026-11-06）**。§5/§6 的阶段 1+2 已按本稿实现：
+  `Session` 的 `deadline/warnAhead/note` + `Remaining/Warned/TimedOut/Note/Sweep`；
+  `AppSettings` 的 `txTimeoutMinutes`（默认 10m，0 关闭）/`txWarnAheadMinutes`；
+  App sweeper（10s ticker + tx-status 轮询顺带 sweep，双到达由 Sweep 锁纪律保证
+  恰好一次）。§7 的裁定：默认 10m（对齐 db-dev）；"延长"未提供（显式出口为
+  倒计时内 COMMIT 或重开）；`Failed` 会话纳入 sweep（§7.3 建议采纳）；
+  `Degraded` 降级不做（§7.4 建议采纳）；sweeper 放在 App（`startTxSweeper`），
+  `internal/txn` 只提供无 IO 的 `Sweep`。阶段 3（前端倒计时 UI）待后波——
+  `/api/tx-status` 已返回 `remainingMs/warned/note`，数据面已备齐。
+- 关联：`POLISH-PLAN-2026-11-02.md` P1-6；`WORKSPACE.md` §40（wave 32 事务悬挂接线）、§79/§80。
 - 参考实现：`D:\tools\db\db-dev\internal\db\tx.go`（`DefaultTxTimeout = 10m`、`TxWarnAhead = 1m`、`MaxActiveTx = 8`）；`fynequery/db` 的 manual transaction 路径。
 
 ---

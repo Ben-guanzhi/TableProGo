@@ -22,6 +22,11 @@ export const defaultSettings: AppSettings = {
   idleLockMinutes: 0,
   lockOnHide: false,
   lockOnSleep: true,
+  // Transaction governance matches the backend default: a 10-minute absolute
+  // deadline, warning a minute ahead (the backend's built-in ratio). The
+  // frontend mirrors these only for the settings input; the sweeper is server-side.
+  txTimeoutMinutes: 10,
+  txWarnAheadMinutes: 0,
 };
 
 // useSettingsEffect paints the theme and follows the OS preference while the

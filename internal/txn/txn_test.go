@@ -11,6 +11,7 @@ type fakeOpener struct {
 	commits  []string
 	rollback []string
 	err      error
+	iso      string
 }
 
 func (f *fakeOpener) Begin(database string) (string, error) {
@@ -30,6 +31,8 @@ func (f *fakeOpener) Rollback(id string) error {
 	f.rollback = append(f.rollback, id)
 	return f.err
 }
+
+func (f *fakeOpener) IsolationLevel() string { return f.iso }
 
 func TestBeginCommitRoundTrip(t *testing.T) {
 	op := &fakeOpener{}
@@ -69,6 +72,28 @@ func TestBeginTwiceIsRefused(t *testing.T) {
 	}
 	if len(op.begun) != 1 {
 		t.Fatalf("begun = %v", op.begun)
+	}
+}
+
+// The session's status line carries the isolation level the transaction was
+// opened with (TXN-03): configured on the connection, read back through the
+// Opener, shown so the user can see which dial their transaction runs under.
+// A connection without a level keeps the old shorter line.
+func TestDescribeShowsIsolationLevel(t *testing.T) {
+	var s Session
+	if err := s.Begin(&fakeOpener{iso: "repeatable_read"}, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "事务中 · 0 条语句 · app · 隔离 repeatable_read"; s.Describe() != want {
+		t.Fatalf("Describe() = %q, want %q", s.Describe(), want)
+	}
+
+	var bare Session
+	if err := bare.Begin(&fakeOpener{}, "app"); err != nil {
+		t.Fatal(err)
+	}
+	if want := "事务中 · 0 条语句 · app"; bare.Describe() != want {
+		t.Fatalf("bare Describe() = %q, want %q", bare.Describe(), want)
 	}
 }
 

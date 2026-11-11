@@ -627,9 +627,30 @@ export async function ExecuteQueryConfirmed(connId: string, query: string, datab
 // Interactive transactions (backend txn.go): one per tab, so two editor tabs on one
 // connection keep separate transactions. The statements themselves go through
 // ExecuteQueryInTab, which joins the tab's open transaction.
-export async function BeginTransaction(connId: string, tabId: string, database = ''): Promise<string> {
+//
+// BeginTransaction answers with the status AND the structured detail in one
+// round trip: the frontend used to issue Begin then TransactionStatusDetail as
+// two awaits in one try block, and a failed second left the transaction open
+// server-side with no badge (the deadline calibrator only re-syncs tabs that
+// already carry a badge, so it stayed invisible until the sweeper rolled it
+// back).
+export interface BeginTxResponse {
+  status: string;
+  detail: {
+    status: string;
+    remainingMs: number;
+    warned: boolean;
+    note?: string;
+  };
+}
+
+export async function BeginTransaction(connId: string, tabId: string, database = ''): Promise<BeginTxResponse> {
   const res = await post('/api/begin-tx', { connId, tabId, database });
-  return (res as { status: string }).status;
+  const r = res as BeginTxResponse;
+  // Tolerate an older backend that still answers {status} only.
+  if (r && typeof r === 'object' && 'detail' in r) return r;
+  const status = (res as { status: string }).status;
+  return { status, detail: { status, remainingMs: 0, warned: false } };
 }
 
 export async function CommitTransaction(connId: string, tabId: string): Promise<string> {
@@ -645,6 +666,23 @@ export async function RollbackTransaction(connId: string, tabId: string): Promis
 export async function TransactionStatus(tabId: string): Promise<string> {
   const res = await post('/api/tx-status', { connId: '', tabId, database: '' });
   return (res as { status: string }).status;
+}
+
+// TxStatusDetail is /api/tx-status's structured answer: the one-line status
+// plus the deadline fields (backend txn.go TxStatusDetail) the editor turns
+// into a countdown. remainingMs is 0 when the session has no deadline
+// (governance off or no transaction open); note is non-empty only after an
+// automatic rollback.
+export interface TxStatusDetail {
+  status: string;
+  remainingMs: number;
+  warned: boolean;
+  note?: string;
+}
+
+export async function TransactionStatusDetail(tabId: string): Promise<TxStatusDetail> {
+  const res = await post('/api/tx-status', { connId: '', tabId, database: '' });
+  return res as TxStatusDetail;
 }
 
 // ForgetTxSession rolls back and drops a tab's transaction state on tab
@@ -728,11 +766,18 @@ export interface StreamEvent {
 export interface StreamHandlers {
   onColumns?: (columns: Column[]) => void;
   onRows?: (rows: any[][]) => void;
+  // AbortSignal for the stream itself: aborting closes the fetch and ends the
+  // reader loop immediately, instead of waiting for the server to finish
+  // pushing after the UI-side cancel (the backend cancel-query stops the
+  // statement, but the browser-side fetch used to keep draining until then).
+  signal?: AbortSignal;
 }
 
 // ExecuteQueryStream reads the NDJSON response and calls the handlers as rows
 // arrive, resolving with the final "done"/"error" event. A Safe Mode pause comes
-// back as type "error" with needsConfirmation set (nothing ran).
+// back as type "error" with needsConfirmation set (nothing ran). An aborted
+// signal rejects with the AbortError, so callers can tell a cancel from a
+// server error.
 export async function ExecuteQueryStream(
   connId: string,
   query: string,
@@ -744,33 +789,46 @@ export async function ExecuteQueryStream(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
     body: JSON.stringify({ connId, query, database, tabId }),
+    signal: handlers.signal,
   });
   if (!res.ok || !res.body) {
     throw new Error(`stream failed: HTTP ${res.status}`);
   }
   const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let final: StreamEvent | null = null;
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newline = buffer.indexOf('\n');
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (line) {
-        const event = JSON.parse(line) as StreamEvent;
-        if (event.type === 'columns') handlers.onColumns?.(event.columns ?? []);
-        else if (event.type === 'rows') handlers.onRows?.(event.rows ?? []);
-        else final = event;
+  const abort = () => reader.cancel().catch(() => {});
+  if (handlers.signal) {
+    // A cancel that lands mid-read unblocks the pending read() and ends the
+    // loop; the fetch's own abort handling covers the pre-response window.
+    handlers.signal.addEventListener('abort', abort, { once: true });
+  }
+  try {
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let final: StreamEvent | null = null;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf('\n');
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (line) {
+          const event = JSON.parse(line) as StreamEvent;
+          if (event.type === 'columns') handlers.onColumns?.(event.columns ?? []);
+          else if (event.type === 'rows') handlers.onRows?.(event.rows ?? []);
+          else final = event;
+        }
+        newline = buffer.indexOf('\n');
       }
-      newline = buffer.indexOf('\n');
+    }
+    if (!final) throw new Error('stream ended without a terminal event');
+    return final;
+  } finally {
+    if (handlers.signal) {
+      handlers.signal.removeEventListener('abort', abort);
     }
   }
-  if (!final) throw new Error('stream ended without a terminal event');
-  return final;
 }
 
 // Columns of whichever table the query reads from; used for result comments
@@ -894,6 +952,11 @@ export interface AppSettings {
   idleLockMinutes: number;
   lockOnHide: boolean;
   lockOnSleep: boolean;
+  // Interactive-transaction governance (DESIGN-txn-timeout-2026-11-03): the
+  // absolute deadline in minutes (0 = off, the unbounded behavior) and how
+  // long before it the UI warns. Mirror of the backend AppSettings.
+  txTimeoutMinutes: number;
+  txWarnAheadMinutes: number;
 }
 
 export async function GetSettings(): Promise<AppSettings> {
