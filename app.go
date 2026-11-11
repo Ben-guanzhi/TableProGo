@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"sync/atomic"
@@ -206,7 +207,14 @@ func normalizeTheme(theme string) string {
 // live: the user's config directory, not the executable's folder, so saved
 // credentials and query history never sit inside a source tree or a shared
 // program directory.
+//
+// TABLEPRO_HOME overrides it. Two callers need that: tests (which must never
+// write into the developer's real profile — a lesson this workspace already paid
+// for once) and portable installs (a USB stick wants its state beside it).
 func userDataDir() string {
+	if dir := strings.TrimSpace(os.Getenv("TABLEPRO_HOME")); dir != "" {
+		return dir
+	}
 	if dir, err := os.UserConfigDir(); err == nil && dir != "" {
 		return filepath.Join(dir, "TableProGo")
 	}

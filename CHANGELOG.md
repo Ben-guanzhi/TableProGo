@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Plugin trust gate and panel (W10): a plugin is an executable the user did not
+  build, so its identity is checked BEFORE the launch, not after. Every declared
+  plugin is hashed (SHA-256) at startup and lands in one of three states —
+  `trusted` (matches what was vouched for) runs, `unknown` (nobody vouched for
+  this file) runs and is surfaced, `tampered` (a vouched path whose bytes changed)
+  is REFUSED. That asymmetry is the design: refusing `unknown` would break the
+  existing `TABLEPRO_PLUGIN_<TYPE>=path` dev workflow, allowing `tampered` would
+  make the trust store decorative. `internal/pluginreg` is the pure half (16
+  cases): registry and trust store (atomic writes, BOM tolerant, unknown schema
+  refused), path-keyed trust entries (absolute paths only — two spellings of one
+  file must agree, two files must not collide), and a trust entry overriding a
+  stale registry digest. `plugin_registry.json` ships a starter row on first open
+  so the panel points at a file to edit instead of a blank list; `plugin_trust
+  .json` records what the user vouched for, and the panel shows both digests side
+  by side on a tamper. `TABLEPRO_HOME` now overrides the state directory (tests
+  must not write into the real profile; portable installs want their state beside
+  them) — without it the plugin tests were writing into `%APPDATA%\TableProGo`,
+  and that residue was backed up and removed.
 - Scheduled batch jobs (W7): `tablepro-go --job=<recipe.json>` runs a JSON recipe
   headless and exits — the shape that fits a "start on demand" app, because cron
   and Task Scheduler already own retry, log rotation and alerting. A recipe names

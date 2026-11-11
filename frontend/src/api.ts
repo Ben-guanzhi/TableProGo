@@ -408,6 +408,55 @@ export async function ApplyRowSync(req: RowSyncApplyRequest): Promise<RowSyncApp
   return post('/api/rowsync/apply', { ...req, confirm: true });
 }
 
+// ---- W10: plugins panel ----
+
+export type PluginState = 'trusted' | 'unknown' | 'tampered';
+
+export interface PluginInfo {
+  type: string;
+  name: string;
+  path: string;
+  version?: string;
+  description?: string;
+  // "registry" (declared in plugin_registry.json) or "env" (TABLEPRO_PLUGIN_<TYPE>).
+  source: string;
+  state: PluginState;
+  detail: string;
+  expected?: string;
+  actual?: string;
+  enabled: boolean;
+  exists: boolean;
+}
+
+export interface PluginPanelData {
+  plugins: PluginInfo[] | null;
+  registryPath: string;
+  trustPath: string;
+  warnings: string[] | null;
+}
+
+// The panel reports the same three states the startup gate acts on, so it can
+// never show "trusted" for a file the gate would refuse.
+export async function ListPlugins(): Promise<PluginPanelData> {
+  return get('/api/plugins');
+}
+
+// Trusting records the CURRENT digest, which is what turns "unknown" (or a
+// re-built plugin) into "trusted" on the next start.
+export async function TrustPlugin(path: string, type: string): Promise<PluginInfo> {
+  return post('/api/plugins/trust', { path, type });
+}
+
+export async function UntrustPlugin(path: string): Promise<void> {
+  await post('/api/plugins/untrust', { path });
+}
+
+// Writes the starter registry on first open, so the panel points at a file the
+// user can edit instead of showing a blank list with no format hint.
+export async function EnsurePluginRegistry(): Promise<{ path: string }> {
+  return post('/api/plugins/ensure-registry', {});
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

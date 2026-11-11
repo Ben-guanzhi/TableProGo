@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShuffle, FiTable } from 'react-icons/fi';
+import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -28,6 +28,7 @@ import ImportDialog from './components/ImportDialog';
 import CompareView from './components/CompareView';
 import TransferDialog from './components/TransferDialog';
 import RowSyncDialog from './components/RowSyncDialog';
+import PluginPanel from './components/PluginPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -183,6 +184,8 @@ function App() {
   const [showTransfer, setShowTransfer] = useState(false);
   // W6: the row-level sync dialog.
   const [showRowSync, setShowRowSync] = useState(false);
+  // W10: the plugins panel.
+  const [showPlugins, setShowPlugins] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1818,6 +1821,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowPlugins(true)}
+              title="插件：查看/信任插件驱动"
+              aria-label="插件"
+            >
+              <FiShield size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2179,6 +2190,8 @@ function App() {
           onClose={() => setShowRowSync(false)}
         />
       )}
+
+      {showPlugins && <PluginPanel onClose={() => setShowPlugins(false)} />}
 
       {confirmReq && (
         <ConfirmDialog request={confirmReq} onDismiss={() => setConfirmReq(null)} />

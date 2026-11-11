@@ -541,7 +541,42 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/compare/apply", 400, func(a *App, body ApplySyncRequest) (any, error) {
 		return a.ApplySync(body)
 	})
-	// W5: server-to-server table copy. Preview is read-only and is what the UI
+	// W10: the plugins panel. Listing is read-only and reports the same three
+	// trust states the startup gate acts on; trusting is a write the user makes
+	// explicitly, and it is what turns "unknown" into "trusted" for the next run.
+	mux.HandleFunc("/api/plugins", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			panel, err := a.ListPlugins()
+			if err != nil {
+				writeError(w, 500, err.Error())
+				return
+			}
+			writeJSON(w, panel)
+		default:
+			w.WriteHeader(405)
+		}
+	})
+	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}) (any, error) {
+		return a.TrustPlugin(body.Path, body.Type)
+	})
+	post(a, mux, "/api/plugins/untrust", 400, func(a *App, body struct {
+		Path string `json:"path"`
+	}) (any, error) {
+		if err := a.UntrustPlugin(body.Path); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"ok": true}, nil
+	})
+	post(a, mux, "/api/plugins/ensure-registry", 400, func(a *App, _ struct{}) (any, error) {
+		if err := a.ensureDefaultPluginRegistry(); err != nil {
+			return nil, err
+		}
+		return map[string]string{"path": pluginRegistryPath()}, nil
+	})
 	// shows; Apply re-derives the plan from the request (never trusting one),
 	// requires Confirm, and stops at the first table that fails.
 	post(a, mux, "/api/transfer/preview", 400, func(a *App, body TransferRequest) (any, error) {

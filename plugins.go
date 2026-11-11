@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/dbcore/dbcore"
+	"tablepro-go/internal/pluginreg"
 )
 
 // pluginSpec describes how to launch one engine's plugin.
@@ -49,11 +50,29 @@ type pluginRegistry struct {
 var plugins = &pluginRegistry{specs: map[string]pluginSpec{}}
 
 // LoadPlugins reads the environment for plugin declarations. Called once at startup.
+//
+// W10: every declaration is verified BEFORE it is registered, so a trampered
+// executable is never offered as a driver. The check is deliberately here rather
+// than at launch: registering a plugin the trust gate refuses would leave the UI
+// offering an engine whose first query fails with a confusing error, and the
+// user would have no way to tell "the plugin is broken" from "the plugin was
+// swapped".
 func (r *pluginRegistry) Load() []error {
 	var errs []error
 	declared := map[string]string{}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	trustStore, err := loadPluginTrustStore()
+	if err != nil {
+		// A trust store that cannot be read is a warning, not a fatal: the app
+		// still works without plugins, and refusing to start over it would be a
+		// worse failure. Every plugin then lands in the "unknown" bucket, which
+		// is visible in the panel.
+		errs = append(errs, fmt.Errorf("插件信任清单不可用（本次全部按未信任处理）: %w", err))
+		trustStore = &pluginreg.TrustStore{}
+	}
+	trusted := pluginreg.TrustedMap(trustStore)
+
 	for _, kv := range os.Environ() {
 		name, value, ok := strings.Cut(kv, "=")
 		if !ok || !strings.HasPrefix(name, "TABLEPRO_PLUGIN_") || value == "" {
@@ -78,10 +97,38 @@ func (r *pluginRegistry) Load() []error {
 				"plugin for %s declared twice: %q and %q (refusing to pick silently)", typ, first, path))
 			continue
 		}
+		check, verr := pluginreg.Verify(path, "", trusted, typ)
+		if verr != nil {
+			errs = append(errs, fmt.Errorf("plugin for %s: %w", typ, verr))
+			continue
+		}
+		if !check.OK() {
+			// Tampered: refuse. This is the one state the store exists for.
+			errs = append(errs, fmt.Errorf("plugin for %s 被拒：%s", typ, check.Detail()))
+			continue
+		}
+		if check.State == pluginreg.StateUnknown {
+			log.Printf("plugin for %s: %s", typ, check.Detail())
+		}
 		declared[typ] = path
 		r.specs[typ] = pluginSpec{Path: path, Kind: typ}
 	}
 	return errs
+}
+
+// loadPluginTrustStore reads the trust store from the user data directory.
+func loadPluginTrustStore() (*pluginreg.TrustStore, error) {
+	path := userDataFilePath("plugin_trust.json")
+	store, err := pluginreg.LoadTrustStore(path)
+	if err != nil {
+		return nil, err
+	}
+	return store, nil
+}
+
+// savePluginTrustStore writes the trust store atomically.
+func savePluginTrustStore(store *pluginreg.TrustStore) error {
+	return pluginreg.SaveTrustStore(userDataFilePath("plugin_trust.json"), store)
 }
 
 // lookup reports the plugin registered for an engine type.
