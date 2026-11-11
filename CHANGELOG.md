@@ -8,6 +8,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Visual execution plan (W11, the EXPLAIN half of the Tabularis pair — the plan
+  chose one of the two, and the graph is the cheaper of the two to get right):
+  an EXPLAIN result gains a "可视化" entry that draws the plan as an SVG tree.
+  The statement is asked for in the engine's machine-readable format
+  (`sqltext.ExplainPlanStructured`: PostgreSQL `FORMAT JSON`, MySQL
+  `FORMAT=JSON`, SQLite's `EXPLAIN QUERY PLAN` rows, SQL Server's
+  `SHOWPLAN_XML`), so nothing is re-parsed out of prose. `internal/explainplan`
+  parses each envelope (12 cases): PostgreSQL's nested nodes are BARE plan
+  bodies while only the top level wraps in `{"Plan": …}` (declaring them wrapped
+  parses every child as an empty object — the tree keeps its shape and loses
+  every label); MySQL has no fixed schema so the walker treats any object with
+  `table_name` as a leaf and recurses through unknown wrappers; SQL Server's
+  `RelOp` tree is built with POINTERS because the scanned table arrives in a
+  child `<Object>` element AFTER the node was attached (a value copy loses it);
+  SQLite's parent links are the tree, and an orphan becomes a root rather than
+  vanishing. Every engine's payload declares `utf-16` while the driver hands over
+  UTF-8, so the XML decoder passes bytes through instead of failing on a charset
+  Go has no reader for. A full scan is flagged for every engine (`SCAN t`,
+  `Seq Scan`, `access_type=ALL`, `Clustered Index Scan`), because that is the one
+  thing a plan viewer must point at. Oracle offers only `DBMS_XPLAN` prose, so it
+  answers `format=text` and the grid stays: pretending to draw a plan we could
+  only read as text would be worse than showing the text. The layout
+  (`datagrid/planLayout.ts`, 8 cases) is deterministic — children in the plan's
+  own order, positions as sums of fixed sizes, so two SVG exports of one plan
+  agree — and a single-node plan is never magnified past 100%.
 - Plugin trust gate and panel (W10): a plugin is an executable the user did not
   build, so its identity is checked BEFORE the launch, not after. Every declared
   plugin is hashed (SHA-256) at startup and lands in one of three states —

@@ -859,6 +859,11 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/explain", 400, func(a *App, body queryRequest) (any, error) {
 		return a.ExplainQuery(body.ConnID, body.Query, body.Database), nil
 	})
+	// W11: the same plan as a tree, for the visual view. Read-only for the same
+	// reason: a plan never runs the statement.
+	post(a, mux, "/api/explain-plan", 400, func(a *App, body queryRequest) (any, error) {
+		return a.ExplainPlanTree(body.ConnID, body.Query, body.Database)
+	})
 	// The AI assistant: a chat whose model reaches the database through the MCP
 	// tools (llm.go). The provider settings live in their own file.
 	// The assistant's write path: the model proposes, the user disposes. These

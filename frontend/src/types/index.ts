@@ -450,6 +450,10 @@ export interface Tab {
   // previous run's rows as if they were the new ones.
   loading?: boolean;
   result?: QueryResult;
+  // W11: the structured execution plan behind the current result, when the last
+  // action was an EXPLAIN. Absent for a normal query, which is what hides the
+  // "可视化" entry.
+  plan?: import('../api').ExplainPlanData;
   // Which table the rows came from, when they can be written back to one.
   source?: TableRef | null;
   // Column comments keyed by lower-cased column name, from the query's table.

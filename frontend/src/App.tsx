@@ -29,6 +29,7 @@ import CompareView from './components/CompareView';
 import TransferDialog from './components/TransferDialog';
 import RowSyncDialog from './components/RowSyncDialog';
 import PluginPanel from './components/PluginPanel';
+import ExplainPlanView from './components/ExplainPlanView';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -65,6 +66,7 @@ import {
   PreviewTable,
   RunTableAction,
   ExplainQuery,
+  ExplainPlanTree,
   GetTableStructure,
   GetHistory,
   ClearHistory,
@@ -186,6 +188,8 @@ function App() {
   const [showRowSync, setShowRowSync] = useState(false);
   // W10: the plugins panel.
   const [showPlugins, setShowPlugins] = useState(false);
+  // W11: the visual execution plan, opened from a plan result's toolbar.
+  const [showPlan, setShowPlan] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1216,8 +1220,15 @@ function App() {
     try {
       const result = await ExplainQuery(activeConnection.id, sql, database);
       if (!stillCurrent()) return;
+      // W11: fetch the structured tree alongside the text grid, so the
+      // "可视化" button has something to draw. A failure here must not lose the
+      // text plan the user already asked for, so it is swallowed.
+      const tree = await ExplainPlanTree(activeConnection.id, sql, database).catch(() => null);
+      if (!stillCurrent()) return;
       setTabs(current => current.map(t =>
-        t.id === tabId ? { ...t, database, result, comments: undefined, source: null, loading: false } : t
+        t.id === tabId
+          ? { ...t, database, result, comments: undefined, source: null, loading: false, plan: tree ?? undefined }
+          : t
       ));
     } catch (error) {
       if (!stillCurrent()) return;
@@ -2075,6 +2086,22 @@ function App() {
 
               {!activeTabData.loading && activeTabData.result && (
                 <div className={isErrorResult ? 'shrink-0' : 'flex-1 flex flex-col min-h-0'}>
+                  {/* W11: a plan result gets a visual entry beside the grid. The
+                      grid stays the default view (it holds the raw text and the
+                      per-engine columns); the graph is the same data, drawn. */}
+                  {activeTabData.plan && (
+                    <div className="flex items-center gap-2 px-3 py-1 bg-panel border-b border-line shrink-0">
+                      <span className="text-2xs text-muted">
+                        执行计划 · {activeTabData.plan.nodes} 个节点
+                      </span>
+                      <button
+                        className="px-2 py-0.5 rounded text-2xs border border-line text-secondary hover:text-ink hover:bg-raised"
+                        onClick={() => setShowPlan(true)}
+                      >
+                        可视化
+                      </button>
+                    </div>
+                  )}
                   <DataGrid
                     result={activeTabData.result}
                     comments={activeTabData.comments}
@@ -2192,6 +2219,10 @@ function App() {
       )}
 
       {showPlugins && <PluginPanel onClose={() => setShowPlugins(false)} />}
+
+      {showPlan && activeTabData?.plan && (
+        <ExplainPlanView plan={activeTabData.plan} onClose={() => setShowPlan(false)} />
+      )}
 
       {confirmReq && (
         <ConfirmDialog request={confirmReq} onDismiss={() => setConfirmReq(null)} />

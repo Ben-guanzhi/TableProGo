@@ -457,6 +457,40 @@ export async function EnsurePluginRegistry(): Promise<{ path: string }> {
   return post('/api/plugins/ensure-registry', {});
 }
 
+// ---- W11: visual execution plan ----
+
+export interface PlanNode {
+  label: string;
+  detail?: string;
+  cost?: number;
+  // -1 when the engine reported no row estimate.
+  rows: number;
+  children?: PlanNode[];
+  depth: number;
+  // A one-line hint the renderer highlights (a full scan, a filesort).
+  warn?: string;
+}
+
+export interface ExplainPlanData {
+  // Absent when the engine only offers prose (Oracle), in which case the caller
+  // shows `raw` instead of drawing.
+  root?: PlanNode;
+  format: string;
+  raw: string;
+  note?: string;
+  nodes: number;
+}
+
+// The same statement, asked for in the engine's machine-readable plan format.
+// Nothing in a plan executes the statement, so there is no Safe Mode gate.
+export async function ExplainPlanTree(
+  connId: string,
+  query: string,
+  database = '',
+): Promise<ExplainPlanData> {
+  return post('/api/explain-plan', { connId, query, database });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.
