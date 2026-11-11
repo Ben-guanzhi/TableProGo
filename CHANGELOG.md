@@ -5,11 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.1.0] - 2026-11-12
 
 ### Added
 - Go + Wails desktop database client
 - Multi-engine support: MySQL, PostgreSQL, SQLite, SQL Server, Oracle
+- Protocol-compatible engines in the connection dialog: OceanBase (MySQL mode,
+  port 2881), GreatSQL, StarRocks and Apache Doris (FE query port 9030) speak
+  the MySQL wire protocol; openGauss, Huawei GaussDB and KingbaseES speak
+  PostgreSQL's. Each alias opens with the built-in driver of the engine whose
+  protocol it speaks — the dialect, catalog statements, imports and native
+  backups (pg_dump/mysqldump) come from the shared implementation, and the
+  conventional port is prefilled per alias. The 18 `conn.Type == "mysql"` /
+  `"postgresql"` comparisons now ask `isMySQLLike` / `isPostgresLike`
+  (engines.go) instead, so an alias branches exactly like its base engine.
+- Import: Excel (XLSX/XLSM) reading — a workbook may hold several worksheets and
+  each worksheet imports into its own table, so one bad sheet cannot take the
+  others down (each sheet is its own transaction). Sheet names are cleaned into
+  default table names. The pure-Go excelize reader shares the CSV/JSON
+  `(cols, rows)` shape, so the existing transaction, skip-errors and upsert
+  handling are reused unchanged.
+- Column mapping on import: a non-empty map is authoritative (columns it does not
+  name are skipped), it is applied before type inference and `CREATE TABLE`,
+  renamed targets are rejected when duplicated, and a source column that is not
+  in the file is refused before anything is written. The dialog supplies the map
+  as text and reports it back as one entry per file column.
+- Import preview: `POST /api/import/preview` resolves the mapping and renders the
+  DDL and sample `INSERT` statements `ImportFile` would run, without touching the
+  database. It shares the resolution path with the run, so the preview cannot
+  drift from what is executed.
+- Import: multiple files in one request (`paths`); SQL scripts are executed one
+  after another and their results aggregated.
+- Native-tool backup for SQLite: the official sqlite3 `.dump` (read-only URI
+  open, tool found via TABLEPRO_SQLITE3 / TABULA_SQLITE3 or PATH) produces the
+  BEGIN...COMMIT-wrapped executable SQL, alongside the existing pg_dump /
+  mysqldump paths. Partial modes are refused honestly (.dump is whole-database)
+  and an in-memory database is refused too — there is no file to hand the tool.
+  The backup menu now appears for SQLite and the protocol-compatible engines,
+  and the dialog names the tool and env var per engine family.
 - Data masking on every AI surface: string cells of the MCP `query` /
   `sample_table` results and of the LLM assistant's query output go through
   the shared dbcore/masking kernel (sensitive column names masked wholesale —
@@ -23,13 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dialect-specific quoting is not available to the Catalog, so the injection
   surface is closed by shape; the LIMIT is built server-side and the existing
   single-statement and read-only gates still apply.
-- Native-tool backup for SQLite: the official sqlite3 `.dump` (read-only URI
-  open, tool found via TABLEPRO_SQLITE3 / TABULA_SQLITE3 or PATH) produces the
-  BEGIN...COMMIT-wrapped executable SQL, alongside the existing pg_dump /
-  mysqldump paths. Partial modes are refused honestly (.dump is whole-database)
-  and an in-memory database is refused too — there is no file to hand the tool.
-  The backup menu now appears for SQLite and the protocol-compatible engines,
-  and the dialog names the tool and env var per engine family.
 - Protocol-compatible engines in the connection dialog: OceanBase (MySQL mode,
   port 2881), GreatSQL, StarRocks and Apache Doris (FE query port 9030) speak
   the MySQL wire protocol; openGauss, Huawei GaussDB and KingbaseES speak
