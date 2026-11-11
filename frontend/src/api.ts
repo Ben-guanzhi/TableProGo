@@ -344,6 +344,70 @@ export async function ApplyTransfer(req: TransferRequest): Promise<TransferResul
   return post('/api/transfer/apply', { ...req, confirm: true });
 }
 
+// ---- W6: row-level sync ----
+
+export interface RowSyncRequest {
+  source: TransferTarget;
+  target: TransferTarget;
+  table: string;
+  // Columns that never count as a difference (touched-at, auto-increment).
+  ignoreColumns?: string[];
+}
+
+export interface RowSyncChange {
+  seq: number;
+  op: 'insert' | 'update' | 'delete';
+  // The primary-key tuple, rendered for display.
+  key: string;
+  values?: Record<string, unknown> | null;
+}
+
+// The plan summary: counts plus a bounded sample. The full plan stays on the
+// server, addressed by planId.
+export interface RowSyncPreview {
+  planId: string;
+  table: string;
+  pk: string[] | null;
+  inserts: number;
+  updates: number;
+  deletes: number;
+  total: number;
+  sample: RowSyncChange[] | null;
+  truncated: boolean;
+  sourceRows: number;
+  targetRows: number;
+  elapsed: string;
+}
+
+export interface RowSyncApplyRequest {
+  planId: string;
+  // The changes to run, by seq. Empty applies nothing.
+  seqs: number[];
+  confirm: boolean;
+}
+
+export interface RowSyncApplyResult {
+  applied: number;
+  total: number;
+  inserts: number;
+  updates: number;
+  deletes: number;
+  error?: string;
+  elapsed: string;
+}
+
+// Preview merges both tables and stores the plan. Read-only: nothing is written
+// until apply.
+export async function PreviewRowSync(req: RowSyncRequest): Promise<RowSyncPreview> {
+  return post('/api/rowsync/preview', req);
+}
+
+// Apply runs the ticked changes in one transaction; the server re-checks that
+// the plan still exists and that confirm arrived.
+export async function ApplyRowSync(req: RowSyncApplyRequest): Promise<RowSyncApplyResult> {
+  return post('/api/rowsync/apply', { ...req, confirm: true });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

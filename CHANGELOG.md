@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Row-level synchronization (W6): analyse a table's two sides by primary key and
+  apply only the ticked differences. `internal/rowsync` is the pure merge (18
+  cases): two streams ordered by the same key are merged with a two-way merge, so
+  every key is visited exactly once and none is skipped; NULL equals NULL (both
+  sides saying "no value" is agreement, not a difference), text comparison is
+  byte-exact, and an unordered stream is refused rather than merged into a wrong
+  plan. The orchestrator (`rowsync.go`, 10 end-to-end cases on real SQLite) reads
+  both sides by the FULL primary key (a composite PK needs the whole tuple, which
+  is why the fetcher sorts by every PK column and pages by offset), requires an
+  identical column set and PK order — a mismatch names the columns instead of
+  silently dropping them — and stores the plan so apply addresses changes by seq.
+  Apply runs the ticked changes in ONE transaction (a half-applied sync is
+  impossible) and requires `confirm`; an expired plan is refused. Tables without a
+  primary key are refused outright: without a row identity there is nothing to
+  address. The dialog lists every change with its operation, highlights deletions,
+  and starts with NOTHING ticked — the cheap-looking default (tick all) is the
+  destructive one.
 - Server-to-server table copy (W5): preview then apply, with the plan visible
   before anything is written. `internal/transfer` is the pure planning half
   (17 cases): tables are ordered by FK dependency (Kahn's algorithm with a name

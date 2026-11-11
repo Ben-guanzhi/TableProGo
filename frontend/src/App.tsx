@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiSearch, FiShare2, FiShuffle, FiTable } from 'react-icons/fi';
+import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -27,6 +27,7 @@ import ConfirmDialog, { ConfirmRequest } from './components/ConfirmDialog';
 import ImportDialog from './components/ImportDialog';
 import CompareView from './components/CompareView';
 import TransferDialog from './components/TransferDialog';
+import RowSyncDialog from './components/RowSyncDialog';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -180,6 +181,8 @@ function App() {
   // W5: the server-to-server copy dialog. Its source defaults to the connection
   // the navigator was on, which is where a user starts from.
   const [showTransfer, setShowTransfer] = useState(false);
+  // W6: the row-level sync dialog.
+  const [showRowSync, setShowRowSync] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1807,6 +1810,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowRowSync(true)}
+              title="行级同步：按主键把两张同名表的行对齐"
+              aria-label="行级数据同步"
+            >
+              <FiRefreshCw size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2148,6 +2159,24 @@ function App() {
           }
           confirm={askConfirm}
           onClose={() => setShowTransfer(false)}
+        />
+      )}
+
+      {showRowSync && (
+        <RowSyncDialog
+          connections={connections}
+          connectedIds={connectedIds}
+          initialSource={
+            activeConnection
+              ? {
+                  connId: activeConnection.id,
+                  database: tabDatabase(activeTabData),
+                  schema: '',
+                }
+              : undefined
+          }
+          confirm={askConfirm}
+          onClose={() => setShowRowSync(false)}
         />
       )}
 

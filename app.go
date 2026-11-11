@@ -58,6 +58,13 @@ type App struct {
 	// and the later plan would overwrite the earlier one.
 	planSeq int64
 
+	// W6: row-level sync plans, held between the analysis that shows them and
+	// the apply that runs the ticked changes. Addressed by id so the client
+	// selects changes rather than handing values back for execution.
+	rowSyncPlans map[string]*rowSyncPlan
+	rowSyncMu    sync.Mutex
+	rowSyncSeq   int64
+
 	// runs holds the cancel funcs of statements still executing, keyed by
 	// connection. A connection can have more than one in flight (a tab switch
 	// starts the next statement before the previous returns), so each keeps a

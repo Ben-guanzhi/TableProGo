@@ -550,6 +550,15 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/transfer/apply", 400, func(a *App, body TransferRequest) (any, error) {
 		return a.ApplyTransfer(body)
 	})
+	// W6: row-level sync. Preview merges the two tables and stores the plan;
+	// Apply runs the ticked changes by id, in one transaction, and requires
+	// confirm — a plan the user never saw cannot drive a delete.
+	post(a, mux, "/api/rowsync/preview", 400, func(a *App, body RowSyncRequest) (any, error) {
+		return a.RowSyncPreview(body)
+	})
+	post(a, mux, "/api/rowsync/apply", 400, func(a *App, body RowSyncApplyRequest) (any, error) {
+		return a.RowSyncApply(body)
+	})
 	post(a, mux, "/api/preview", 400, func(a *App, body previewRequest) (any, error) {
 		return a.previewPage(body.ConnID, body.TabID, body.Database, body.Schema, body.Table,
 			body.Limit, body.Offset, body.Filters, body.After, body.Before), nil
