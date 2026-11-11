@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Multi-cursor editing (W3-a): add a cursor above/below (`Ctrl/Cmd+Alt+↑↓`),
+  select the next occurrence (`Ctrl/Cmd+D`) or every occurrence
+  (`Ctrl/Cmd+Shift+D`), and `Esc` back to one cursor. CodeMirror 6 ships all four
+  operations, so this is a binding exercise rather than the 588-line
+  reimplementation db-dev carried.
+- Staged-row colours (W3-b): a queued edit paints its row, derived from the same
+  `ChangeQueue` the apply path reads (`datagrid/rowStatus.ts`, 9 cases) — a row
+  can never be painted one colour and committed as another kind of change.
+  Delete wins over update on a row carrying both, because the row is going away
+  and an "updated" paint would promise a change that will never be saved; the
+  toolbar's counts agree with the colours because both come from one summary.
+- Shortcut table (W3-c): `lib/shortcuts.ts` holds every shortcut as data, and
+  both the global key handler and the help panel read it — a shortcut can no
+  longer be documented without being bound (the old list was hand-written beside
+  the handler and could drift). Conflicts are a startup assertion rather than a
+  silent last-wins, `normalizeCombo` is the single place that knows
+  mod-is-Cmd-on-mac (with a literal `ctrl` kept distinct, because Ctrl+Space must
+  stay Control on macOS), and documentation-only rows (mouse gestures, slash
+  commands) carry no combo so they cannot claim a key they never consume.
 - Dual-pane editor (W2-a, ported from the db-dev reference): a second editor
   beside the first, each holding its own statement, with one shared result grid.
   `Ctrl/Cmd+Enter` runs the pane that has focus; the active pane carries a thin

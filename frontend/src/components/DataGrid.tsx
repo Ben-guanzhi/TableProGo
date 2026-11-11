@@ -45,6 +45,7 @@ import {
   useColumnWidths,
 } from '../datagrid/geometry';
 import { optionId, PICKER_HEIGHT } from '../datagrid/picker';
+import { rowStatus, statusesOf } from '../datagrid/rowStatus';
 import ErrorBanner from './ErrorBanner';
 import FKPickerPanel from './FKPickerPanel';
 import FilterMenu, { MenuItem } from './FilterMenu';
@@ -157,6 +158,10 @@ const DataGrid: React.FC<DataGridProps> = ({
   const view = useMemo(() => buildView(rows, columns, filters, sort), [rows, columns, filters, sort]);
 
   const counts = useMemo(() => queueCounts(queue), [queue]);
+
+  // W3-b: derived once per queue change, read by every rendered row. Deriving
+  // per row would rebuild the map O(rows) times per frame.
+  const statuses = useMemo(() => statusesOf(queue), [queue]);
 
   // The queue lives in this component and dies with it, so the owner is told
   // what is waiting; that is the only way it can warn before a tab closes.
@@ -949,9 +954,13 @@ const DataGrid: React.FC<DataGridProps> = ({
               // position inside the window: within-window striping would flicker
               // as the window moves.
               const absPos = win.i0 + pos;
-              const rowBg = deleting
-                ? 'bg-danger/15'
-                : fresh
+              // W3-b: the four staged states, from the same module that feeds
+              // the toolbar legend — a row can never be painted one colour and
+              // committed as another kind of change.
+              const status = fresh ? 'insert' : rowStatus(statuses, index);
+              const rowBg = status !== 'clean' && !fresh
+                ? status === 'delete' ? 'bg-danger/15' : 'bg-warning/15'
+                : status !== 'clean'
                   ? 'bg-success/10'
                   : isSelected
                     ? 'bg-accent/25'

@@ -92,6 +92,7 @@ import toast from 'react-hot-toast';
 import { runGuarded, runStreamed } from './lib/queryRun';
 import { isMagicCommand, parseMagicCommand, runMagicCommand, MAGIC_HELP } from './lib/magicCommands';
 import { activePaneOf, paneSQL, toggleDualPane } from './lib/dualPane';
+import { duplicateCombos, findShortcut, normalizeCombo } from './lib/shortcuts';
 import { download, downloadBlob } from './datagrid/download';
 import { toCSV, toJSON, toMarkdown, toTSV } from './gridView';
 import {
@@ -212,6 +213,15 @@ function App() {
 
   useEffect(() => {
     loadConnections();
+  }, []);
+
+  // W3-c: two table rows claiming one combo means one handler silently never
+  // fires. That is invisible at runtime, so it is asserted once at startup.
+  useEffect(() => {
+    const dupes = duplicateCombos();
+    if (dupes.length > 0) {
+      console.error('快捷键声明重复（后者永远不会触发）：', dupes.join(', '));
+    }
   }, []);
 
   // Settings: load the persisted choice once, then keep the palette in sync.
@@ -1600,44 +1610,68 @@ function App() {
 
   // App-wide keys, bound here rather than in a widget so they work no matter
   // which panel has the focus.
+  //
+  // W3-c: the dispatch table is `lib/shortcuts.ts` — the same data the help
+  // panel renders, so a shortcut can no longer be documented without being
+  // bound (or bound under a name the help does not mention). The combos were
+  // duplicated text before; a mismatch was silent.
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'F1') {
+      const combo = normalizeCombo({
+        key: event.key,
+        ctrlKey: event.ctrlKey,
+        metaKey: event.metaKey,
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        isMac: /Mac|iPod|iPhone|iPad/.test(navigator.platform),
+      });
+      const spec = findShortcut(combo);
+      if (!spec) return;
+      const run = (fn: () => void) => {
         event.preventDefault();
-        setShowShortcuts(current => !current);
-        return;
-      }
-      if (!(event.ctrlKey || event.metaKey)) return;
-      const key = event.key.toLowerCase();
-      if (key === 'p') {
-        event.preventDefault();
-        setQuickOpen(current => !current);
-      } else if (key === '/') {
-        event.preventDefault();
-        setShowShortcuts(current => !current);
-      } else if (key === 't') {
-        event.preventDefault();
-        handleNewTab();
-      } else if (key === 'w') {
-        if (activeTab) {
-          event.preventDefault();
-          handleCloseTab(activeTab);
+        fn();
+      };
+      switch (spec.id) {
+        case 'quickOpen':
+          run(() => setQuickOpen(current => !current));
+          return;
+        case 'newTab':
+          run(() => handleNewTab());
+          return;
+        case 'closeTab':
+          if (activeTab) run(() => handleCloseTab(activeTab));
+          return;
+        case 'switchTab': {
+          const digit = combo.split('+').pop() ?? '';
+          const tab = tabs[Number(digit) - 1];
+          if (tab) {
+            // Route through switchToTab like a mouse switch: a direct
+            // setActiveTab silently discarded unapplied edits on the tab being
+            // left, while the same click asked for confirmation.
+            run(() => switchToTab(tab.id));
+          }
+          return;
         }
-      } else if (key >= '1' && key <= '9') {
-        const tab = tabs[Number(key) - 1];
-        if (tab) {
-          event.preventDefault();
-          // Route through switchToTab like a mouse switch: a direct
-          // setActiveTab silently discarded unapplied edits on the tab being
-          // left, while the same click asked for confirmation.
-          switchToTab(tab.id);
-        }
+        case 'help':
+        case 'helpAlt':
+          run(() => setShowShortcuts(current => !current));
+          return;
+        case 'escape':
+          // Only the overlays this handler owns are closed here; every dialog
+          // also binds its own Escape through useDialog.
+          if (quickOpen) run(() => setQuickOpen(false));
+          else if (showShortcuts) run(() => setShowShortcuts(false));
+          return;
+        default:
+          // Editor-scoped shortcuts are bound in the editor's own keymap; the
+          // table lists them for the help panel only.
+          return;
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tabs, activeTab]);
+  }, [tabs, activeTab, quickOpen, showShortcuts]);
 
   return (
     <div className="flex h-screen bg-canvas text-ink">

@@ -12,7 +12,9 @@ import {
   lineNumbers,
   rectangularSelection,
 } from '@codemirror/view';
-import { defaultKeymap, historyKeymap, history, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, historyKeymap, history, indentWithTab, addCursorAbove, addCursorBelow,
+  simplifySelection } from '@codemirror/commands';
+import { selectNextOccurrence, selectSelectionMatches } from '@codemirror/search';
 import { FiAlignLeft, FiList, FiStar, FiTrash2, FiX } from 'react-icons/fi';
 import {
   HighlightStyle,
@@ -640,6 +642,23 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                 return true;
               },
             },
+            // W3-a: multi-cursor. CodeMirror 6 already ships the operations
+            // (adding a cursor above/below, selecting the next occurrence), so
+            // this is a binding exercise rather than db-dev's 588-line
+            // reimplementation. Esc back to one cursor is CM's own
+            // simplifySelection, bound below.
+            { key: 'Ctrl-Alt-ArrowUp', mac: 'Cmd-Alt-ArrowUp', run: addCursorAbove },
+            { key: 'Ctrl-Alt-ArrowDown', mac: 'Cmd-Alt-ArrowDown', run: addCursorBelow },
+            {
+              key: 'Ctrl-d',
+              mac: 'Cmd-d',
+              run: selectNextOccurrence,
+              // Vim owns Ctrl-d (scroll half page) in Normal mode; CM's vim
+              // plugin sits in an earlier keymap layer, so this only fires when
+              // vim did not consume the key.
+            },
+            { key: 'Ctrl-Shift-d', mac: 'Cmd-Shift-d', run: selectSelectionMatches },
+            { key: 'Escape', run: simplifySelection },
             ...closeBracketsKeymap,
             ...defaultKeymap,
             ...historyKeymap,
