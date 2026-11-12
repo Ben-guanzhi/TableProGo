@@ -593,6 +593,17 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"path": path}, nil
 	})
+	// W15 (private distribution): which build is this, and — only when the owner has
+	// configured a version URL — is there a newer one. Nothing is sent to the
+	// network unless a URL exists, and the request is a bare GET.
+	post(a, mux, "/api/build-info", 400, func(a *App, _ struct{}) (any, error) {
+		return CurrentBuild(), nil
+	})
+	post(a, mux, "/api/update-check", 400, func(a *App, body struct {
+		URL string `json:"url"`
+	}) (any, error) {
+		return CheckForUpdate(body.URL), nil
+	})
 	// W9: Oracle object health. The list is read-only; the recompile is a
 	// data-dictionary write and takes the same guard every other write takes.
 	post(a, mux, "/api/oracle/invalid-objects", 400, func(a *App, body struct {

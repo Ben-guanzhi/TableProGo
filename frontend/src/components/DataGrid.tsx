@@ -1171,7 +1171,7 @@ const DataGrid: React.FC<DataGridProps> = ({
                           />
                         ) : (
                           <div
-                            className={`truncate whitespace-pre ${
+                            className={`truncate whitespace-pre grid-cell-value ${
                               shownNull && !omitted ? 'italic text-muted' : ''
                             } ${typeof value === 'number' || magic?.kind === 'number' ? 'tabular-nums' : ''} ${
                               hasFk || linkable || isLarge ? 'pr-4' : ''

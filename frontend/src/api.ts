@@ -603,6 +603,37 @@ export async function ListObjectDependencies(
   return post('/api/oracle/dependencies', { connId, database, schema, object });
 }
 
+// ---- W15: build identity and the opt-in update check ----
+
+export interface BuildInfo {
+  version: string;
+  commit: string;
+  date: string;
+  go: string;
+  os: string;
+  arch: string;
+}
+
+export interface UpdateCheckResult {
+  current: string;
+  // Present only when a NEWER version was published.
+  newer?: string;
+  notes?: string;
+  // false when no URL is configured: the UI must not claim it checked.
+  checked: boolean;
+  error?: string;
+}
+
+export async function GetBuildInfo(): Promise<BuildInfo> {
+  return post('/api/build-info', {});
+}
+
+// Runs only when the user has configured a URL; the app never phones home on its
+// own, and the request is a bare GET with no body.
+export async function CheckUpdate(url: string): Promise<UpdateCheckResult> {
+  return post('/api/update-check', { url });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.
@@ -1498,6 +1529,10 @@ export interface AppSettings {
   idleLockMinutes: number;
   lockOnHide: boolean;
   lockOnSleep: boolean;
+  // W8: blur connection identity and result cells for screen sharing. A DISPLAY
+  // filter only — nothing stops being sent to the database, and the mask lifts on
+  // hover, because it is meant to defeat a bystander or a capture, not the user.
+  privacyMode: boolean;
   // Interactive-transaction governance (DESIGN-txn-timeout-2026-11-03): the
   // absolute deadline in minutes (0 = off, the unbounded behavior) and how
   // long before it the UI warns. Mirror of the backend AppSettings.

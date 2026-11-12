@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- 隐私模式与私有分发（M5 / W8+W15）。**隐私模式**：录屏或共享屏幕时模糊连接名与
+  结果集单元格，悬停/聚焦临时显形——遮罩防的是旁观者与录制软件，不是操作者本人。
+  `lib/privacy.ts`（8 用例）是纯规则：遮罩**定长**（否则名字长度本身就是信息）、
+  host 与 port **先拼接再遮**（分开遮会漏出真实端口，而端口常常就是环境线索）、
+  身份详情**合并成一个遮罩**（逐项遮会泄露"有几项"）、导出文件名在隐私模式下变成
+  `export`——界面遮住了而 `shop-prod-orders.xlsx` 仍会把库名留在磁盘与聊天记录里。
+  快捷键 Ctrl/⌘+Shift+H，状态随设置持久化（为一次通话打开后重启不应又开始泄漏）。
+  CSS 用 blur 而非替换文字：占位符会改变列宽行高，布局跳动既难看也让"截图对比"没法
+  判断遮罩是否生效。自动断开不新增代码：既有的 system/page/sleep/hide 四触发器已经
+  覆盖计划里的三事件，并统一走 `DisconnectAll`。
+- **私有分发**：主线不公开，所以不做 WinGet/Scoop 清单、不做自动发布。`--version` 打印
+  版本/提交/日期/平台；`scripts/release.ps1` 出包（构前端 → 跑测试 → `-ldflags` 打版本 →
+  **读回 `--version` 校验**，一个仍报 `dev` 的包当场失败 → 打包 + SHA256SUMS + 该版本
+  RELEASE-NOTES）；`docs/private-distribution.md` 写明分发、核对与版本号规则。更新检查
+  **默认关闭**：地址为空就不联网，面板写"未配置"而不是显示没验证过的"已是最新"；
+  有地址时是裸 GET 无请求体；失败（404/非 JSON）在面板可见。`version.go` 7 用例覆盖
+  点分比较、`dev` 语义与失败可见性。
 - 达梦 DM8 (W14): the engine is now **connectable**. DM8 speaks its own wire
   protocol, so the Oracle driver could never open it — but the SQL dialect is
   Oracle's (DM's default compatibility mode), which the kernel already models as

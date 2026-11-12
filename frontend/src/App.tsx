@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiCode, FiDownload, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
+﻿import { useState, useEffect, useRef, useCallback } from 'react';
+import { FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -32,6 +32,7 @@ import PluginPanel from './components/PluginPanel';
 import ExplainPlanView from './components/ExplainPlanView';
 import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import ObjectHealthDialog from './components/ObjectHealthDialog';
+import AboutDialog from './components/AboutDialog';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -100,6 +101,7 @@ import { runGuarded, runStreamed } from './lib/queryRun';
 import { isMagicCommand, parseMagicCommand, runMagicCommand, MAGIC_HELP } from './lib/magicCommands';
 import { activePaneOf, paneSQL, toggleDualPane } from './lib/dualPane';
 import { duplicateCombos, findShortcut, normalizeCombo } from './lib/shortcuts';
+import { fileStem } from './lib/privacy';
 import { download, downloadBlob } from './datagrid/download';
 import { toCSV, toJSON, toMarkdown, toTSV } from './gridView';
 import {
@@ -196,6 +198,8 @@ function App() {
   const [showImportConns, setShowImportConns] = useState(false);
   // W9: the Oracle invalid-object panel.
   const [showObjectHealth, setShowObjectHealth] = useState(false);
+  // W15: the about panel (build identity + opt-in update check).
+  const [showAbout, setShowAbout] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1683,6 +1687,18 @@ function App() {
         case 'helpAlt':
           run(() => setShowShortcuts(current => !current));
           return;
+        case 'privacy': {
+          // W8: toggle privacy mode. It is saved like any other setting so the
+          // state survives a restart — a user who turned it on for a call and then
+          // restarted should not silently start leaking again.
+          const next = { ...settings, privacyMode: !settings.privacyMode };
+          run(() => {
+            setSettings(next);
+            saveSettings(next);
+            toast.success(next.privacyMode ? '隐私模式已开启' : '隐私模式已关闭');
+          });
+          return;
+        }
         case 'escape':
           // Only the overlays this handler owns are closed here; every dialog
           // also binds its own Escape through useDialog.
@@ -1701,7 +1717,7 @@ function App() {
   }, [tabs, activeTab, quickOpen, showShortcuts]);
 
   return (
-    <div className="flex h-screen bg-canvas text-ink">
+    <div className={`flex h-screen bg-canvas text-ink${settings.privacyMode ? ' privacy' : ''}`}>
       <Sidebar
         connections={connections}
         activeConnection={activeConnection}
@@ -1862,6 +1878,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowAbout(true)}
+              title="关于：版本与构建信息"
+              aria-label="关于"
+            >
+              <FiInfo size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -1937,7 +1961,7 @@ function App() {
               comments={activeTabData.comments}
               showComments={settings.showColumnComments}
               editSource={activeTabData.objectType === 'view' ? null : objectRef}
-              exportName={`${objectRef.database}.${objectRef.table}`}
+              exportName={fileStem([objectRef.database, objectRef.table], settings.privacyMode)}
               tableRef={activeTabData.tableRef ?? null}
               onEditStructure={() => {
                 if (!activeTabData.tableRef || !activeTabData.structure?.data) return;
@@ -1992,7 +2016,7 @@ function App() {
                   editSource={activeTabData.objectSource}
                   onApplied={() => handleObjectExecute(activeTabData)}
                   onPendingChange={total => pendingEdits.current.set(activeTabData.id, total)}
-                  exportName={`${objectRef.database}.${objectRef.table}`}
+                  exportName={fileStem([objectRef.database, objectRef.table], settings.privacyMode)}
                   onDismissError={() => clearObjectSection(activeTabData.id, 'query')}
                   editorRef={objectEditorRef}
                   height={editorHeight}
@@ -2132,7 +2156,7 @@ function App() {
                     onApplied={() => handleExecuteQuery(activeTabData)}
                     onPendingChange={total => pendingEdits.current.set(activeTabData.id, total)}
                     onDismissError={() => clearResult(activeTabData.id)}
-                    exportName={`${tabDatabase(activeTabData)}-${activeTabData.title}`}
+                    exportName={fileStem([tabDatabase(activeTabData), activeTabData.title], settings.privacyMode)}
                   />
                 </div>
               )}
@@ -2249,6 +2273,8 @@ function App() {
         />
       )}
 
+      {showAbout && <AboutDialog onClose={() => setShowAbout(false)} />}
+
       {showObjectHealth && activeConnection && (
         <ObjectHealthDialog
           connId={activeConnection.id}
@@ -2300,3 +2326,4 @@ function App() {
 }
 
 export default App;
+

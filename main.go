@@ -38,6 +38,7 @@ const usage = `TablePro Go
   --passcode=<path>  本地口令存储路径（默认用户数据目录的 passcode.json）
   --job=<path>       作业配方 JSON；执行完即退出（0=全部成功，1=有步骤失败，2=配方/用法错误）
   --dry-run          与 --job 连用：只校验并报告计划，不写任何数据
+  --version          打印版本与构建信息后退出（报告问题时会用到）
   --help, -h          显示本帮助
 
 作业配方只看已保存的连接 ID，不读取任何口令；凭据仍只在连接存储里。
@@ -74,12 +75,22 @@ func parseFlags() (cliOptions, error) {
 	dryRun := false
 	fs.StringVar(&job, "job", "", "")
 	fs.BoolVar(&dryRun, "dry-run", false, "")
+	// W15: --version prints the build identity and exits. It is the one flag a
+	// private distribution needs for "which build is this?" in a bug report.
+	showVersion := false
+	fs.BoolVar(&showVersion, "version", false, "")
 	err := fs.Parse(os.Args[1:])
 	if err == flag.ErrHelp {
 		os.Exit(0)
 	}
 	if err != nil {
 		return opts, err
+	}
+	if showVersion {
+		info := CurrentBuild()
+		fmt.Printf("%s %s (%s, %s/%s, %s)\n",
+			"TablePro Go", info.Version, info.Commit, info.OS, info.Arch, info.Go)
+		os.Exit(0)
 	}
 	// The flag package's bool accepts every spelling the old hand-rolled
 	// switch did (bare -mcp, --mcp=true, --mcp=1, -mcp=false).

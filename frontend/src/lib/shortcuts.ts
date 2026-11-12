@@ -34,6 +34,7 @@ export const SHORTCUTS: readonly ShortcutSpec[] = [
   { id: 'switchTab', group: '全局', keys: ['Ctrl / ⌘', '1…9'], label: '跳到第 N 个标签', combo: 'mod+digit' },
   { id: 'help', group: '全局', keys: ['F1'], label: '打开 / 关闭快捷键帮助', combo: 'f1' },
   { id: 'helpAlt', group: '全局', keys: ['Ctrl / ⌘', '/'], label: '同上（备用键位）', combo: 'mod+/' },
+  { id: 'privacy', group: '全局', keys: ['Ctrl / ⌘', 'Shift', 'H'], label: '隐私模式（模糊连接名与数据）', combo: 'mod+shift+h' },
   { id: 'escape', group: '全局', keys: ['Esc'], label: '关闭弹层', combo: 'escape' },
 
   // ---- editor ----

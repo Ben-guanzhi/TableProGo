@@ -179,3 +179,28 @@ textarea,
     scroll-behavior: auto !important;
   }
 }
+
+/* 隐私模式（W8）：录屏/共享屏幕时的遮罩层。
+   `data-private` 标记的元素（连接名、主机端口、库名、整行身份）被模糊；
+   结果集单元格整体模糊。两者都在悬停/聚焦时临时显形——遮罩防的是旁观者与
+   录制软件，不是防正在操作的人。
+   用 blur 而不是把文字换成 ••••，是因为占位符会改变列宽与行高：布局跳动既
+   难看，也让「隐私模式下截图对比」无法判断遮罩是否生效。 */
+.privacy [data-private],
+.privacy .grid-cell-value {
+  filter: blur(4px);
+  transition: filter 120ms ease-out;
+}
+
+.privacy [data-private]:hover,
+.privacy [data-private]:focus,
+.privacy [data-private]:focus-within,
+.privacy .grid-cell-value:hover,
+.privacy .grid-cell-value:focus-within {
+  filter: none;
+}
+
+/* 表格头不要模糊：列名是结构信息，遮了就没法对齐着看数据了。 */
+.privacy .grid-header-cell {
+  filter: none;
+}

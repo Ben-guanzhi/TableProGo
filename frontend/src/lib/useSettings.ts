@@ -22,6 +22,9 @@ export const defaultSettings: AppSettings = {
   idleLockMinutes: 0,
   lockOnHide: false,
   lockOnSleep: true,
+  // W8: privacy mode is a screen-sharing aid, not a default posture. Turning it
+  // on by default would blur every user's data for no reason.
+  privacyMode: false,
   // Transaction governance matches the backend default: a 10-minute absolute
   // deadline, warning a minute ahead (the backend's built-in ratio). The
   // frontend mirrors these only for the settings input; the sweeper is server-side.

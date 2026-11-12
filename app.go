@@ -161,6 +161,12 @@ type AppSettings struct {
 	// which means the machine slept (timers freeze) rather than the user
 	// idled — the one case in-page activity tracking gets wrong on its own.
 	LockOnSleep bool `json:"lockOnSleep"`
+	// PrivacyMode blurs connection identity and result cells for screen sharing
+	// and recording (W8). It is a DISPLAY filter only: nothing stops being sent to
+	// the database, and the masking is undone on hover — it is there to keep a
+	// bystander or a capture from reading names and rows, not to hide anything from
+	// the person using the app.
+	PrivacyMode bool `json:"privacyMode"`
 	// TxTimeoutMinutes is the absolute deadline for interactive transactions
 	// (DESIGN-txn-timeout-2026-11-03, policy B): a transaction still open this
 	// many minutes after BEGIN is rolled back by the sweeper. 0 disables the
@@ -321,6 +327,7 @@ func (a *App) loadSettings() {
 		IdleLockMinutes    *int    `json:"idleLockMinutes"`
 		LockOnHide         *bool   `json:"lockOnHide"`
 		LockOnSleep        *bool   `json:"lockOnSleep"`
+		PrivacyMode        *bool   `json:"privacyMode"`
 		TxTimeoutMinutes   *int    `json:"txTimeoutMinutes"`
 		TxWarnAheadMinutes *int    `json:"txWarnAheadMinutes"`
 	}
@@ -357,6 +364,9 @@ func (a *App) loadSettings() {
 	}
 	if stored.LockOnSleep != nil {
 		a.settings.LockOnSleep = *stored.LockOnSleep
+	}
+	if stored.PrivacyMode != nil {
+		a.settings.PrivacyMode = *stored.PrivacyMode
 	}
 	if stored.TxTimeoutMinutes != nil && *stored.TxTimeoutMinutes >= 0 {
 		a.settings.TxTimeoutMinutes = *stored.TxTimeoutMinutes

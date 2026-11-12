@@ -611,7 +611,11 @@ const Sidebar: React.FC<SidebarProps> = ({
             }
           }}
         >
-          {node.label}
+          {/* W8: a connection name is where the host usually ends up
+              ("prod-db.example.com"), so the node is marked private and the
+              .privacy CSS blurs it. Non-connection nodes are structure, not
+              identity, and stay readable. */}
+          <span data-private={node.kind === 'connection' ? '' : undefined}>{node.label}</span>
         </span>
 
         {node.kind === 'column' && node.dataType && (
