@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"tablepro-go/internal/workbenchhost"
 )
@@ -407,5 +408,68 @@ func (a *App) handleWorkbenchFiles(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, statusOK)
 	default:
 		writeError(w, http.StatusBadRequest, "unknown files action "+body.Action)
+	}
+}
+
+// ---------- W-M1: monitor (host.stats sampling ring) ----------
+
+// workbenchMonitorRequest drives the sampling surface: start/stop a host's
+// sampler, read the rings, or submit a sample the PLUGIN took (the host stores
+// what the plugin reports — it never invents numbers).
+type workbenchMonitorRequest struct {
+	Action string  `json:"action"` // "state" | "start" | "stop" | "submit"
+	Host   string  `json:"host,omitempty"`
+	Cap    int     `json:"cap,omitempty"`
+	Value  float64 `json:"value,omitempty"`
+	Time   string  `json:"time,omitempty"`
+}
+
+func (a *App) handleWorkbenchMonitor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body workbenchMonitorRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "state":
+		writeJSON(w, runner.MonitorStates())
+	case "start":
+		tag, err := runner.StartMonitor(body.Host, body.Cap)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"tag": tag})
+	case "stop":
+		if err := runner.StopMonitor(body.Host); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "submit":
+		at := time.Now()
+		if body.Time != "" {
+			parsed, err := time.Parse(time.RFC3339, body.Time)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "bad time: "+err.Error())
+				return
+			}
+			at = parsed
+		}
+		if err := runner.SubmitSample(body.Host, body.Value, at); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown monitor action "+body.Action)
 	}
 }

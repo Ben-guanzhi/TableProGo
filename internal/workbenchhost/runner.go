@@ -54,6 +54,11 @@ type Runner struct {
 	// separate from mu so a frame hot path never contends with lifecycle.
 	recMu      sync.Mutex
 	recordings map[string]*recordingState
+
+	// monitor (W-M1): one sampler per host, keyed by host. The timers are
+	// tracked effects on the fiber's accumulator — unloading stops them.
+	monMu    sync.Mutex
+	monitors map[string]*monitor
 }
 
 // New returns a runner over a fresh context store. The store may already carry
@@ -64,6 +69,7 @@ func New(store *ctxcore.Store) *Runner {
 		store:      store,
 		dead:       make(chan struct{}),
 		recordings: map[string]*recordingState{},
+		monitors:   map[string]*monitor{},
 	}
 }
 
@@ -407,6 +413,17 @@ func (r *Runner) Stop() {
 	r.recMu.Unlock()
 	for _, ch := range channels {
 		r.stopRecordingsFor(ch)
+	}
+	// W-M1: stop every sampler — the timers are tracked effects, but Stop fires
+	// them explicitly so the goroutines never outlive the process teardown.
+	r.monMu.Lock()
+	monHosts := make([]string, 0, len(r.monitors))
+	for h := range r.monitors {
+		monHosts = append(monHosts, h)
+	}
+	r.monMu.Unlock()
+	for _, h := range monHosts {
+		_ = r.StopMonitor(h)
 	}
 	if f != nil {
 		r.store.Retire(f)

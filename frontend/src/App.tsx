@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiBookOpen, FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiBookOpen, FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -38,6 +38,7 @@ import LoginScreen from './components/LoginScreen';
 import PluginConsole from './components/PluginConsole';
 import TerminalPanel from './components/TerminalPanel';
 import FilesPanel from './components/FilesPanel';
+import MonitorPanel from './components/MonitorPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -204,6 +205,8 @@ function App() {
   const [showTerminal, setShowTerminal] = useState(false);
   // W-F1: the files workbench panel (SFTP over the plugin's files.session).
   const [showFiles, setShowFiles] = useState(false);
+  // W-M1: the monitor panel (host.stats sampling ring).
+  const [showMonitor, setShowMonitor] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1925,6 +1928,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowMonitor(true)}
+              title="监控：host.stats 采样环（定时器为效应，卸载即停）"
+              aria-label="监控工作台"
+            >
+              <FiActivity size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2361,6 +2372,10 @@ function App() {
 
       {showFiles && (
         <FilesPanel onClose={() => setShowFiles(false)} />
+      )}
+
+      {showMonitor && (
+        <MonitorPanel onClose={() => setShowMonitor(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (

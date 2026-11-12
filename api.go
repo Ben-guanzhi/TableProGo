@@ -578,6 +578,7 @@ func (a *App) routes() *http.ServeMux {
 	// W-F1: files over the plugin's files.session. Upload is the two-step
 	// acquisition (stage → commit) with both inverses tracked host-side.
 	mux.HandleFunc("/api/workbench/files", a.handleWorkbenchFiles)
+	mux.HandleFunc("/api/workbench/monitor", a.handleWorkbenchMonitor)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`
