@@ -36,6 +36,7 @@ import AboutDialog from './components/AboutDialog';
 import NotebookPanel from './components/NotebookPanel';
 import LoginScreen from './components/LoginScreen';
 import PluginConsole from './components/PluginConsole';
+import TerminalPanel from './components/TerminalPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -198,6 +199,8 @@ function App() {
   const [showRowSync, setShowRowSync] = useState(false);
   // W10: the plugins panel.
   const [showPlugins, setShowPlugins] = useState(false);
+  // W-T2: the terminal workbench panel (tabs/split panes/broadcast).
+  const [showTerminal, setShowTerminal] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1903,6 +1906,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowTerminal(true)}
+              title="终端：SSH 会话、分屏与广播（navop-ssh 插件）"
+              aria-label="终端工作台"
+            >
+              <FiCode size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2331,6 +2342,10 @@ function App() {
           connName={activeConnection.name}
           onClose={() => setShowConsole(false)}
         />
+      )}
+
+      {showTerminal && (
+        <TerminalPanel onClose={() => setShowTerminal(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (

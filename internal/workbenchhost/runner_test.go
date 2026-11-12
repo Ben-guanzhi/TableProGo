@@ -55,6 +55,8 @@ func main() {
 
 	in := bufio.NewReader(os.Stdin)
 	var wmu sync.Mutex
+	seq := 0
+	known := map[string]bool{}
 	handle := func(req plugindriver.Request) {
 		send := func(result interface{}, errText, code string) {
 			payload, _ := json.Marshal(result)
@@ -90,11 +92,23 @@ func main() {
 			}
 			send(frame, "", "")
 		case workbench.MethodChannelOpen:
-			send(map[string]string{"channelId": "ch-1"}, "", "")
+			// Generator-allocated id (Thm 47): two opens NEVER share a tag.
+			seq++
+			id := fmt.Sprintf("ch-%d", seq)
+			known[id] = true
+			send(map[string]string{"channelId": id}, "", "")
 		case workbench.MethodChannelData:
-			var p struct{ Input string }
+			// map decode: a struct tag's backtick would terminate THIS file's raw
+			// string (it did exactly that once).
+			var p map[string]interface{}
 			_ = json.Unmarshal(req.Params, &p)
-			send(map[string]string{"channelId": "ch-1", "output": strings.ToUpper(p.Input)}, "", "")
+			cid, _ := p["channelId"].(string)
+			input, _ := p["input"].(string)
+			if !known[cid] {
+				send(nil, "unknown channel "+cid, "ERR_PLUGIN")
+				return
+			}
+			send(map[string]string{"channelId": cid, "output": strings.ToUpper(input)}, "", "")
 		case plugindriver.MethodClose:
 			send(nil, "", "")
 			os.Exit(0)

@@ -250,3 +250,8 @@ func (l *EventLog) Reset() {
 	l.events = nil
 	l.seq = 0
 }
+
+// Log exposes the event log for hosts and tests that need the ordered trace
+// (Thm 70's ordering assertions read it). It is an observation device, not part
+// of the calculus state.
+func (s *Store) Log() *EventLog { return s.log }

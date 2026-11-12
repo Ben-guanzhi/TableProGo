@@ -563,6 +563,14 @@ func (a *App) routes() *http.ServeMux {
 	// new engine is a plugin, not a change here.
 	mux.HandleFunc("/api/plugin/actions", a.handlePluginActions)
 	mux.HandleFunc("/api/plugin/action/run", a.handlePluginRunAction)
+	// W-T2: the workbench HTTP face. State is the tabs/channels/policy snapshot
+	// the terminal panel renders; channel drives one PTY; broadcast is the
+	// withhold/confirm pair (AD-3: the emission runs only on the confirmed
+	// route, and the flag cannot bypass the prompt).
+	mux.HandleFunc("/api/workbench/state", a.handleWorkbenchState)
+	mux.HandleFunc("/api/workbench/channel", a.handleWorkbenchChannel)
+	mux.HandleFunc("/api/workbench/broadcast", a.handleWorkbenchBroadcast)
+	mux.HandleFunc("/api/workbench/broadcast-confirmed", a.handleWorkbenchBroadcastConfirmed)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

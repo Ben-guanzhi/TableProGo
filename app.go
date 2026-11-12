@@ -11,8 +11,10 @@ import (
 	"sync"
 
 	"sync/atomic"
+	"tablepro-go/internal/ctxcore"
 	"tablepro-go/internal/mcp"
 	"tablepro-go/internal/txn"
+	"tablepro-go/internal/workbenchhost"
 
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
@@ -30,6 +32,10 @@ type App struct {
 	filePath         string
 	settings         AppSettings
 	settingsPath     string
+	// workbench is the W-T2 host runner: the plugin fibers (navop-ssh terminal),
+	// the key surface (nav.nodes / terminal.channels / connections.store) and the
+	// broadcast gate live here. Nil-safe at every API entry.
+	workbench *workbenchhost.Runner
 	// passcodePath is the argon2id store's location (P2-9); a field rather
 	// than a computed constant so tests point it at a temp dir.
 	passcodePath  string
@@ -104,7 +110,7 @@ type App struct {
 	// connection A invalidate connection B's snapshot, which is exactly the
 	// cross-connection coupling a per-connection cache must not have (TP-21).
 	catalogGenMu sync.Mutex
-	catalogGen  map[string]uint64
+	catalogGen   map[string]uint64
 
 	// httpSrv is the API server started by startHTTPServerOnListener. Closing
 	// it at shutdown stops accepting requests and releases the listener/port;
@@ -309,7 +315,41 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 	a.loadFavorites()
 	a.reclaimer.Start()
 	a.startTxSweeper()
+	// W-T2: the workbench runner owns the plugin fibers. The host binds
+	// connections.store itself (AD-6: single writer = the host kernel) — the
+	// archive carries NO secrets, only the ids/labels a terminal tab needs
+	// (AD-4: secret values never enter the key surface).
+	a.workbench = workbenchhost.New(ctxcore.NewStore())
+	if err := a.workbench.ProvideConnectionsArchive(a.connectionsArchive()); err != nil {
+		log.Printf("workbench: provide connections.store: %v", err)
+	}
+	// Plugin discovery follows the pluginreg convention: one environment variable
+	// per plugin. A missing plugin is the NORMAL case (工作台能力默认不接入) — the
+	// fiber simply never exists, and the UI shows no terminal tab.
+	if p := os.Getenv("TABLEPRO_WORKBENCH_NAVOP_SSH"); p != "" {
+		if err := a.workbench.Launch(p); err != nil {
+			log.Printf("workbench: launch navop-ssh: %v", err)
+		}
+	}
 	return a
+}
+
+// connectionsArchive is what the host publishes under connections.store for the
+// workbench plugins: id/name/type/host per saved connection — labels and routing,
+// NEVER credentials (AD-4).
+func (a *App) connectionsArchive() []map[string]any {
+	a.connectionsMu.RLock()
+	defer a.connectionsMu.RUnlock()
+	out := make([]map[string]any, 0, len(a.savedConnections))
+	for _, c := range a.savedConnections {
+		out = append(out, map[string]any{
+			"id":   c.ID,
+			"name": c.Name,
+			"type": c.Type,
+			"host": c.Host,
+		})
+	}
+	return out
 }
 
 func (a *App) loadSettings() {
@@ -586,6 +626,12 @@ func (a *App) Shutdown(ctx context.Context) {
 	// Stop the API server first: while it is serving, requests can still open
 	// connections and check out pools, racing the teardown below.
 	a.closeHTTPServer()
+	// W-T2: retire the workbench fibers BEFORE the pools go away — the plugin
+	// processes are separate executables and outlive nothing, but their
+	// accumulator must still run so the key surface clears (Cor 69).
+	if a.workbench != nil {
+		a.workbench.Stop()
+	}
 	a.stopTxSweeper()
 	if a.reclaimer != nil {
 		a.reclaimer.Stop()
