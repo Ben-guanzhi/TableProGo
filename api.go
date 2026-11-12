@@ -571,6 +571,10 @@ func (a *App) routes() *http.ServeMux {
 	mux.HandleFunc("/api/workbench/channel", a.handleWorkbenchChannel)
 	mux.HandleFunc("/api/workbench/broadcast", a.handleWorkbenchBroadcast)
 	mux.HandleFunc("/api/workbench/broadcast-confirmed", a.handleWorkbenchBroadcastConfirmed)
+	// W-T3: recording (asciinema v3 casts) + the shortcut library. Run rides the
+	// broadcast gate — the confirm is the -confirmed shape, never a flag.
+	mux.HandleFunc("/api/workbench/record", a.handleWorkbenchRecord)
+	mux.HandleFunc("/api/workbench/shortcuts", a.handleWorkbenchShortcut)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

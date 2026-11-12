@@ -6,9 +6,15 @@ import {
   BroadcastWorkbench,
   CloseWorkbenchChannel,
   GetWorkbenchState,
+  ListShortcuts,
   OpenWorkbenchChannel,
-  WriteWorkbenchChannel,
+  RunShortcut,
+  SaveShortcut,
+  StartRecording,
+  StopRecording,
   WorkbenchState,
+  WorkbenchShortcut,
+  WriteWorkbenchChannel,
 } from '../lib/workbench';
 import {
   PaneTree,
@@ -66,9 +72,13 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ onClose }) => {
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [broadcastSel, setBroadcastSel] = useState<Record<string, boolean>>({});
   const [broadcastInput, setBroadcastInput] = useState('');
+  // W-T3: recording + shortcuts state.
+  const [recording, setRecording] = useState<Record<string, boolean>>({});
+  const [shortcuts, setShortcuts] = useState<WorkbenchShortcut[]>([]);
+  const [shortcutPick, setShortcutPick] = useState('');
+  const [confirmBar, setConfirmBar] = useState<{ ids: string[]; input: string; shortcut?: string } | null>(null);
   const [connectForm, setConnectForm] = useState({ host: '127.0.0.1', port: 22, user: '', password: '' });
   const [busy, setBusy] = useState(false);
-  const [confirmBar, setConfirmBar] = useState<{ ids: string[]; input: string } | null>(null);
   const leafSeq = useRef(1);
 
   const refreshState = useCallback(async () => {
@@ -81,7 +91,73 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ onClose }) => {
 
   useEffect(() => {
     void refreshState();
+    ListShortcuts()
+      .then(setShortcuts)
+      .catch(() => setShortcuts([]));
   }, [refreshState]);
+
+  // W-T3: toggle one channel's cast. The path toast is the operator's receipt.
+  const toggleRecording = async (leafId: string) => {
+    const leaf = findLeafById(tree, leafId);
+    if (!leaf?.channelId) return;
+    setBusy(true);
+    try {
+      if (recording[leaf.id]) {
+        const res = await StopRecording(leaf.channelId);
+        setRecording(v => ({ ...v, [leaf.id]: false }));
+        toast.success(`录制已保存：${res.path}`);
+      } else {
+        const res = await StartRecording(leaf.channelId, `终端 ${leaf.channelId}`);
+        setRecording(v => ({ ...v, [leaf.id]: true }));
+        toast.success(`录制中：${res.path}`);
+      }
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Run a shortcut through the SAME withhold gate as broadcast: Safe Mode ON
+  // shows the confirm bar; confirmed=true re-posts the identical emission.
+  const runShortcut = async (name: string, confirmed: boolean) => {
+    if (broadcastTargets.length === 0) return;
+    setBusy(true);
+    try {
+      const res = await RunShortcut(name, broadcastTargets, confirmed);
+      if (res.withheld) {
+        setConfirmBar({ ids: res.channelIds ?? [], input: res.input ?? '', shortcut: name });
+        return;
+      }
+      setViews(v => {
+        const next = { ...v };
+        for (const [cid, out] of Object.entries(res.results ?? {})) {
+          const leaf = findLeafByChannel(tree, cid);
+          if (leaf) {
+            next[leaf.id] = { output: (next[leaf.id]?.output ?? '') + out, ended: next[leaf.id]?.ended ?? false };
+          }
+        }
+        return next;
+      });
+      setConfirmBar(null);
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Save the broadcast box's current content as a named shortcut.
+  const saveCurrentAsShortcut = async () => {
+    const name = `cmd-${new Date().toISOString().slice(11, 19).replace(/:/g, '')}`;
+    try {
+      await SaveShortcut({ name, command: broadcastInput });
+      setShortcuts(await ListShortcuts());
+      toast.success(`已保存快捷指令 ${name}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   // The poller: drain every connected pane's output. 600ms is interactive
   // pacing; the per-channel buffer on the plugin side absorbs the gap.
@@ -177,7 +253,7 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ onClose }) => {
       if (res.withheld) {
         // The host withheld: show the warning bar with the exact ids/input so the
         // confirm re-posts the SAME emission.
-        setConfirmBar({ ids: res.channelIds ?? [], input: res.input ?? '' });
+        setConfirmBar({ ids: res.channelIds ?? [], input: res.input ?? '', shortcut: undefined });
         return;
       }
       // Distribute the per-channel outputs into their panes.
@@ -334,17 +410,30 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ onClose }) => {
                   </span>
                   <span className="flex-1" />
                   {leaf.channelId ? (
-                    <button
-                      className="text-secondary hover:text-danger"
-                      onClick={e => {
-                        e.stopPropagation();
-                        void closeChannel(leaf.id);
-                      }}
-                      title="断开此会话"
-                      aria-label="断开会话"
-                    >
-                      <FiSquare size={10} />
-                    </button>
+                    <>
+                      <button
+                        className={recording[leaf.id] ? 'text-danger' : 'text-secondary hover:text-accent'}
+                        onClick={e => {
+                          e.stopPropagation();
+                          void toggleRecording(leaf.id);
+                        }}
+                        title={recording[leaf.id] ? '停止录制（asciinema v3）' : '开始录制会话（asciinema v3）'}
+                        aria-label="录制"
+                      >
+                        <span className={recording[leaf.id] ? 'animate-pulse' : ''}>●</span>
+                      </button>
+                      <button
+                        className="text-secondary hover:text-danger"
+                        onClick={e => {
+                          e.stopPropagation();
+                          void closeChannel(leaf.id);
+                        }}
+                        title="断开此会话"
+                        aria-label="断开会话"
+                      >
+                        <FiSquare size={10} />
+                      </button>
+                    </>
                   ) : (
                     <button
                       className="text-secondary hover:text-accent flex items-center gap-1"
@@ -385,23 +474,51 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ onClose }) => {
           })}
         </div>
 
-        {/* broadcast: the emission gate */}
+        {/* broadcast + shortcuts: the emission gate (AD-3) */}
         <div className="border-t border-line px-3 py-2 space-y-1.5">
           {confirmBar && (
             <div className="flex items-center gap-2 text-2xs text-warning" role="alert">
               <FiAlertTriangle size={12} />
               <span>
-                确认：将「{confirmBar.input.trim()}」发送到 {confirmBar.ids.length} 个终端会话？发送后不可撤回。
+                确认：将「{confirmBar.shortcut ? `快捷指令 ${confirmBar.shortcut}` : confirmBar.input.trim()}」发送到{' '}
+                {confirmBar.ids.length} 个终端会话？发送后不可撤回。
               </span>
               <button
                 className="px-2 py-0.5 rounded bg-warning/20 text-warning hover:bg-warning/30"
-                onClick={() => void doBroadcast(true)}
+                onClick={() =>
+                  confirmBar.shortcut ? void runShortcut(confirmBar.shortcut, true) : void doBroadcast(true)
+                }
                 disabled={busy}
               >
                 确认发送
               </button>
               <button className="text-secondary hover:text-ink" onClick={() => setConfirmBar(null)}>
                 取消
+              </button>
+            </div>
+          )}
+          {shortcuts.length > 0 && (
+            <div className="flex items-center gap-2 text-2xs">
+              <span className="text-secondary whitespace-nowrap">快捷指令：</span>
+              <select
+                className="bg-canvas border border-line-strong rounded px-1.5 py-1 text-ink max-w-48"
+                value={shortcutPick}
+                onChange={e => setShortcutPick(e.target.value)}
+                aria-label="选择快捷指令"
+              >
+                <option value="">选择…</option>
+                {shortcuts.map(s => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} — {s.description || s.command}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="px-2 py-1 rounded text-xs border border-line text-secondary hover:text-ink disabled:opacity-40"
+                onClick={() => void runShortcut(shortcutPick, false)}
+                disabled={busy || shortcutPick === '' || broadcastTargets.length === 0}
+              >
+                运行
               </button>
             </div>
           )}
@@ -422,6 +539,14 @@ const TerminalPanel: React.FC<TerminalPanelProps> = ({ onClose }) => {
               disabled={busy || broadcastTargets.length === 0 || broadcastInput === ''}
             >
               广播
+            </button>
+            <button
+              className="px-2 py-1 rounded text-xs border border-line text-secondary hover:text-ink disabled:opacity-40"
+              onClick={() => void saveCurrentAsShortcut()}
+              disabled={busy || broadcastInput === ''}
+              title="把当前输入保存为快捷指令"
+            >
+              存为快捷指令
             </button>
           </div>
         </div>

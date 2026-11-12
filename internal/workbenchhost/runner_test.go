@@ -97,6 +97,14 @@ func main() {
 			id := fmt.Sprintf("ch-%d", seq)
 			known[id] = true
 			send(map[string]string{"channelId": id}, "", "")
+		case workbench.MethodChannelSize:
+			send(map[string]bool{"ok": true}, "", "")
+		case workbench.MethodChannelClose:
+			var p map[string]interface{}
+			_ = json.Unmarshal(req.Params, &p)
+			cid, _ := p["channelId"].(string)
+			delete(known, cid)
+			send(map[string]bool{"ok": true}, "", "")
 		case workbench.MethodChannelData:
 			// map decode: a struct tag's backtick would terminate THIS file's raw
 			// string (it did exactly that once).

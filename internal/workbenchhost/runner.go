@@ -49,13 +49,22 @@ type Runner struct {
 	dead       chan struct{} // closed when the CURRENT process died unexpectedly
 	deadOnce   sync.Once
 	stopped    bool
+
+	// recording (W-T3): one cast per channel, keyed by channel id. The recMu is
+	// separate from mu so a frame hot path never contends with lifecycle.
+	recMu      sync.Mutex
+	recordings map[string]*recordingState
 }
 
 // New returns a runner over a fresh context store. The store may already carry
 // host-provided keys (connections.store) — providing it before any plugin loads
 // is what lets a plugin's fiber activate immediately.
 func New(store *ctxcore.Store) *Runner {
-	return &Runner{store: store, dead: make(chan struct{})}
+	return &Runner{
+		store:      store,
+		dead:       make(chan struct{}),
+		recordings: map[string]*recordingState{},
+	}
 }
 
 // ProvideConnectionsArchive publishes the host's connection archive under the
@@ -306,10 +315,21 @@ func (r *Runner) WriteChannel(channelID, input string, maxBytes int) (string, bo
 	if err != nil {
 		return "", false, err
 	}
+	// W-T3: record the EXCHANGE — input first ("i"), then the output the shell
+	// produced ("o"). The recorder is the §4 compensation: it never undoes
+	// anything, it keeps the faithful trace.
+	r.recordChannelFrame(channelID, "i", input)
+	if res.Output != "" {
+		r.recordChannelFrame(channelID, "o", res.Output)
+	}
+	if res.Ended {
+		r.stopRecordingsFor(channelID)
+	}
 	return res.Output, res.Ended, nil
 }
 
-// ResizeChannel re-announces the window size.
+// ResizeChannel re-announces the window size. The resize is recorded as an "r"
+// frame: a player replaying the cast reproduces the user's window changes.
 func (r *Runner) ResizeChannel(channelID string, cols, rows uint16) error {
 	r.mu.Lock()
 	p := r.proc
@@ -317,14 +337,31 @@ func (r *Runner) ResizeChannel(channelID string, cols, rows uint16) error {
 	if p == nil || p.Dead() {
 		return fmt.Errorf("plugin process is not running")
 	}
-	return p.call(context.Background(), workbench.MethodChannelSize, map[string]any{
+	err := p.call(context.Background(), workbench.MethodChannelSize, map[string]any{
 		"channelId": channelID, "cols": cols, "rows": rows,
 	}, nil)
+	if err == nil {
+		r.recordResize(channelID, cols, rows)
+	}
+	return err
+}
+
+// recordResize routes a resize into the channel's cast, if recording.
+func (r *Runner) recordResize(channel string, cols, rows uint16) {
+	r.recMu.Lock()
+	st, ok := r.recordings[channel]
+	r.recMu.Unlock()
+	if ok {
+		_ = st.rec.Resize(cols, rows)
+	}
 }
 
 // CloseChannel tears one session down and reclaims its binding (the inverse of
-// the runtime effect that opened it — Track's mirror image).
+// the runtime effect that opened it — Track's mirror image). The channel's cast,
+// if any, gets its exit event first: a recording that never ends is a trace with
+// a hole at exactly the moment that matters.
 func (r *Runner) CloseChannel(channelID string) error {
+	r.stopRecordingsFor(channelID)
 	r.mu.Lock()
 	p, f := r.proc, r.fiber
 	r.mu.Unlock()
@@ -360,6 +397,17 @@ func (r *Runner) Stop() {
 	p, f := r.proc, r.fiber
 	r.proc = nil
 	r.mu.Unlock()
+	// Every open cast gets its exit event: Stop ends all sessions, so the traces
+	// must close at the same boundary rather than dangle.
+	r.recMu.Lock()
+	channels := make([]string, 0, len(r.recordings))
+	for ch := range r.recordings {
+		channels = append(channels, ch)
+	}
+	r.recMu.Unlock()
+	for _, ch := range channels {
+		r.stopRecordingsFor(ch)
+	}
 	if f != nil {
 		r.store.Retire(f)
 	}

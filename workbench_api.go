@@ -192,3 +192,126 @@ func (a *App) SetWorkbenchSafeMode(on bool) error {
 	a.workbench.SetSafeMode(on)
 	return nil
 }
+
+// ---------- W-T3: recording + shortcuts ----------
+
+// workbenchRecordRequest starts/stops one channel's cast. Start returns the
+// .cast path (asciinema v3); stop writes the exit event and renames the temp
+// file into place.
+type workbenchRecordRequest struct {
+	Action    string `json:"action"` // "start" | "stop"
+	ChannelID string `json:"channelId"`
+	Title     string `json:"title,omitempty"`
+}
+
+func (a *App) handleWorkbenchRecord(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body workbenchRecordRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "start":
+		path, err := runner.StartRecording(body.ChannelID, body.Title)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"path": path})
+	case "stop":
+		path, err := runner.StopRecording(body.ChannelID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"path": path})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown record action "+body.Action)
+	}
+}
+
+// workbenchShortcutRequest is the shortcut CRUD + run surface. Run reuses the
+// broadcast gate (the withhold decision lives in ONE place); its response shape
+// is BroadcastResult's, so the UI's confirm flow is identical.
+type workbenchShortcutRequest struct {
+	Action     string   `json:"action"` // "list" | "save" | "delete" | "run"
+	Name       string   `json:"name,omitempty"`
+	Command    string   `json:"command,omitempty"`
+	Body       string   `json:"body,omitempty"`
+	ChannelIDs []string `json:"channelIds,omitempty"`
+	Confirmed  bool     `json:"confirmed,omitempty"`
+	MaxBytes   int      `json:"maxBytes,omitempty"`
+}
+
+func (a *App) handleWorkbenchShortcut(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body workbenchShortcutRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "list":
+		items, err := workbenchhost.ListShortcuts()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, items)
+	case "save":
+		if err := workbenchhost.SaveShortcut(workbenchhost.Shortcut{
+			Name: body.Name, Command: body.Command, Description: body.Body,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "delete":
+		if err := workbenchhost.DeleteShortcut(body.Name); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "run":
+		runner := a.workbenchReady(w)
+		if runner == nil {
+			return
+		}
+		if len(body.ChannelIDs) == 0 {
+			writeError(w, http.StatusBadRequest, "channelIds 不能为空")
+			return
+		}
+		res, err := runner.RunShortcut(body.Name, body.ChannelIDs, body.Confirmed, body.MaxBytes)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if res.Withheld {
+			// Same shape as the broadcast withhold: the UI shows the confirm bar
+			// and re-posts with confirmed=true. The emission warning travels with
+			// it — a shortcut IS a broadcast under a name.
+			res.Withheld = true
+			writeJSON(w, map[string]any{
+				"withheld":   true,
+				"channelIds": body.ChannelIDs,
+				"input":      "快捷指令 " + body.Name,
+				"warning":    "快捷指令会把同一命令发送到 N 个终端会话，发送后不可撤回",
+			})
+			return
+		}
+		writeJSON(w, res)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown shortcut action "+body.Action)
+	}
+}

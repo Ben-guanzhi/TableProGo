@@ -74,3 +74,42 @@ export async function BroadcastWorkbench(channelIds: string[], input: string): P
 export async function BroadcastConfirmed(channelIds: string[], input: string): Promise<BroadcastResponse> {
   return post('/api/workbench/broadcast-confirmed', { channelIds, input });
 }
+
+// W-T3: session recording (asciinema v3 casts) + the shortcut library.
+
+export async function StartRecording(channelId: string, title: string): Promise<{ path: string }> {
+  return post('/api/workbench/record', { action: 'start', channelId, title });
+}
+
+export async function StopRecording(channelId: string): Promise<{ path: string }> {
+  return post('/api/workbench/record', { action: 'stop', channelId });
+}
+
+export interface WorkbenchShortcut {
+  name: string;
+  command: string;
+  description?: string;
+  updated?: string;
+}
+
+export async function ListShortcuts(): Promise<WorkbenchShortcut[]> {
+  return post('/api/workbench/shortcuts', { action: 'list' });
+}
+
+export async function SaveShortcut(sc: { name: string; command: string; description?: string }): Promise<void> {
+  await post('/api/workbench/shortcuts', { action: 'save', ...sc });
+}
+
+export async function DeleteShortcut(name: string): Promise<void> {
+  await post('/api/workbench/shortcuts', { action: 'delete', name });
+}
+
+// RunShortcut is withhold-aware, exactly like BroadcastWorkbench: Safe Mode ON
+// returns { withheld: true } and the UI re-posts through the confirmed run.
+export async function RunShortcut(
+  name: string,
+  channelIds: string[],
+  confirmed = false,
+): Promise<BroadcastResponse> {
+  return post('/api/workbench/shortcuts', { action: 'run', name, channelIds, confirmed });
+}
