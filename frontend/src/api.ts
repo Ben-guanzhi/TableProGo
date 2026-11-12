@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   ApplySyncResult,
   ChangeSet,
   Column,
@@ -38,7 +38,34 @@ const API_PORT = window.__API_PORT__
   ?? new URLSearchParams(window.location.search).get('apiPort');
 const API_TOKEN = window.__API_TOKEN__
   ?? new URLSearchParams(window.location.search).get('apiToken') ?? '';
-const BASE = `http://127.0.0.1:${API_PORT}`;
+// W16: two deployment shapes share this client.
+//
+//   desktop  the Wails host injects __API_PORT__/__API_TOKEN__; the API is a different
+//            origin (127.0.0.1:port) and the token header is the credential.
+//   server   the page IS served by the API, so no port is injected: requests go to the
+//            page's own origin, the browser attaches the HttpOnly session cookie by
+//            itself, and there is no token to send.
+//
+// Getting this wrong is not cosmetic: sending the desktop token from a server page
+// would 401 (server mode ignores it), and hard-coding 127.0.0.1 in server mode would
+// point every request at the viewer's own machine.
+export const SAME_ORIGIN = !API_PORT;
+const BASE = SAME_ORIGIN ? '' : `http://127.0.0.1:${API_PORT}`;
+
+// authHeaders are what the credential looks like in the current shape. In server mode
+// it is empty on purpose: the cookie is attached by the browser, and a token here
+// would be a second, weaker credential.
+const authHeaders = (): Record<string, string> =>
+  API_TOKEN ? { 'X-API-Token': API_TOKEN } : {};
+
+// AuthRequiredError marks "you are not logged in", which the UI turns into a login
+// screen rather than an error toast.
+export class AuthRequiredError extends Error {
+  constructor() {
+    super('需要登录');
+    this.name = 'AuthRequiredError';
+  }
+}
 
 export interface RequestOptions {
   signal?: AbortSignal;
@@ -49,6 +76,9 @@ export interface RequestOptions {
 // crashed process) is reported as an HTTP failure instead of surfacing as a
 // JSON parse accident.
 async function parseResponse(res: Response): Promise<any> {
+  // 401 in server mode means "log in", not "the call failed": the UI redirects to the
+  // login screen instead of showing an error the user cannot act on.
+  if (res.status === 401 && SAME_ORIGIN) throw new AuthRequiredError();
   let data: any;
   try {
     data = await res.json();
@@ -63,7 +93,10 @@ async function parseResponse(res: Response): Promise<any> {
 export async function post(path: string, body: any = {}, opts: RequestOptions = {}): Promise<any> {
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-API-Token': API_TOKEN },
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    // Same-origin requests carry the session cookie; explicit here so a future
+    // cross-origin deployment cannot silently drop it.
+    credentials: SAME_ORIGIN ? 'same-origin' : 'omit',
     body: JSON.stringify(body),
     signal: opts.signal,
   });
@@ -71,7 +104,10 @@ export async function post(path: string, body: any = {}, opts: RequestOptions = 
 }
 
 async function get(path: string): Promise<any> {
-  const res = await fetch(`${BASE}${path}`, { headers: { 'X-API-Token': API_TOKEN } });
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { ...authHeaders() },
+    credentials: SAME_ORIGIN ? 'same-origin' : 'omit',
+  });
   return parseResponse(res);
 }
 

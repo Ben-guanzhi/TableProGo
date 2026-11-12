@@ -34,6 +34,7 @@ import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import ObjectHealthDialog from './components/ObjectHealthDialog';
 import AboutDialog from './components/AboutDialog';
 import NotebookPanel from './components/NotebookPanel';
+import LoginScreen from './components/LoginScreen';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -103,6 +104,7 @@ import { isMagicCommand, parseMagicCommand, runMagicCommand, MAGIC_HELP } from '
 import { activePaneOf, paneSQL, toggleDualPane } from './lib/dualPane';
 import { duplicateCombos, findShortcut, normalizeCombo } from './lib/shortcuts';
 import { fileStem, privateTitle } from './lib/privacy';
+import { AuthRequiredError, SAME_ORIGIN } from './api';
 import { download, downloadBlob } from './datagrid/download';
 import { toCSV, toJSON, toMarkdown, toTSV } from './gridView';
 import {
@@ -160,6 +162,8 @@ function App() {
   const [importTarget, setImportTarget] = useState<TableRef | null>(null);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  // W16: server mode starts logged out; the first 401 turns this on.
+  const [needsLogin, setNeedsLogin] = useState(false);
   const [passcodeDialogOpen, setPasscodeDialogOpen] = useState(false);
   // The idle lock (P2-9) watches the OS and the page; on lock it disconnects
   // everything behind the lock screen, because a live session must not outlive
@@ -330,7 +334,14 @@ function App() {
     try {
       const conns = await GetConnections();
       setConnections(conns as unknown as Connection[]);
+      setNeedsLogin(false);
     } catch (error) {
+      // W16: in server mode an unauthenticated call means "log in", not "the app is
+      // broken" — showing a toast for it would leave the user staring at an empty shell.
+      if (error instanceof AuthRequiredError) {
+        setNeedsLogin(true);
+        return;
+      }
       console.error('Failed to load connections:', error);
       toast.error('连接列表加载失败：' + (error as Error).message);
     }

@@ -293,6 +293,16 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 	if configPath != "" {
 		a.filePath = configPath
 	}
+	// The comment above always CLAIMED this default; the code did not apply it, so a
+	// run without --passcode handed every passcode operation an empty path: setting one
+	// failed, HasPasscode() answered false, and the idle lock could never engage. The
+	// server form surfaced it (it refuses to start without a passcode, and could never
+	// find one).
+	if passcodePath != "" {
+		a.passcodePath = passcodePath
+	} else {
+		a.passcodePath = userDataFilePath("passcode.json")
+	}
 	a.loadFromFile()
 	a.loadSettings()
 	a.loadHistory()

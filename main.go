@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -31,6 +31,7 @@ const usage = `TablePro Go
   tablepro-go [选项]           打开图形界面
   tablepro-go --mcp            以 MCP 服务器运行（stdio JSON-RPC，只读）
   tablepro-go --job=<路径>     运行一份作业配方（供 cron / 任务计划调用）
+  tablepro-go --serve          以浏览器可访问的服务器运行（需先设置口令）
 
 选项:
   --port=<n>         HTTP API 服务器端口（默认随机，日志会打印实际端口）
@@ -38,6 +39,9 @@ const usage = `TablePro Go
   --passcode=<path>  本地口令存储路径（默认用户数据目录的 passcode.json）
   --job=<path>       作业配方 JSON；执行完即退出（0=全部成功，1=有步骤失败，2=配方/用法错误）
   --dry-run          与 --job 连用：只校验并报告计划，不写任何数据
+  --serve            服务器模式：不打开窗口，用浏览器访问（默认只读，需登录）
+  --listen=<addr>    服务器模式的监听地址（默认 127.0.0.1:8765）
+  --serve-writes     服务器模式允许写接口（默认只放行只读白名单）
   --version          打印版本与构建信息后退出（报告问题时会用到）
   --help, -h          显示本帮助
 
@@ -53,6 +57,10 @@ type cliOptions struct {
 	apiPort      int
 	configPath   string
 	passcodePath string
+	// W16: the server form.
+	serve       bool
+	listen      string
+	serveWrites bool
 }
 
 // parseFlags resolves the command line with the flag package. -h prints the
@@ -79,6 +87,13 @@ func parseFlags() (cliOptions, error) {
 	// private distribution needs for "which build is this?" in a bug report.
 	showVersion := false
 	fs.BoolVar(&showVersion, "version", false, "")
+	// W16: the server form.
+	serve := false
+	listen := ""
+	serveWrites := false
+	fs.BoolVar(&serve, "serve", false, "")
+	fs.StringVar(&listen, "listen", "", "")
+	fs.BoolVar(&serveWrites, "serve-writes", false, "")
 	err := fs.Parse(os.Args[1:])
 	if err == flag.ErrHelp {
 		os.Exit(0)
@@ -106,6 +121,9 @@ func parseFlags() (cliOptions, error) {
 	}
 	opts.configPath = config
 	opts.passcodePath = passcode
+	opts.serve = serve
+	opts.listen = listen
+	opts.serveWrites = serveWrites
 	return opts, nil
 }
 
@@ -187,6 +205,15 @@ func main() {
 		log.Fatal("Failed to mint API token:", err)
 	}
 	svc.apiToken = token
+
+	// W16: the server form does not open a window; it serves the API in front of a
+	// login and blocks until the process is signalled.
+	if opts.serve {
+		if err := runServe(svc, opts); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 
 	addr := "127.0.0.1:0"
 	if opts.apiPort > 0 {
