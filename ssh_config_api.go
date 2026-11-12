@@ -10,7 +10,7 @@ package main
 import (
 	"log"
 
-	"tablepro-go/internal/sshconfig"
+	sshconfig "tablepro-go/sshx"
 )
 
 // SSHResolveResult is what the dialog gets for one host alias.

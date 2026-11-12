@@ -1,4 +1,4 @@
-// Package sshconfig reads an OpenSSH client configuration file into the jump
+// Package sshx (config.go) reads an OpenSSH client configuration file into the jump
 // host settings a connection can start from.
 //
 // The point is not to reimplement ssh(1): it is to answer "what does the user's
@@ -23,7 +23,7 @@
 // shell command while merely LOOKING at a config file, which a database client
 // has no business doing. Refusing is visible (an entry in Rejected) while a
 // silently ignored directive would look like it applied.
-package sshconfig
+package sshx
 
 import (
 	"errors"
@@ -57,9 +57,9 @@ type Host struct {
 // dialog shows these so "why did my ProxyJump not take effect" is answerable
 // from the UI instead of from a wiki.
 type Rejected struct {
-	Line   int
+	Line      int
 	Directive string
-	Reason string
+	Reason    string
 }
 
 // File is the parse result for one config file tree.
@@ -86,16 +86,16 @@ type block struct {
 // directives that change the transport or execute something; both lists are
 // refused on purpose (see the package comment).
 var refusedDirectives = map[string]string{
-	"proxyjump":     "ProxyJump 会改变传输路径，本客户端不支持（请改用内置 SSH 隧道）",
-	"proxycommand":  "ProxyCommand 会执行外部程序，本客户端不支持",
-	"forwardagent":  "ForwardAgent 会转发 agent 套接字，本客户端不支持",
-	"forwardx11":    "ForwardX11 会为无关的图形会话转发，本客户端不支持",
-	"forwardx11trusted": "ForwardX11Trusted 同 ForwardX11，本客户端不支持",
-	"dynamicforward": "DynamicForward 会开一个 SOCKS 代理，本客户端不支持",
-	"localforward":  "LocalForward 是另一个隧道，请用连接自带的 SSH 设置",
-	"remoteforward": "RemoteForward 是反向隧道，本客户端不支持",
+	"proxyjump":          "ProxyJump 会改变传输路径，本客户端不支持（请改用内置 SSH 隧道）",
+	"proxycommand":       "ProxyCommand 会执行外部程序，本客户端不支持",
+	"forwardagent":       "ForwardAgent 会转发 agent 套接字，本客户端不支持",
+	"forwardx11":         "ForwardX11 会为无关的图形会话转发，本客户端不支持",
+	"forwardx11trusted":  "ForwardX11Trusted 同 ForwardX11，本客户端不支持",
+	"dynamicforward":     "DynamicForward 会开一个 SOCKS 代理，本客户端不支持",
+	"localforward":       "LocalForward 是另一个隧道，请用连接自带的 SSH 设置",
+	"remoteforward":      "RemoteForward 是反向隧道，本客户端不支持",
 	"permitlocalcommand": "PermitLocalCommand 会执行本地命令，本客户端不支持",
-	"localcommand":  "LocalCommand 会执行本地命令，本客户端不支持",
+	"localcommand":       "LocalCommand 会执行本地命令，本客户端不支持",
 }
 
 // Parse reads one config file's text. name is used in warnings only.

@@ -133,7 +133,7 @@ func TestSSHConfigValidate(t *testing.T) {
 		{"key ok", SSHConfig{Enabled: true, Host: "h", User: "u", KeyFile: "k"}, true},
 	}
 	for _, c := range cases {
-		err := c.cfg.validate()
+		err := c.cfg.Validate()
 		if c.ok && err != nil {
 			t.Errorf("%s: unexpected error %v", c.name, err)
 		}
@@ -402,7 +402,7 @@ func TestSSHConfigRejectsProxyOnBastion(t *testing.T) {
 			Proxy:    &ProxyConfig{Enabled: true, Host: "proxy", Port: 1080},
 		},
 	}
-	if err := cfg.validate(); err == nil {
+	if err := cfg.Validate(); err == nil {
 		t.Fatal("a proxy on the bastion must be refused")
 	}
 }
@@ -411,17 +411,17 @@ func TestSSHConfigValidatesProxyFields(t *testing.T) {
 	base := SSHConfig{Enabled: true, Host: "h", User: "u", Password: "p"}
 	bad := base
 	bad.Proxy = &ProxyConfig{Enabled: true} // no host
-	if err := bad.validate(); err == nil {
+	if err := bad.Validate(); err == nil {
 		t.Fatal("a proxy without a host must be refused")
 	}
 	badPort := base
 	badPort.Proxy = &ProxyConfig{Enabled: true, Host: "proxy", Port: 70000}
-	if err := badPort.validate(); err == nil {
+	if err := badPort.Validate(); err == nil {
 		t.Fatal("an out-of-range proxy port must be refused")
 	}
 	good := base
 	good.Proxy = &ProxyConfig{Enabled: true, Host: "proxy", Port: 1080}
-	if err := good.validate(); err != nil {
+	if err := good.Validate(); err != nil {
 		t.Fatalf("a valid proxy should pass: %v", err)
 	}
 }
