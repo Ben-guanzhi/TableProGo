@@ -34,6 +34,11 @@ type pluginSpec struct {
 	Path string
 	// Kind is the engine the plugin claims; the banner must agree.
 	Kind string
+	// Args are passed to the executable after the path. W17: one console-plugin binary
+	// serves several engines and picks one by its first argument, which is what the
+	// documented "path;arg;arg" form exists for — and what was documented but never
+	// actually parsed or launched.
+	Args []string
 }
 
 // pluginRegistry maps an engine type onto its plugin. Populated from the environment
@@ -79,9 +84,20 @@ func (r *pluginRegistry) Load() []error {
 			continue
 		}
 		typ := strings.ToLower(strings.TrimPrefix(name, "TABLEPRO_PLUGIN_"))
+		// The documented form is "path[;arg;arg]": the arguments after the first
+		// semicolon are passed to the executable. Splitting here (rather than stat-ing
+		// the whole string) is what makes one binary able to serve several engines —
+		// the console plugin picks Milvus/Kafka/Pulsar/Nacos by its first argument.
+		parts := strings.Split(value, ";")
 		// A relative path is resolved now: the child's working directory is the
 		// process's, which is not necessarily where the user typed the command.
-		path := value
+		path := strings.TrimSpace(parts[0])
+		var args []string
+		for _, a := range parts[1:] {
+			if a = strings.TrimSpace(a); a != "" {
+				args = append(args, a)
+			}
+		}
 		if abs, err := filepath.Abs(path); err == nil {
 			path = abs
 		}
@@ -111,7 +127,7 @@ func (r *pluginRegistry) Load() []error {
 			log.Printf("plugin for %s: %s", typ, check.Detail())
 		}
 		declared[typ] = path
-		r.specs[typ] = pluginSpec{Path: path, Kind: typ}
+		r.specs[typ] = pluginSpec{Path: path, Kind: typ, Args: args}
 	}
 	return errs
 }
@@ -219,11 +235,13 @@ func (c *Connection) closePlugin() {
 	connID := c.pluginConnID
 	pluginPath := c.pluginPath
 	pluginKind := c.pluginKind
+	pluginArgs := c.pluginArgs
 	c.plugin = nil
 	c.pluginConn = nil
 	c.pluginConnID = ""
 	c.pluginPath = ""
 	c.pluginKind = ""
+	c.pluginArgs = nil
 	c.pluginMu.Unlock()
 	if drv != nil {
 		if err := drv.Close(); err != nil {
@@ -239,7 +257,7 @@ func (c *Connection) closePlugin() {
 		// Release the host reference: the process is shared across connections
 		// of the same engine via pluginHosts, so it is only closed when the
 		// last connection of that engine goes away.
-		pluginHosts.releaseHost(pluginPath, pluginKind)
+		pluginHosts.releaseHost(pluginPath, pluginKind, pluginArgs)
 	}
 }
 

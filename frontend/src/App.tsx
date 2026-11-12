@@ -1,5 +1,5 @@
-﻿import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiBookOpen, FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { FiBookOpen, FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -35,6 +35,7 @@ import ObjectHealthDialog from './components/ObjectHealthDialog';
 import AboutDialog from './components/AboutDialog';
 import NotebookPanel from './components/NotebookPanel';
 import LoginScreen from './components/LoginScreen';
+import PluginConsole from './components/PluginConsole';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -197,6 +198,8 @@ function App() {
   const [showRowSync, setShowRowSync] = useState(false);
   // W10: the plugins panel.
   const [showPlugins, setShowPlugins] = useState(false);
+  // W17: the plugin console (vector DB / MQ actions declared by a plugin).
+  const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
   const [showPlan, setShowPlan] = useState(false);
   // W12: importing connections from another client.
@@ -1892,6 +1895,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowConsole(true)}
+              title="控制台：执行插件声明的向量库/MQ 动作"
+              aria-label="插件控制台"
+            >
+              <FiTerminal size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2311,6 +2322,14 @@ function App() {
           database={tabDatabase(activeTabData)}
           schema=""
           onClose={() => setShowObjectHealth(false)}
+        />
+      )}
+
+      {showConsole && activeConnection && (
+        <PluginConsole
+          connId={activeConnection.id}
+          connName={activeConnection.name}
+          onClose={() => setShowConsole(false)}
         />
       )}
 

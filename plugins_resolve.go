@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/dbcore/dbcore"
@@ -94,7 +95,12 @@ type pluginHostEntry struct {
 // hostKey identifies a plugin process by executable AND the engine it serves.
 // Keying on the path alone collides when one binary serves two engine types
 // (TP-29); the NUL separator keeps the composite unambiguous.
-func hostKey(path, kind string) string { return path + "\x00" + kind }
+func hostKey(path, kind string, args []string) string {
+	// The args are part of the identity: one console-plugin binary launched as
+	// "…;milvus" and as "…;kafka" are two different engines and must not share a host.
+	// \x1f separates them so a path containing the separator cannot alias another.
+	return path + "\x00" + kind + "\x00" + strings.Join(args, "\x1f")
+}
 
 var pluginHosts = &pluginHostRegistry{
 	hosts: make(map[string]*pluginHostEntry),
@@ -109,8 +115,8 @@ var pluginHosts = &pluginHostRegistry{
 // including the ones that would have found the warm host on the fast path.
 // Two concurrent cold starts for the same path can both run; the loser closes
 // its process and joins the winner under the lock.
-func (r *pluginHostRegistry) acquireHost(path, kind string) (*plugindriver.ConnDriver, error) {
-	key := hostKey(path, kind)
+func (r *pluginHostRegistry) acquireHost(path, kind string, args []string) (*plugindriver.ConnDriver, error) {
+	key := hostKey(path, kind, args)
 	for {
 		r.mu.Lock()
 		entry, ok := r.hosts[key]
@@ -131,7 +137,7 @@ func (r *pluginHostRegistry) acquireHost(path, kind string) (*plugindriver.ConnD
 		}
 		r.mu.Unlock()
 
-		host, err := plugindriver.StartConn(context.Background(), path, nil)
+		host, err := plugindriver.StartConn(context.Background(), path, args)
 		if err != nil {
 			return nil, err
 		}
@@ -152,8 +158,8 @@ func (r *pluginHostRegistry) acquireHost(path, kind string) (*plugindriver.ConnD
 
 // releaseHost decrements the reference count for the plugin key and closes
 // the host when it reaches zero.
-func (r *pluginHostRegistry) releaseHost(path, kind string) {
-	key := hostKey(path, kind)
+func (r *pluginHostRegistry) releaseHost(path, kind string, args []string) {
+	key := hostKey(path, kind, args)
 	r.mu.Lock()
 	entry, ok := r.hosts[key]
 	if !ok || entry.withdrawing {
@@ -204,12 +210,12 @@ func (c *Connection) startPluginConn(spec pluginSpec) (dbcore.SQLDriver, error) 
 	}
 	c.pluginMu.Unlock()
 
-	host, err := pluginHosts.acquireHost(spec.Path, spec.Kind)
+	host, err := pluginHosts.acquireHost(spec.Path, spec.Kind, spec.Args)
 	if err != nil {
 		return nil, err
 	}
 	if string(host.Kind()) != spec.Kind && spec.Kind != "" {
-		pluginHosts.releaseHost(spec.Path, spec.Kind)
+		pluginHosts.releaseHost(spec.Path, spec.Kind, spec.Args)
 		return nil, fmt.Errorf("plugin %s speaks %q, but it is registered as %q", spec.Path, host.Kind(), spec.Kind)
 	}
 	connID, _, err := host.Open(context.Background(), plugindriver.ConnectParams{
@@ -222,7 +228,7 @@ func (c *Connection) startPluginConn(spec pluginSpec) (dbcore.SQLDriver, error) 
 		Options:  c.Options,
 	})
 	if err != nil {
-		pluginHosts.releaseHost(spec.Path, spec.Kind)
+		pluginHosts.releaseHost(spec.Path, spec.Kind, spec.Args)
 		return nil, err
 	}
 
@@ -231,13 +237,14 @@ func (c *Connection) startPluginConn(spec pluginSpec) (dbcore.SQLDriver, error) 
 	if c.pluginConn != nil && c.pluginConnID != "" {
 		c.pluginMu.Unlock()
 		_ = host.CloseConn(context.Background(), connID)
-		pluginHosts.releaseHost(spec.Path, spec.Kind)
+		pluginHosts.releaseHost(spec.Path, spec.Kind, spec.Args)
 		return c.pluginConn.Bind(c.pluginConnID, c.Database), nil
 	}
 	c.pluginConn = host
 	c.pluginConnID = connID
 	c.pluginPath = spec.Path
 	c.pluginKind = spec.Kind
+	c.pluginArgs = spec.Args
 	drv := host.Bind(connID, c.Database)
 	c.pluginMu.Unlock()
 	return drv, nil

@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // W16: the server form's authentication.
 //
@@ -178,6 +178,12 @@ var readOnlyRoutes = map[string]bool{
 	"/api/notebooks/run":            true,
 	"/api/build-info":               true,
 	"/api/plugins":                  true,
+	// Listing a plugin's console actions is read-only, so a server-mode viewer can see
+	// that a connection offers "向量检索" or "消费消息". RUNNING one is deliberately NOT
+	// whitelisted: the host cannot tell a read-only action (a similarity search) from a
+	// writing one (publish-config, produce-message), and guessing wrong in the permissive
+	// direction is exactly what the read-only default exists to prevent.
+	"/api/plugin/actions":           true,
 	"/api/oracle/invalid-objects":   true,
 	"/api/oracle/dependencies":      true,
 	"/api/settings":                 true,

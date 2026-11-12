@@ -85,6 +85,11 @@ type Connection struct {
 	// pluginPath it forms the registry key (hostKey). closePlugin needs it to
 	// release the exact entry acquireHost used.
 	pluginKind string
+	// pluginArgs are the launch arguments the host was started with. They are part of
+	// the registry key: one binary launched as ";milvus" and as ";kafka" are two hosts.
+	// closePlugin must replay them or it would release a different entry and leak this
+	// process.
+	pluginArgs []string
 
 	// keepaliveStop signals the keepalive goroutine to stop. Nil means no
 	// goroutine is running. The keepalive pings the server periodically so

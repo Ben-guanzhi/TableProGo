@@ -1,4 +1,4 @@
-﻿import type {
+import type {
   ApplySyncResult,
   ChangeSet,
   Column,
@@ -113,6 +113,39 @@ async function get(path: string): Promise<any> {
 
 export async function GetConnections(): Promise<Connection[]> {
   return get('/api/connections');
+}
+
+// W17: a plugin-backed connection's console actions. The client has no idea what any
+// action means — it lists what the plugin declared and runs one by id. That is what lets
+// Milvus/Kafka/Pulsar/Nacos consoles ship as plugins instead of as features here.
+export interface PluginActionParam {
+  name: string;
+  label?: string;
+  // A display hint only: "text" | "number" | "textarea" | "select".
+  kind?: string;
+  required?: boolean;
+  default?: string;
+}
+
+export interface PluginAction {
+  id: string;
+  title: string;
+  group?: string;
+  // danger = it can change remote state (a publish, a produce); the UI confirms first.
+  danger?: boolean;
+  params?: PluginActionParam[];
+}
+
+export async function GetPluginActions(connId: string): Promise<PluginAction[]> {
+  return post('/api/plugin/actions', { connId });
+}
+
+export async function RunPluginAction(
+  connId: string,
+  action: string,
+  args: Record<string, unknown>,
+): Promise<QueryResult> {
+  return post('/api/plugin/action/run', { connId, action, args });
 }
 
 export async function AddConnection(config: ConnectionConfig): Promise<void> {

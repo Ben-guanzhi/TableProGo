@@ -355,7 +355,7 @@ func TestAcquireHostConvergesConcurrentColdStarts(t *testing.T) {
 		go func() {
 			startGate.Done()
 			startGate.Wait()
-			host, err := pluginHosts.acquireHost(path, spec.Kind)
+			host, err := pluginHosts.acquireHost(path, spec.Kind, spec.Args)
 			results <- result{host, err}
 		}()
 	}
@@ -374,17 +374,17 @@ func TestAcquireHostConvergesConcurrentColdStarts(t *testing.T) {
 	// Every caller's refcount lands on the one entry; releasing them all
 	// closes the process (the temp dir cleanup needs that on Windows).
 	pluginHosts.mu.Lock()
-	entry := pluginHosts.hosts[hostKey(path, spec.Kind)]
+	entry := pluginHosts.hosts[hostKey(path, spec.Kind, spec.Args)]
 	refs := entry.refCount
 	pluginHosts.mu.Unlock()
 	if refs != n {
 		t.Fatalf("refCount = %d, want %d", refs, n)
 	}
 	for i := 0; i < n; i++ {
-		pluginHosts.releaseHost(path, spec.Kind)
+		pluginHosts.releaseHost(path, spec.Kind, spec.Args)
 	}
 	pluginHosts.mu.Lock()
-	_, stillThere := pluginHosts.hosts[hostKey(path, spec.Kind)]
+	_, stillThere := pluginHosts.hosts[hostKey(path, spec.Kind, spec.Args)]
 	pluginHosts.mu.Unlock()
 	if stillThere {
 		t.Fatal("the host must be closed once the last reference drops")

@@ -557,6 +557,12 @@ func (a *App) routes() *http.ServeMux {
 			w.WriteHeader(405)
 		}
 	})
+	// W17: the console-action surface. A plugin-backed connection declares the actions
+	// it offers (a vector search, a message consume, a config publish) and the host runs
+	// them by id with the caller's args. The host stays domain-blind on purpose, so a
+	// new engine is a plugin, not a change here.
+	mux.HandleFunc("/api/plugin/actions", a.handlePluginActions)
+	mux.HandleFunc("/api/plugin/action/run", a.handlePluginRunAction)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

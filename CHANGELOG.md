@@ -1,4 +1,4 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- 插件控制台（W17，对应对比分析 #10「向量库/MQ 控制台」）：把 Milvus/Kafka/Pulsar/Nacos 的控制台
+  做成**插件**而不是内置特性。内核 `plugindriver` 加两个**加法式**协议方法 `connListActions` /
+  `connRunAction`（旧插件答 `ERR_NOT_SUPPORTED`，宿主降级为"没有控制台"而非报错）：插件声明动作
+  （id/title/group/danger/params），宿主按 id 运行并把结果当**查询结果**渲染——同一套网格、导出、
+  复制，不需要第二套 UI。客户端保持**零领域知识**，新引擎 = 一个插件二进制。前端新增 `PluginConsole`
+  面板（动作列表 + 参数表单 + 结果表），`danger` 动作先确认。server 模式只读白名单只放行
+  `/api/plugin/actions`（列动作），**不**运行动作：宿主无法判断动作是只读检索还是写配置。
+  顺带修了 `TABLEPRO_PLUGIN_<TYPE>=path[;arg;arg]` 这个一直被文档承诺却从未实现的缺口——
+  `Load()` 现在按 `;` 拆分并把参数传给子进程，`hostKey` 把 args 纳入身份（同一二进制以
+  `;milvus`/`;kafka` 启动是两个引擎，不能共享进程）。
 - 服务器模式（W16，对应对比分析 #5「Web/Docker 形态」的一半）：`--serve` 把同一套 HTTP API
   放到浏览器前面，加一道真正的登录。桌面模式靠"页面在进程内、token 由宿主注入"划边界，
   一旦上网络这条边界就没了，所以需要：**口令**（复用锁屏的 argon2id 存储）+ **可选 TOTP**
