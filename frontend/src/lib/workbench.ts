@@ -113,3 +113,59 @@ export async function RunShortcut(
 ): Promise<BroadcastResponse> {
   return post('/api/workbench/shortcuts', { action: 'run', name, channelIds, confirmed });
 }
+
+// W-F1: files over the plugin's files.session. The realm (allowed roots) is
+// declared at open; upload is a single call that the host runs as the two-step
+// acquisition (stage → commit) with both inverses tracked.
+
+export async function OpenFilesSession(
+  params: { host: string; port: number; user: string; password: string; roots?: string[] },
+): Promise<{ sessionId: string }> {
+  return post('/api/workbench/files', { action: 'open', ...params });
+}
+
+export interface FileEntry {
+  name: string;
+  size: number;
+  mode: string;
+  modTime: string;
+  isDir: boolean;
+}
+
+export async function ListFiles(session: string, dir: string): Promise<{ entries: FileEntry[] }> {
+  return post('/api/workbench/files', { action: 'list', session, path: dir });
+}
+
+export async function MkdirFiles(session: string, path: string): Promise<void> {
+  await post('/api/workbench/files', { action: 'mkdir', session, path });
+}
+
+export async function RenameFiles(session: string, path: string, to: string): Promise<void> {
+  await post('/api/workbench/files', { action: 'rename', session, path, to });
+}
+
+export async function RemoveFiles(session: string, path: string): Promise<void> {
+  await post('/api/workbench/files', { action: 'remove', session, path });
+}
+
+// UploadFile posts the LOCAL PATH the browser staged (via a hidden file input
+// the host reads directly — the desktop app shares a filesystem with the page).
+export async function UploadFile(
+  session: string,
+  localPath: string,
+  remotePath: string,
+): Promise<{ path: string; size: number }> {
+  return post('/api/workbench/files', { action: 'upload', session, localPath, path: remotePath });
+}
+
+export async function DownloadFile(
+  session: string,
+  path: string,
+  localTarget: string,
+): Promise<{ path: string; size: number }> {
+  return post('/api/workbench/files', { action: 'download', session, path, localTarget });
+}
+
+export async function CloseFilesSession(session: string): Promise<void> {
+  await post('/api/workbench/files', { action: 'close', session });
+}

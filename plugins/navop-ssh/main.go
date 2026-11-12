@@ -1,11 +1,12 @@
-// Command navop-ssh is the W-T1 workbench plugin: an SSH terminal provider.
+// Command navop-ssh is the W-T1 workbench plugin: an SSH terminal + files
+// provider (W-F1 加 files.session)。
 //
 // It speaks the workbench protocol (plugindriver framing + workbench methods) on
 // top of the banner, exactly the shape P0 defined:
 //
-//	hello    → the component interface (d, p): it PROVIDES terminal.channels and
-//	           nav.nodes (witnessed commutative — both are tables with unique
-//	           tags) and DECLARES connections.store (the host's connection
+//	hello    → the component interface (d, p): it PROVIDES terminal.channels,
+//	           nav.nodes and files.session (witnessed commutative — tables with
+//	           unique tags) and DECLARES connections.store (the host's connection
 //	           archive). Satisfaction σ ⊧ d is decidable host-side, so the fiber
 //	           stays Inactive until the host provides the key.
 //	effect   → the load iterator's stages, one EffectFrame each: stage 0
@@ -18,6 +19,12 @@
 //	           allocated id — NOT a "lowest available descriptor" (§6.3 anti-
 //	           pattern), so two channel opens commute and either can be
 //	           withdrawn while the other stands (Thm 43/47).
+//	files    → SFTP sessions over the SAME SSH chain (W-F1): a files channel
+//	           opens an SFTP subsystem; the file actions (list/stat/mkdir/
+//	           rename/upload/download) are framed over it. Upload lands as
+//	           .tmp + rename (the acquisition discipline — §6.1), so a failed
+//	           transfer leaves only a .tmp residue whose cleanup is the effect
+//	           inverse the host tracks.
 //
 // KILL/RECOVER (the W-T1 acceptance): the host can kill this process at any
 // moment. Death severs the pipes; the host's runner notices, retires the fiber,
@@ -59,7 +66,7 @@ func main() {
 	fmt.Fprintf(out, "%s\n", banner)
 	out.Flush()
 
-	srv := &server{channels: map[string]*channelHandle{}}
+	srv := &server{channels: map[string]*channelHandle{}, files: map[string]*fileSession{}}
 	in := bufio.NewReader(os.Stdin)
 	var wmu sync.Mutex
 	for {
@@ -76,14 +83,16 @@ func main() {
 	}
 }
 
-// server holds the plugin's live PTY channels. It deliberately holds NO host
-// state: the nav node and the channel pool live in the HOST's tables, tracked
-// with inverses — which is exactly why killing this process loses nothing the
-// host cannot rebuild by re-running the same load on a fresh fiber.
+// server holds the plugin's live PTY channels and SFTP sessions. It deliberately
+// holds NO host state: the nav node and the channel pool live in the HOST's
+// tables, tracked with inverses — which is exactly why killing this process
+// loses nothing the host cannot rebuild by re-running the same load on a fresh
+// fiber.
 type server struct {
 	mu       sync.Mutex
 	seq      uint64
 	channels map[string]*channelHandle
+	files    map[string]*fileSession // files.session bindings (W-F1)
 }
 
 // channelHandle is one open PTY. The pump goroutine fills the buffer from the
@@ -123,6 +132,7 @@ func (s *server) handle(out *bufio.Writer, wmu *sync.Mutex, req plugindriver.Req
 			Provides: []workbench.Capability{
 				{Key: "terminal.channels", Commutative: true},
 				{Key: "nav.nodes", Commutative: true},
+				{Key: "files.session", Commutative: true},
 			},
 			Secrets: []string{"ssh.password"},
 		}, "", "")
@@ -158,9 +168,17 @@ func (s *server) handle(out *bufio.Writer, wmu *sync.Mutex, req plugindriver.Req
 			return
 		}
 		send(map[string]bool{"ok": true}, "", "")
+	case workbench.MethodFilesAction:
+		res, errText := s.filesAction(req.Params)
+		if errText != "" {
+			send(nil, errText, "ERR_PLUGIN")
+			return
+		}
+		send(res, "", "")
 	case plugindriver.MethodClose:
 		send(nil, "", "")
 		s.closeAll()
+		s.closeAllFiles()
 		os.Exit(0)
 	default:
 		send(nil, "unknown method "+req.Method, "ERR_NOT_SUPPORTED")

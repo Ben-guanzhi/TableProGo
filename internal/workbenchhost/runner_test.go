@@ -73,8 +73,12 @@ func main() {
 		case workbench.MethodHello:
 			send(workbench.Banner{
 				Stream: workbench.StreamFrameV1, PluginID: "fake-ssh", ProviderID: "fake-1",
-				Depends:  []workbench.Capability{{Key: "connections.store", Commutative: true}},
-				Provides: []workbench.Capability{{Key: "terminal.channels", Commutative: true}, {Key: "nav.nodes", Commutative: true}},
+				Depends: []workbench.Capability{{Key: "connections.store", Commutative: true}},
+				Provides: []workbench.Capability{
+					{Key: "terminal.channels", Commutative: true},
+					{Key: "nav.nodes", Commutative: true},
+					{Key: "files.session", Commutative: true},
+				},
 			}, "", "")
 		case workbench.MethodEffect:
 			var p struct{ Stage int }
@@ -105,6 +109,21 @@ func main() {
 			cid, _ := p["channelId"].(string)
 			delete(known, cid)
 			send(map[string]bool{"ok": true}, "", "")
+		case workbench.MethodFilesAction:
+			// The fake answers everything; the HOST's realm gate is what the realm
+			// tests assert (a refusal there never reaches this handler).
+			var p map[string]interface{}
+			_ = json.Unmarshal(req.Params, &p)
+			action, _ := p["action"].(string)
+			switch action {
+			case "open":
+				seq++
+				send(map[string]string{"channelId": fmt.Sprintf("fs-%d", seq)}, "", "")
+			case "list":
+				send(map[string]interface{}{"entries": []interface{}{}}, "", "")
+			default:
+				send(map[string]bool{"ok": true}, "", "")
+			}
 		case workbench.MethodChannelData:
 			// map decode: a struct tag's backtick would terminate THIS file's raw
 			// string (it did exactly that once).

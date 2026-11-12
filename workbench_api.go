@@ -315,3 +315,97 @@ func (a *App) handleWorkbenchShortcut(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown shortcut action "+body.Action)
 	}
 }
+
+// ---------- W-F1: files (SFTP over the plugin's files.session) ----------
+
+// workbenchFilesRequest is the file surface: open a session (with its realm
+// roots), then list/mkdir/rename/remove/upload/download against it. Upload is
+// TWO calls (stage → commit) because the host tracks each step's inverse — the
+// acquisition discipline; download renames locally after the plugin's stream.
+type workbenchFilesRequest struct {
+	Action    string   `json:"action"`
+	Session   string   `json:"session,omitempty"`
+	Host      string   `json:"host,omitempty"`
+	Port      int      `json:"port,omitempty"`
+	User      string   `json:"user,omitempty"`
+	Password  string   `json:"password,omitempty"`
+	Roots     []string `json:"roots,omitempty"`
+	Path      string   `json:"path,omitempty"`
+	To        string   `json:"to,omitempty"`
+	LocalPath string   `json:"localPath,omitempty"`
+}
+
+func (a *App) handleWorkbenchFiles(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body workbenchFilesRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "open":
+		id, err := runner.OpenFilesSession(body.Host, body.Port, body.User, body.Password, body.Roots)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"sessionId": id})
+	case "list":
+		entries, err := runner.ListFiles(body.Session, body.Path)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"entries": entries})
+	case "mkdir":
+		if err := runner.MkdirFiles(body.Session, body.Path); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "rename":
+		if err := runner.RenameFiles(body.Session, body.Path, body.To); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "remove":
+		if err := runner.RemoveFiles(body.Session, body.Path); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "upload":
+		// The local file was already staged by the UI into body.LocalPath (a
+		// browser upload lands in a temp file the host owns); the runner does
+		// the remote .tmp + commit with both inverses tracked.
+		remote, size, err := runner.UploadFile(body.Session, body.LocalPath, body.Path)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"path": remote, "size": size})
+	case "download":
+		size, err := runner.DownloadFile(body.Session, body.Path, body.LocalPath)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"path": body.LocalPath, "size": size})
+	case "close":
+		if err := runner.CloseFilesSession(body.Session); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown files action "+body.Action)
+	}
+}

@@ -575,6 +575,9 @@ func (a *App) routes() *http.ServeMux {
 	// broadcast gate — the confirm is the -confirmed shape, never a flag.
 	mux.HandleFunc("/api/workbench/record", a.handleWorkbenchRecord)
 	mux.HandleFunc("/api/workbench/shortcuts", a.handleWorkbenchShortcut)
+	// W-F1: files over the plugin's files.session. Upload is the two-step
+	// acquisition (stage → commit) with both inverses tracked host-side.
+	mux.HandleFunc("/api/workbench/files", a.handleWorkbenchFiles)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

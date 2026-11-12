@@ -37,6 +37,7 @@ import NotebookPanel from './components/NotebookPanel';
 import LoginScreen from './components/LoginScreen';
 import PluginConsole from './components/PluginConsole';
 import TerminalPanel from './components/TerminalPanel';
+import FilesPanel from './components/FilesPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -201,6 +202,8 @@ function App() {
   const [showPlugins, setShowPlugins] = useState(false);
   // W-T2: the terminal workbench panel (tabs/split panes/broadcast).
   const [showTerminal, setShowTerminal] = useState(false);
+  // W-F1: the files workbench panel (SFTP over the plugin's files.session).
+  const [showFiles, setShowFiles] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1914,6 +1917,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowFiles(true)}
+              title="文件：SFTP 浏览/上传/下载（navop-ssh 插件）"
+              aria-label="文件工作台"
+            >
+              <FiDownload size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2346,6 +2357,10 @@ function App() {
 
       {showTerminal && (
         <TerminalPanel onClose={() => setShowTerminal(false)} />
+      )}
+
+      {showFiles && (
+        <FilesPanel onClose={() => setShowFiles(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (
