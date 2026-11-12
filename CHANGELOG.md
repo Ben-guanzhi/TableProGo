@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Oracle object health (W9): an "无效对象" panel listing the schema's INVALID
+  objects, one-click recompile, and the dependency view in both directions. The
+  pieces are `dbcore.ObjectHealthReader` (optional capability; non-Oracle engines
+  answer "not applicable" so the panel hides instead of showing an empty list that
+  looks like "everything is fine"), `sqltext.InvalidObjectsQuery` /
+  `ObjectDependenciesQuery` / `CompileErrorsQuery` / `CompileStatement`, and the
+  Oracle driver's mapping. **The finding that shaped the feature**: Oracle ACCEPTS
+  `ALTER … COMPILE` even when the object cannot be compiled — it writes the
+  diagnostics to `ALL_ERRORS` and leaves the object INVALID. So "the statement
+  ran" and "the object is fixed" are different facts, and the panel never
+  conflates them: after every recompile it re-reads the invalid list and shows the
+  compiler errors on the object that is still broken. `CompileStatement`
+  whitelists the object type (the keyword cannot be quoted) and appends `BODY` for
+  `PACKAGE BODY`/`TYPE BODY` — without it only the spec is compiled and a
+  body-invalid package would look repaired. The recompile goes through
+  `guardWrite`, so Safe Mode gates it like any other DDL. Verified on a live
+  Oracle 23ai Free: the kernel suite creates a genuinely broken procedure, reads it
+  back, compiles it against the missing table (statement succeeds, object stays
+  invalid, `ORA-00942` reported), restores the table and watches it become valid.
 - MCP enhancements (W13): three pieces that make the assistant surfaces usable by
   something other than a human reading the screen. **Compact output**: `query`
   and `sample_table` accept `format: "json" | "compact"`; compact is tab-separated

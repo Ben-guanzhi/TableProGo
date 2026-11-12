@@ -593,6 +593,30 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"path": path}, nil
 	})
+	// W9: Oracle object health. The list is read-only; the recompile is a
+	// data-dictionary write and takes the same guard every other write takes.
+	post(a, mux, "/api/oracle/invalid-objects", 400, func(a *App, body struct {
+		ConnID   string `json:"connId"`
+		Database string `json:"database"`
+		Schema   string `json:"schema"`
+	}) (any, error) {
+		return a.ListInvalidObjects(body.ConnID, body.Database, body.Schema), nil
+	})
+	post(a, mux, "/api/oracle/recompile", 400, func(a *App, body OracleRecompileRequest) (any, error) {
+		return a.RecompileObject(body), nil
+	})
+	post(a, mux, "/api/oracle/dependencies", 400, func(a *App, body struct {
+		ConnID   string `json:"connId"`
+		Database string `json:"database"`
+		Schema   string `json:"schema"`
+		Object   string `json:"object"`
+	}) (any, error) {
+		deps, err := a.ListObjectDependencies(body.ConnID, body.Database, body.Schema, body.Object)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"dependencies": deps}, nil
+	})
 	// shows; Apply re-derives the plan from the request (never trusting one),
 	// requires Confirm, and stops at the first table that fails.
 	post(a, mux, "/api/transfer/preview", 400, func(a *App, body TransferRequest) (any, error) {

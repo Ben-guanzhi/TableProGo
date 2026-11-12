@@ -538,6 +538,71 @@ export async function WriteAgentSkill(): Promise<{ path: string }> {
   return post('/api/agent-skill', {});
 }
 
+// ---- W9: Oracle object health ----
+
+export interface OracleObject {
+  name: string;
+  type: string;
+}
+
+export interface OracleObjectHealth {
+  // false for a non-Oracle connection: the panel hides rather than showing an
+  // empty list that looks like "everything is fine".
+  supported: boolean;
+  objects: OracleObject[] | null;
+  note?: string;
+}
+
+export interface OracleCompileError {
+  line: number;
+  position: number;
+  text: string;
+}
+
+export interface OracleRecompileResult {
+  // Whether the ALTER ... COMPILE statement itself ran.
+  compiled: boolean;
+  // The real answer: Oracle accepts the statement even when the object cannot be
+  // compiled, so this must be read from the catalog afterwards.
+  stillInvalid: boolean;
+  errors: OracleCompileError[] | null;
+  error?: string;
+}
+
+export interface OracleDependency {
+  direction: 'in' | 'out';
+  name: string;
+  type: string;
+  owner: string;
+}
+
+export async function ListInvalidObjects(
+  connId: string,
+  database = '',
+  schema = '',
+): Promise<OracleObjectHealth> {
+  return post('/api/oracle/invalid-objects', { connId, database, schema });
+}
+
+export async function RecompileObject(req: {
+  connId: string;
+  database?: string;
+  schema: string;
+  name: string;
+  type: string;
+}): Promise<OracleRecompileResult> {
+  return post('/api/oracle/recompile', { ...req, confirm: true });
+}
+
+export async function ListObjectDependencies(
+  connId: string,
+  schema: string,
+  object: string,
+  database = '',
+): Promise<{ dependencies: OracleDependency[] | null }> {
+  return post('/api/oracle/dependencies', { connId, database, schema, object });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

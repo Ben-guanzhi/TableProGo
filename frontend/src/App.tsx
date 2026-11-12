@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiDownload, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
+import { FiCode, FiDownload, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -31,6 +31,7 @@ import RowSyncDialog from './components/RowSyncDialog';
 import PluginPanel from './components/PluginPanel';
 import ExplainPlanView from './components/ExplainPlanView';
 import ImportConnectionsDialog from './components/ImportConnectionsDialog';
+import ObjectHealthDialog from './components/ObjectHealthDialog';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -193,6 +194,8 @@ function App() {
   const [showPlan, setShowPlan] = useState(false);
   // W12: importing connections from another client.
   const [showImportConns, setShowImportConns] = useState(false);
+  // W9: the Oracle invalid-object panel.
+  const [showObjectHealth, setShowObjectHealth] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1851,6 +1854,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowObjectHealth(true)}
+              title="无效对象：列出并重编译（Oracle）"
+              aria-label="无效对象"
+            >
+              <FiCode size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2235,6 +2246,15 @@ function App() {
         <ImportConnectionsDialog
           onClose={() => setShowImportConns(false)}
           onImported={() => void loadConnections()}
+        />
+      )}
+
+      {showObjectHealth && activeConnection && (
+        <ObjectHealthDialog
+          connId={activeConnection.id}
+          database={tabDatabase(activeTabData)}
+          schema=""
+          onClose={() => setShowObjectHealth(false)}
         />
       )}
 
