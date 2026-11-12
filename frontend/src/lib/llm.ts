@@ -34,6 +34,18 @@ export interface LlmProposal {
   database: string;
   sql: string;
   reason: string;
+  // W13: the static risk the server assessed when the proposal was recorded.
+  // Shown on the card so the user reads "整表改写" before deciding, instead of
+  // meeting it for the first time in the confirmation dialog.
+  risk?: LlmProposalRisk;
+}
+
+export interface LlmProposalRisk {
+  level: 'read' | 'write' | 'destructive';
+  summary: string;
+  reasons?: string[] | null;
+  // A read with no row limit: not fatal, but it can pull a whole table.
+  unboundedScan?: boolean;
 }
 
 export const defaultLlmConfig: LlmConfig = {

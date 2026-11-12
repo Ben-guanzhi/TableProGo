@@ -16,20 +16,25 @@ import (
 	"sync"
 
 	"tablepro-go/internal/llm"
+	"tablepro-go/internal/sqlrisk"
 )
 
 // Proposal is one statement the model wants to run.
 type Proposal struct {
 	// ID identifies the proposal, so the UI can answer about this exact one.
-	ID string
+	ID string `json:"id"`
 	// Connection is the connection id the statement targets.
-	Connection string
+	Connection string `json:"connection"`
 	// Database is the database it targets.
-	Database string
+	Database string `json:"database"`
 	// SQL is the statement itself.
-	SQL string
+	SQL string `json:"sql"`
 	// Reason is the model's explanation of why it wants this.
-	Reason string
+	Reason string `json:"reason"`
+	// Risk is the static assessment shown on the card (W13). It is computed when
+	// the proposal is recorded, so the user reads the risk BEFORE deciding, not
+	// after the confirmation dialog surprises them.
+	Risk sqlrisk.Risk `json:"risk"`
 }
 
 // proposalStore holds the proposals waiting for the user. It is process state
@@ -91,6 +96,10 @@ func (a *App) ProposeStatement(connection, database, sql, reason string) (Propos
 		Database:   database,
 		SQL:        sql,
 		Reason:     strings.TrimSpace(reason),
+		// The assessment is static and cheap: it reads the statement, not the
+		// database. Doing it here means the card carries it, and a caller cannot
+		// forget to ask.
+		Risk: sqlrisk.Assess(sql),
 	}), nil
 }
 

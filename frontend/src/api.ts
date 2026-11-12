@@ -531,6 +531,13 @@ export async function ImportConnections(req: ConnImportRequest): Promise<ConnImp
   return post('/api/connections/import', req);
 }
 
+// W13: write the agent skill file (~/.agents/skills/tablepro-go/SKILL.md) so a
+// shell agent discovers how to drive the job/MCP surfaces. Overwritten on
+// purpose: a stale copy would describe flags that changed.
+export async function WriteAgentSkill(): Promise<{ path: string }> {
+  return post('/api/agent-skill', {});
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

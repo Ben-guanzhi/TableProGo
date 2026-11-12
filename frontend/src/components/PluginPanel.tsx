@@ -8,6 +8,7 @@ import {
   PluginPanelData,
   TrustPlugin,
   UntrustPlugin,
+  WriteAgentSkill,
 } from '../api';
 import { useDialog } from '../dialog';
 
@@ -48,6 +49,17 @@ const PluginPanel: React.FC<PluginPanelProps> = ({ onClose }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<string>('');
+  const [skillPath, setSkillPath] = useState('');
+
+  const writeSkill = async () => {
+    try {
+      const res = await WriteAgentSkill();
+      setSkillPath(res.path);
+      toast.success('Agent Skill 已写入');
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
 
   const refresh = async () => {
     setLoading(true);
@@ -248,6 +260,26 @@ const PluginPanel: React.FC<PluginPanelProps> = ({ onClose }) => {
               </p>
             </div>
           )}
+
+          {/* W13: the agent skill lives beside the plugins because both are
+              "how something else drives this app". One button, one generated
+              file, overwritten on purpose so it never describes a stale flag. */}
+          <div className="border-t border-line pt-2 space-y-1">
+            <div className="text-2xs font-semibold text-secondary">Agent Skill</div>
+            <p className="text-2xs text-muted leading-relaxed">
+              写一份 <span className="font-mono">~/.agents/skills/tablepro-go/SKILL.md</span>，
+              让 Claude Code / Codex 等 shell 代理知道怎么用本程序的作业配方与 MCP 模式（含退出码表与凭据规则）。
+            </p>
+            <button
+              className="px-2 py-1 rounded text-2xs border border-line text-secondary hover:text-ink hover:bg-raised"
+              onClick={() => void writeSkill()}
+            >
+              写入 Agent Skill
+            </button>
+            {skillPath && (
+              <p className="text-2xs text-success break-all">已写入：{skillPath}</p>
+            )}
+          </div>
         </div>
 
         <div className="flex justify-end gap-2 px-5 py-3 border-t border-line shrink-0">

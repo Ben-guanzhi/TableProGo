@@ -294,20 +294,49 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose, confirm }) => {
         {error && <div className="text-2xs text-danger break-words">{error}</div>}
       </div>
 
-      {proposals.length > 0 && (
+          {proposals.length > 0 && (
         <div className="border-t border-line p-2 space-y-1.5 max-h-48 overflow-y-auto" data-testid="ai-proposals">
           <div className="text-2xs text-warning">助手想执行下面的语句，由你决定：</div>
           {proposals.map(p => (
             <div key={p.id} className="border border-line rounded p-1.5 bg-canvas">
               {p.reason && <div className="text-2xs text-muted mb-1">{p.reason}</div>}
+              {p.risk && p.risk.level !== 'read' && (
+                <div
+                  className={`mb-1 rounded px-1.5 py-1 ${
+                    p.risk.level === 'destructive'
+                      ? 'bg-danger/10 border border-danger/40'
+                      : 'bg-warning/10 border border-warning/40'
+                  }`}
+                >
+                  <div
+                    className={`text-2xs font-semibold ${
+                      p.risk.level === 'destructive' ? 'text-danger' : 'text-warning'
+                    }`}
+                  >
+                    {p.risk.level === 'destructive' ? '高风险' : '写操作'} · {p.risk.summary}
+                  </div>
+                  {(p.risk.reasons ?? []).map((r, i) => (
+                    <div key={i} className="text-2xs text-secondary break-words">
+                      · {r}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {p.risk && p.risk.level === 'read' && p.risk.unboundedScan && (
+                <div className="mb-1 text-2xs text-muted">· 无 LIMIT：结果可能很大（按行数上限截断）</div>
+              )}
               <pre className="text-2xs text-ink whitespace-pre-wrap break-words mb-1.5">{p.sql}</pre>
               <div className="flex items-center gap-1">
                 <button
-                  className="px-2 py-0.5 rounded text-2xs bg-success text-on-success hover:bg-success-hover disabled:opacity-40"
+                  className={`px-2 py-0.5 rounded text-2xs disabled:opacity-40 ${
+                    p.risk?.level === 'destructive'
+                      ? 'bg-danger text-on-danger hover:bg-danger-hover'
+                      : 'bg-success text-on-success hover:bg-success-hover'
+                  }`}
                   onClick={() => accept(p.id)}
                   disabled={!!actingId}
                 >
-                  执行
+                  {p.risk?.level === 'destructive' ? '确认执行（高风险）' : '执行'}
                 </button>
                 <button
                   className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"

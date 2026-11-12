@@ -20,6 +20,8 @@ import (
 	"sync"
 
 	"github.com/dbcore/dbcore/masking"
+
+	"tablepro-go/internal/mcpcompact"
 )
 
 // isIdentifierLike reports whether s is a plain SQL identifier: letters, digits
@@ -332,22 +334,24 @@ func (s *Server) tools() []tool {
 		},
 		{
 			Name:        "sample_table",
-			Description: fmt.Sprintf("只读抽样某表的前 N 行（limit 上限 %d，不传默认 20），行内容经数据掩码后返回，供模型快速了解数据形态。", DefaultMaxRows),
+			Description: fmt.Sprintf("只读抽样某表的前 N 行（limit 上限 %d，不传默认 20），行内容经数据掩码后返回，供模型快速了解数据形态。format=compact 时返回制表符分隔的紧凑文本（比 JSON 省很多 token）。", DefaultMaxRows),
 			InputSchema: schemaOf(map[string]param{
 				"connection": {Type: "string", Desc: "连接 id", Required: true},
 				"table":      {Type: "string", Desc: "表名", Required: true},
 				"database":   {Type: "string", Desc: "数据库名，留空用连接默认库"},
 				"schema":     {Type: "string", Desc: "schema 名，留空用引擎默认"},
 				"limit":      {Type: "number", Desc: "行数上限 (1-" + strconv.Itoa(DefaultMaxRows) + ", 默认 20)"},
+				"format":     {Type: "string", Desc: "输出格式: json（默认）或 compact（制表符分隔，省 token）"},
 			}),
 		},
 		{
 			Name:        "query",
-			Description: fmt.Sprintf("执行只读 SQL（SELECT/WITH/SHOW/DESCRIBE/EXPLAIN），最多返回 %d 行。", s.opts.MaxRows),
+			Description: fmt.Sprintf("执行只读 SQL（SELECT/WITH/SHOW/DESCRIBE/EXPLAIN），最多返回 %d 行。format=compact 时返回制表符分隔的紧凑文本。", s.opts.MaxRows),
 			InputSchema: schemaOf(map[string]param{
 				"connection": {Type: "string", Desc: "连接 id", Required: true},
 				"sql":        {Type: "string", Desc: "只读 SQL", Required: true},
 				"database":   {Type: "string", Desc: "数据库名，留空用连接默认库"},
+				"format":     {Type: "string", Desc: "输出格式: json（默认）或 compact（制表符分隔，省 token）"},
 			}),
 		},
 	}
@@ -411,9 +415,9 @@ func (s *Server) dispatch(name string, args map[string]interface{}) (string, err
 	case "describe_table":
 		return s.describeTable(arg("connection"), arg("database"), arg("schema"), arg("table"))
 	case "sample_table":
-		return s.sampleTable(arg("connection"), arg("database"), arg("schema"), arg("table"), args["limit"])
+		return s.sampleTable(arg("connection"), arg("database"), arg("schema"), arg("table"), args["limit"], arg("format"))
 	case "query":
-		return s.query(arg("connection"), arg("database"), arg("sql"))
+		return s.query(arg("connection"), arg("database"), arg("sql"), arg("format"))
 	case "execute":
 		if !s.writeAllowed() {
 			return "", fmt.Errorf("这个服务是只读的：execute 不可用")
@@ -472,7 +476,7 @@ func (s *Server) describeTable(connID, database, schema, table string) (string, 
 // identifier-like 字符 (方言引用不可用, Catalog 不暴露引擎拼写; 非法名直接
 // 拒绝), LIMIT 由本函数钳制 —— 模型无法通过 limit 参数把上下文撑爆, 也无法
 // 借表名注入第二语句 (工具层本就只接单语句)。行内容出机器前经数据掩码。
-func (s *Server) sampleTable(connID, database, schema, table string, limitArg interface{}) (string, error) {
+func (s *Server) sampleTable(connID, database, schema, table string, limitArg interface{}, format string) (string, error) {
 	if connID == "" {
 		return "", fmt.Errorf("缺少参数 connection")
 	}
@@ -518,7 +522,28 @@ func (s *Server) sampleTable(connID, database, schema, table string, limitArg in
 	if err != nil {
 		return "", err
 	}
-	return marshalJSON(MaskQueryResult(result))
+	return renderResult(MaskQueryResult(result), format)
+}
+
+// renderResult formats a masked result for the wire. json is the historical
+// shape; compact is the same information as tab-separated text (see
+// internal/mcpcompact for why and for the exact grammar).
+func renderResult(result *QueryResult, format string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "", "json":
+		return marshalJSON(result)
+	case "compact":
+		if result == nil {
+			return "", nil
+		}
+		return mcpcompact.Render(mcpcompact.Result{
+			Columns:   result.Columns,
+			Rows:      result.Rows,
+			Truncated: result.Truncated,
+			Masked:    result.Masked,
+		}), nil
+	}
+	return "", fmt.Errorf("format 只接受 json 或 compact, got %q", format)
 }
 
 // maskPolicy 是 MCP/LLM 输出共用的数据掩码策略 (dbcore/masking 默认档)。
@@ -718,7 +743,7 @@ func stripLeadingCommentsAndSpace(sql string) string {
 	}
 }
 
-func (s *Server) query(connID, database, sql string) (string, error) {
+func (s *Server) query(connID, database, sql, format string) (string, error) {
 	if connID == "" {
 		return "", fmt.Errorf("缺少参数 connection")
 	}
@@ -739,7 +764,7 @@ func (s *Server) query(connID, database, sql string) (string, error) {
 	}
 	// 数据掩码: 行内容出机器前脱敏 (列名层 + 形态层)。MCP 是对外部 AI 的出口,
 	// 出口的脱敏不可协商; masked 标记让客户端知道值是遮罩过的。
-	return marshalJSON(MaskQueryResult(result))
+	return renderResult(MaskQueryResult(result), format)
 }
 
 func (s *Server) execute(connID, database, sql string) (string, error) {
@@ -757,7 +782,7 @@ func (s *Server) execute(connID, database, sql string) (string, error) {
 	// A statement that reads is not a write; refusing it here would make the tool
 	// surprising. It goes through the same read path (no confirmation needed).
 	if IsReadStatement(sql) {
-		return s.query(connID, database, sql)
+		return s.query(connID, database, sql, "")
 	}
 	if !s.opts.Confirm(connID, sql) {
 		return "", fmt.Errorf("用户拒绝了这条语句：%s", firstLine(sql))

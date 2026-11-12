@@ -583,6 +583,16 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/connections/import", 400, func(a *App, body ConnImportRequest) (any, error) {
 		return a.ImportConnections(body)
 	})
+	// W13: write the agent skill file so a shell agent discovers how to drive this
+	// binary. A generated artifact, overwritten on purpose: a stale copy would
+	// describe flags that no longer exist.
+	post(a, mux, "/api/agent-skill", 400, func(a *App, _ struct{}) (any, error) {
+		path, err := WriteAgentSkill()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"path": path}, nil
+	})
 	// shows; Apply re-derives the plan from the request (never trusting one),
 	// requires Confirm, and stops at the first table that fails.
 	post(a, mux, "/api/transfer/preview", 400, func(a *App, body TransferRequest) (any, error) {

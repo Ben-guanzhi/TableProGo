@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- MCP enhancements (W13): three pieces that make the assistant surfaces usable by
+  something other than a human reading the screen. **Compact output**: `query`
+  and `sample_table` accept `format: "json" | "compact"`; compact is tab-separated
+  text with the columns named once, a `# rows=N` header and `# truncated` /
+  `# masked` footers, and tabs/newlines/backslashes inside a value escaped so a
+  consumer can split safely. It is deliberately NOT a reimplementation of
+  Tabularis's TOON — same idea, its own documented grammar — and the test asserts
+  the real property: fewer bytes for the same rows (under 70% of the JSON size on
+  a representative result), with NULL and empty string still distinguishable.
+  **Agent skill file**: `POST /api/agent-skill` writes
+  `~/.agents/skills/tablepro-go/SKILL.md`, generated from code so it cannot
+  describe a flag that no longer exists; the test pins every claim (the three
+  CLI flags, the 0/1/2 exit table, the four step kinds, the no-credentials rule)
+  against the binary, and a stale copy is overwritten rather than kept.
+  **Static SQL risk on proposals**: `internal/sqlrisk` classifies a model's
+  statement before the card is drawn — read / write / destructive — flagging
+  UPDATE/DELETE without a WHERE (literal- and comment-aware, reusing Safe Mode's
+  clause scan), DDL, and a read with no row limit. The card shows the level, the
+  summary and the reasons, and a destructive proposal's button turns red and says
+  "确认执行（高风险）"; approval still goes through Safe Mode as before.
 - Import connections from another client (W12): read a DBeaver
   `data-sources.json`, a one-URL-per-line list, or a CSV, preview it, then append.
   `internal/connimport` is the pure half (15 cases): DBeaver's provider/driver →
