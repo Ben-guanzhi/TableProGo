@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- 达梦 DM8 (W14): the engine is **recognized but not connectable**, and both halves
+  are deliberate. Recognizing it (`dm`/`dameng`/`dm8`, including in the DBeaver
+  importer) means a DM connection can be defined, saved and imported instead of
+  being dropped or reported as "unknown engine". Refusing it means `Connect` says
+  WHY: DM8 speaks its own wire protocol, so no vendored driver can open the socket
+  — the Oracle dialect alias covers its SQL (quoting, `:n` binds, ROWNUM, in
+  `sqltext.DM`) but not the transport. The one community pure-Go driver publishes
+  no LICENSE file in its module, so shipping it would be a licensing guess left to
+  the project owner rather than a default. No DM8 instance could be stood up here
+  (no public image reachable), so DM is deliberately kept OUT of `sqltext.Engines`
+  — that list is a promise ("every listed engine answers every operation") and DM
+  has only had its dialect checked, not its DDL; its catalog recipes refuse rather
+  than emitting an Oracle query against a dictionary nobody has read.
 - Oracle object health (W9): an "无效对象" panel listing the schema's INVALID
   objects, one-click recompile, and the dependency view in both directions. The
   pieces are `dbcore.ObjectHealthReader` (optional capability; non-Oracle engines

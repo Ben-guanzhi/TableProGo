@@ -235,7 +235,7 @@ func dbeaverRow(id string, c dbeaverConnection) (Row, *Skip) {
 // dbeaverEngine maps DBeaver's provider/driver onto this app's engine spelling.
 //
 // DBeaver's provider is already close ("postgresql", "mysql", "sqlserver",
-// "oracle", "sqlite", "redis"), but its *driver* id carries the version
+// "oracle", "sqlite", "redis", "dameng"), but its *driver* id carries the version
 // ("postgres-jdbc-1708"), so provider is preferred and driver is the fallback.
 func dbeaverEngine(provider, driver string) (string, bool) {
 	probe := strings.ToLower(strings.TrimSpace(provider))
@@ -257,6 +257,11 @@ func dbeaverEngine(provider, driver string) (string, bool) {
 		return "sqlite", true
 	case strings.Contains(probe, "redis"):
 		return "redis", true
+	case probe == "dm" || probe == "dm8" || probe == "dm7" || strings.Contains(probe, "dameng"):
+		// 达梦 DM8 (W14). It is a KNOWN engine this build cannot open — but the
+		// import must still carry the row, or a migration would silently drop part
+		// of the user's profile. The connect path refuses with the reason.
+		return "dm", true
 	}
 	return "", false
 }

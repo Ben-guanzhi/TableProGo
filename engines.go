@@ -37,6 +37,27 @@ func builtinEngine(engineType string) string {
 	return engineType
 }
 
+// unsupportedEngines names the engines this build RECOGNIZES but cannot open, and
+// why. Recognizing them is deliberate: a user importing a DBeaver profile that
+// contains a 达梦 connection should see "this engine needs a driver we don't ship"
+// rather than "unknown engine", which reads like a bug in the import.
+//
+// W14: DM8 (达梦) speaks a proprietary wire protocol. The Oracle-dialect alias
+// covers its SQL (quoting, :n binds, ROWNUM) but NOT the socket, so no vendored
+// driver can open it: go-ora speaks Oracle Net, not DM's protocol. The one
+// community pure-Go driver publishes no LICENSE file in its module, so shipping it
+// would be a licensing guess — a decision for the project owner, not a default.
+var unsupportedEngines = map[string]string{
+	"dm":      "达梦 DM8 使用自有线协议；本版本没有可用的驱动（SQL 方言已按 Oracle 兼容模式实现，但连不上）",
+	"dameng":  "达梦 DM8 使用自有线协议；本版本没有可用的驱动（SQL 方言已按 Oracle 兼容模式实现，但连不上）",
+	"dm8":     "达梦 DM8 使用自有线协议；本版本没有可用的驱动（SQL 方言已按 Oracle 兼容模式实现，但连不上）",
+}
+
+// unsupportedEngineReason returns why an engine cannot be opened, or "".
+func unsupportedEngineReason(engineType string) string {
+	return unsupportedEngines[strings.ToLower(strings.TrimSpace(engineType))]
+}
+
 // engineDefaultPort fills the port a new connection starts from. Aliases keep
 // their own conventional ports (OceanBase 2881, StarRocks/Doris 9030); the
 // PG-compatible engines reuse 5432.

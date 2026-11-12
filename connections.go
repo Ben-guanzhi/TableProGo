@@ -423,6 +423,14 @@ func (a *App) Connect(id string) error {
 		return fmt.Errorf("invalid connection id: %s", id)
 	}
 
+	// W14: an engine this build recognizes but cannot open says so HERE, before
+	// the dial. Otherwise a 达梦 connection (created by hand or imported from
+	// DBeaver) would fail deep inside a driver lookup with "unknown engine", which
+	// reads like a bug rather than a missing driver.
+	if reason := unsupportedEngineReason(config.Type); reason != "" {
+		return fmt.Errorf("%s", reason)
+	}
+
 	conn := &Connection{
 		ID:       id,
 		Name:     config.Name,
