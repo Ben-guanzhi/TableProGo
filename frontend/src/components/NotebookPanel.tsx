@@ -25,6 +25,8 @@ import { useDialog } from '../dialog';
 import {
   cellProblem,
   depsOf,
+  firstProblem,
+  insertReference,
   moveCell,
   newCellId,
   problemText,
@@ -124,6 +126,45 @@ const NotebookPanel: React.FC<NotebookPanelProps> = ({ connId, database = '', on
     } finally {
       setBusy('');
     }
+  };
+
+  // runAll walks the cells in order and STOPS at the first failure. A notebook is a
+  // pipeline: continuing past a broken cell would run later cells against a CTE that
+  // was never produced, and their errors would hide the real one.
+  const runAll = async () => {
+    if (!current) return;
+    const broken = firstProblem(current.cells);
+    if (broken) {
+      toast.error(`第 ${broken.index + 1} 个单元格：${problemText(broken.problem)}`);
+      return;
+    }
+    for (let i = 0; i < current.cells.length; i += 1) {
+      const problem = cellProblem(current.cells, i);
+      if (problem) {
+        toast.error(`第 ${i + 1} 个单元格：${problemText(problem)}`);
+        return;
+      }
+      const key = current.cells[i].id;
+      setBusy(key);
+      try {
+        const res = await RunNotebookCell(current, i);
+        setRuns(prev => ({ ...prev, [key]: res }));
+        if (res.error) {
+          toast.error(`第 ${i + 1} 个单元格：${res.error}`);
+          return;
+        }
+        if (res.result.error) {
+          toast.error(`第 ${i + 1} 个单元格：${res.result.error}`);
+          return;
+        }
+      } catch (e) {
+        toast.error((e as Error).message);
+        return;
+      } finally {
+        setBusy('');
+      }
+    }
+    toast.success('全部单元格运行完成');
   };
 
   const save = async () => {
@@ -292,6 +333,25 @@ const NotebookPanel: React.FC<NotebookPanelProps> = ({ connId, database = '', on
                     onChange={e => updateCell(i, e.target.value)}
                   />
 
+                  {/* W11b: referencing an earlier cell should be a click, not a
+                      memorised token — the syntax is the one thing a new user cannot
+                      guess, and a typo reads as "cell does not exist". */}
+                  {i > 0 && (
+                    <div className="px-2 pb-1 flex items-center gap-1 flex-wrap">
+                      <span className="text-2xs text-muted">引用：</span>
+                      {cells.slice(0, i).map((_, j) => (
+                        <button
+                          key={j}
+                          className="px-1.5 py-0.5 rounded text-2xs font-mono border border-line text-secondary hover:text-ink hover:bg-raised"
+                          onClick={() => updateCell(i, insertReference(c.sql, j + 1))}
+                          title={`把 {{cell_${j + 1}}} 插到本单元格末尾`}
+                        >
+                          {`{{cell_${j + 1}}}`}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {problem && (
                     <p className="px-2 pb-1 text-2xs text-warning flex items-center gap-1">
                       <FiAlertTriangle size={10} />
@@ -380,12 +440,22 @@ const NotebookPanel: React.FC<NotebookPanelProps> = ({ connId, database = '', on
             })}
 
           {current && (
-            <button
-              className="w-full py-1.5 rounded text-2xs border border-dashed border-line-strong text-secondary hover:text-ink hover:bg-raised"
-              onClick={addCell}
-            >
-              + 添加单元格
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="flex-1 py-1.5 rounded text-2xs border border-dashed border-line-strong text-secondary hover:text-ink hover:bg-raised"
+                onClick={addCell}
+              >
+                + 添加单元格
+              </button>
+              <button
+                className="px-3 py-1.5 rounded text-2xs bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40"
+                onClick={() => void runAll()}
+                disabled={busy !== '' || cells.length === 0}
+                title="按顺序运行全部单元格，遇到第一个失败就停下"
+              >
+                运行全部
+              </button>
+            </div>
           )}
         </div>
 

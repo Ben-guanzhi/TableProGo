@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+﻿import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
@@ -9,6 +9,7 @@ import {
   hostPort,
   identityLabel,
   maskText,
+  privateTitle,
   shouldBlur,
 } from '../src/lib/privacy.ts';
 
@@ -86,4 +87,12 @@ test('shouldBlur reveals on hover but never while private and idle', () => {
   assert.equal(shouldBlur(true, false), true);
   assert.equal(shouldBlur(true, true), false, 'the user may peek at what they are working on');
   assert.equal(shouldBlur(false, false), false);
+});
+test('privateTitle drops the tooltip entirely in privacy mode', () => {
+  // A native tooltip is drawn by the browser and the .privacy CSS cannot reach it, so
+  // masking the text is not enough — the tooltip must not exist at all.
+  assert.equal(privateTitle('shop.orders', false), 'shop.orders');
+  assert.equal(privateTitle('shop.orders', true), undefined);
+  assert.equal(privateTitle(undefined, false), undefined);
+  assert.equal(privateTitle('', true), undefined);
 });

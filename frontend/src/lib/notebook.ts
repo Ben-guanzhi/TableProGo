@@ -111,3 +111,21 @@ export const moveCell = <T>(cells: T[], from: number, to: number): T[] => {
   out.splice(to, 0, item);
   return out;
 };
+
+/**
+ * firstProblem returns the first cell that could not run, with its problem.
+ *
+ * "Run all" needs this as a PRE-check rather than discovering breakage mid-run: a
+ * notebook is a pipeline, so running cells 1–2 and only then failing on cell 3 leaves
+ * the user with two results and a half-finished state they did not ask for. Failing
+ * before anything runs is the honest version of "this notebook is not runnable yet".
+ */
+export const firstProblem = (
+  cells: CellLike[],
+): { index: number; problem: CellProblem } | null => {
+  for (let i = 0; i < cells.length; i += 1) {
+    const problem = cellProblem(cells, i);
+    if (problem) return { index: i, problem };
+  }
+  return null;
+};

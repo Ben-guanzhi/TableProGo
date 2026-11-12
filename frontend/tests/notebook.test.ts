@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import {
   cellProblem,
   depsOf,
+  firstProblem,
   insertReference,
   moveCell,
   newCellId,
@@ -77,4 +78,18 @@ test('moveCell reorders without mutating and ignores bad indexes', () => {
   // Out-of-range moves are a no-op rather than a crash.
   assert.deepEqual(moveCell(cells, 0, 9), cells);
   assert.deepEqual(moveCell(cells, -1, 0), cells);
+});
+
+test('firstProblem finds the earliest broken cell, so run-all can refuse up front', () => {
+  // A notebook is a pipeline: discovering the breakage on cell 3 after running 1–2
+  // leaves a half-finished state. The pre-check reports cell 2 and nothing runs.
+  const cells = [cell('SELECT 1 AS a'), cell('SELECT * FROM {{cell_3}}'), cell('SELECT 1')];
+  const found = firstProblem(cells);
+  assert.ok(found);
+  assert.equal(found!.index, 1);
+  assert.equal(found!.problem.kind, 'forward');
+
+  // A runnable notebook reports nothing.
+  assert.equal(firstProblem([cell('SELECT 1'), cell('SELECT * FROM {{cell_1}}')]), null);
+  assert.equal(firstProblem([]), null);
 });

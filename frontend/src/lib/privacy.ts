@@ -1,4 +1,4 @@
-// 隐私模式（录屏/共享屏幕场景）的纯规则。
+﻿// 隐私模式（录屏/共享屏幕场景）的纯规则。
 //
 // 为什么是"过滤层"而不是"不渲染"：用户仍在工作，只是不希望旁人或录制看到
 // 主机名、库名和行内容。所以元素照常布局（布局不跳动，截图对比可判断），
@@ -124,3 +124,15 @@ export const cellMask = (): string => MASK;
  */
 export const shouldBlur = (privacy: boolean, revealed: boolean): boolean =>
   privacy && !revealed;
+
+/**
+ * privateTitle 决定一个原生 tooltip 该不该出现。
+ *
+ * 隐私模式下 tooltip 必须整个去掉，而不是换成遮罩：tooltip 的内容是浏览器渲染的
+ * 原生浮层，CSS 的 .privacy 规则碰不到它——鼠标扫过去，完整的库名就出现在录屏里。
+ * 这是"界面已经模糊、但悬停即泄露"的典型缺口。
+ */
+export const privateTitle = (text: string | undefined, privacy: boolean): string | undefined => {
+  if (!text) return undefined;
+  return privacy ? undefined : text;
+};

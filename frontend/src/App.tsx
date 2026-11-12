@@ -102,7 +102,7 @@ import { runGuarded, runStreamed } from './lib/queryRun';
 import { isMagicCommand, parseMagicCommand, runMagicCommand, MAGIC_HELP } from './lib/magicCommands';
 import { activePaneOf, paneSQL, toggleDualPane } from './lib/dualPane';
 import { duplicateCombos, findShortcut, normalizeCombo } from './lib/shortcuts';
-import { fileStem } from './lib/privacy';
+import { fileStem, privateTitle } from './lib/privacy';
 import { download, downloadBlob } from './datagrid/download';
 import { toCSV, toJSON, toMarkdown, toTSV } from './gridView';
 import {
@@ -1798,7 +1798,7 @@ function App() {
                   activeTab === tab.id ? 'bg-raised' : 'hover:bg-raised/60'
                 }`}
                 onClick={() => switchToTab(tab.id)}
-                title={fullName}
+                title={privateTitle(fullName, settings.privacyMode)}
               >
                 {ref &&
                   (tab.objectType === 'view'
