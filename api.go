@@ -604,6 +604,34 @@ func (a *App) routes() *http.ServeMux {
 	}) (any, error) {
 		return CheckForUpdate(body.URL), nil
 	})
+	// W11b: SQL notebooks. The expansion is server-side (sqltext.ExpandNotebook), so
+	// the statement that runs is decided here rather than in the editor.
+	post(a, mux, "/api/notebooks", 400, func(a *App, _ struct{}) (any, error) {
+		list, err := a.LoadNotebooks()
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"notebooks": list}, nil
+	})
+	post(a, mux, "/api/notebooks/save", 400, func(a *App, body Notebook) (any, error) {
+		list, err := a.SaveNotebook(body)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"notebooks": list}, nil
+	})
+	post(a, mux, "/api/notebooks/delete", 400, func(a *App, body struct {
+		ID string `json:"id"`
+	}) (any, error) {
+		list, err := a.DeleteNotebook(body.ID)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"notebooks": list}, nil
+	})
+	post(a, mux, "/api/notebooks/run", 400, func(a *App, body NotebookRunRequest) (any, error) {
+		return a.RunNotebookCell(body), nil
+	})
 	// W9: Oracle object health. The list is read-only; the recompile is a
 	// data-dictionary write and takes the same guard every other write takes.
 	post(a, mux, "/api/oracle/invalid-objects", 400, func(a *App, body struct {

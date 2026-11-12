@@ -634,6 +634,55 @@ export async function CheckUpdate(url: string): Promise<UpdateCheckResult> {
   return post('/api/update-check', { url });
 }
 
+// ---- W11b: SQL notebooks ----
+
+export interface NotebookCell {
+  // Stable across reordering, so a cell keeps its identity when moved.
+  id: string;
+  // The cell's own text, {{cell_N}} references included.
+  sql: string;
+  title?: string;
+}
+
+export interface Notebook {
+  id: string;
+  name: string;
+  connection: string;
+  database?: string;
+  cells: NotebookCell[];
+  updatedAt?: string;
+}
+
+export interface NotebookRunResult {
+  result: QueryResult;
+  // The EXPANDED statement that actually ran — shown on demand, because it is the
+  // answer to "why did this cell behave differently from what it looks like".
+  statement: string;
+  // The 1-based cells that were inlined.
+  dependsOn?: number[] | null;
+  // A notebook-level failure (bad reference, empty cell); a statement failure is in
+  // result.error, like the editor's.
+  error?: string;
+}
+
+export async function LoadNotebooks(): Promise<{ notebooks: Notebook[] | null }> {
+  return post('/api/notebooks', {});
+}
+
+export async function SaveNotebook(nb: Notebook): Promise<{ notebooks: Notebook[] | null }> {
+  return post('/api/notebooks/save', nb);
+}
+
+export async function DeleteNotebook(id: string): Promise<{ notebooks: Notebook[] | null }> {
+  return post('/api/notebooks/delete', { id });
+}
+
+// The server expands references and runs the statement; the editor keeps the cell's
+// own text so {{cell_1}} stays visible and editable.
+export async function RunNotebookCell(nb: Notebook, index: number): Promise<NotebookRunResult> {
+  return post('/api/notebooks/run', { notebook: nb, index });
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

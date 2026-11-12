@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"path/filepath"
@@ -11,6 +11,11 @@ import (
 // connection, an open connection map and the given Safe Mode.
 func newTestAppWithSQLite(t *testing.T, mode string) (*App, string) {
 	t.Helper()
+	// Every test that touches userDataFilePath (settings, notebooks, plugin stores)
+	// must be pinned to a temp dir. Without this the app reads and WRITES the real
+	// profile: a notebook test once appended to the developer's notebooks.json, and
+	// the next test saw its cells. TABLEPRO_HOME is the lever userDataDir honours.
+	t.Setenv("TABLEPRO_HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "safe.db")
 	app := &App{
 		connections:      map[string]*Connection{},

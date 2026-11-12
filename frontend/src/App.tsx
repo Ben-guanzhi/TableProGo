@@ -1,5 +1,5 @@
 ﻿import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
+import { FiBookOpen, FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -33,6 +33,7 @@ import ExplainPlanView from './components/ExplainPlanView';
 import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import ObjectHealthDialog from './components/ObjectHealthDialog';
 import AboutDialog from './components/AboutDialog';
+import NotebookPanel from './components/NotebookPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -200,6 +201,8 @@ function App() {
   const [showObjectHealth, setShowObjectHealth] = useState(false);
   // W15: the about panel (build identity + opt-in update check).
   const [showAbout, setShowAbout] = useState(false);
+  // W11b: the SQL notebook panel.
+  const [showNotebook, setShowNotebook] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1886,6 +1889,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowNotebook(true)}
+              title="笔记本：可互相引用的 SQL 单元格"
+              aria-label="笔记本"
+            >
+              <FiBookOpen size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2274,6 +2285,14 @@ function App() {
       )}
 
       {showAbout && <AboutDialog onClose={() => setShowAbout(false)} />}
+
+      {showNotebook && activeConnection && (
+        <NotebookPanel
+          connId={activeConnection.id}
+          database={tabDatabase(activeTabData)}
+          onClose={() => setShowNotebook(false)}
+        />
+      )}
 
       {showObjectHealth && activeConnection && (
         <ObjectHealthDialog
