@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
+import { FiDownload, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -30,6 +30,7 @@ import TransferDialog from './components/TransferDialog';
 import RowSyncDialog from './components/RowSyncDialog';
 import PluginPanel from './components/PluginPanel';
 import ExplainPlanView from './components/ExplainPlanView';
+import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -190,6 +191,8 @@ function App() {
   const [showPlugins, setShowPlugins] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
   const [showPlan, setShowPlan] = useState(false);
+  // W12: importing connections from another client.
+  const [showImportConns, setShowImportConns] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
   const [confirmReq, setConfirmReq] = useState<ConfirmRequest | null>(null);
 
@@ -1840,6 +1843,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowImportConns(true)}
+              title="导入连接：从 DBeaver / URL 列表 / CSV"
+              aria-label="导入连接"
+            >
+              <FiDownload size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2219,6 +2230,13 @@ function App() {
       )}
 
       {showPlugins && <PluginPanel onClose={() => setShowPlugins(false)} />}
+
+      {showImportConns && (
+        <ImportConnectionsDialog
+          onClose={() => setShowImportConns(false)}
+          onImported={() => void loadConnections()}
+        />
+      )}
 
       {showPlan && activeTabData?.plan && (
         <ExplainPlanView plan={activeTabData.plan} onClose={() => setShowPlan(false)} />

@@ -491,6 +491,46 @@ export async function ExplainPlanTree(
   return post('/api/explain-plan', { connId, query, database });
 }
 
+// ---- W12: importing connections from another client ----
+
+export interface ConnImportRequest {
+  path: string;
+  // Empty detects from the file's shape; "dbeaver" | "url" | "csv".
+  format?: string;
+  apply?: boolean;
+  group?: string;
+}
+
+export interface ConnImportRow {
+  name: string;
+  engine: string;
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  ssl?: string;
+  source: string;
+}
+
+export interface ConnImportSkip {
+  where: string;
+  reason: string;
+}
+
+export interface ConnImportResult {
+  rows: ConnImportRow[] | null;
+  skipped: ConnImportSkip[] | null;
+  notes: string[] | null;
+  imported: number;
+  renamed: string[] | null;
+}
+
+// Read a file and (with apply) save what it understood. A preview is the
+// default: the same preview-then-apply discipline as transfer and sync.
+export async function ImportConnections(req: ConnImportRequest): Promise<ConnImportResult> {
+  return post('/api/connections/import', req);
+}
+
 // Pretty-print SQL: keywords upper-cased, one clause per line. The rules live
 // in the Go formatter (internal/sqlformat), so every client shares one style.
 // preset selects the layout (W2-c): default / compact / expanded.

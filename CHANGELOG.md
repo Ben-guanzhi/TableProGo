@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
+- Import connections from another client (W12): read a DBeaver
+  `data-sources.json`, a one-URL-per-line list, or a CSV, preview it, then append.
+  `internal/connimport` is the pure half (15 cases): DBeaver's provider/driver →
+  engine mapping (provider preferred because the driver id carries a version),
+  host/port/database/user/SSL, and the JDBC URL as the authoritative fallback when
+  the boxes are empty — including SQL Server's semicolon form
+  (`jdbc:sqlserver://h:1433;databaseName=db`) and the per-engine SSL spellings
+  (`sslmode`, `encrypt`, `useSSL`). Three rules decide the shape: **credentials
+  are never read** (DBeaver seals passwords per workspace; decrypting them would
+  mean attacking a competitor's credential store, and the report says so instead);
+  **a malformed entry is skipped and reported by name** (one broken row in forty
+  must not fail the import); and Navicat's `.ncx` is **refused with the readable
+  path named** — its export is encrypted, and half-parsing it would look like
+  corruption. Apply **appends and renames duplicates** (`local` → `local (2)`)
+  rather than overwriting a working connection, and a SQLite row's file path moves
+  into `Database` so the driver finds it. The dialog is preview-then-apply, showing
+  the rows, the skipped entries with reasons, the renames, and the
+  no-credentials note before the list changes.
 - Visual execution plan (W11, the EXPLAIN half of the Tabularis pair — the plan
   chose one of the two, and the graph is the cheaper of the two to get right):
   an EXPLAIN result gains a "可视化" entry that draws the plan as an SVG tree.

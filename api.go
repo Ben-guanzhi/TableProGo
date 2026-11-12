@@ -577,6 +577,12 @@ func (a *App) routes() *http.ServeMux {
 		}
 		return map[string]string{"path": pluginRegistryPath()}, nil
 	})
+	// W12: importing connections from another client. Preview by default — the
+	// same preview-then-apply discipline as transfer and sync — and Apply only
+	// appends, never overwrites an existing name.
+	post(a, mux, "/api/connections/import", 400, func(a *App, body ConnImportRequest) (any, error) {
+		return a.ImportConnections(body)
+	})
 	// shows; Apply re-derives the plan from the request (never trusting one),
 	// requires Confirm, and stops at the first table that fails.
 	post(a, mux, "/api/transfer/preview", 400, func(a *App, body TransferRequest) (any, error) {
