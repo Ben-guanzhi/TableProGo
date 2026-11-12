@@ -1,4 +1,4 @@
-# Changelog
+﻿# Changelog
 
 All notable changes to this project will be documented in this file.
 
@@ -8,19 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.1.0] - 2026-11-12
 
 ### Added
-- 达梦 DM8 (W14): the engine is **recognized but not connectable**, and both halves
-  are deliberate. Recognizing it (`dm`/`dameng`/`dm8`, including in the DBeaver
-  importer) means a DM connection can be defined, saved and imported instead of
-  being dropped or reported as "unknown engine". Refusing it means `Connect` says
-  WHY: DM8 speaks its own wire protocol, so no vendored driver can open the socket
-  — the Oracle dialect alias covers its SQL (quoting, `:n` binds, ROWNUM, in
-  `sqltext.DM`) but not the transport. The one community pure-Go driver publishes
-  no LICENSE file in its module, so shipping it would be a licensing guess left to
-  the project owner rather than a default. No DM8 instance could be stood up here
-  (no public image reachable), so DM is deliberately kept OUT of `sqltext.Engines`
-  — that list is a promise ("every listed engine answers every operation") and DM
-  has only had its dialect checked, not its DDL; its catalog recipes refuse rather
-  than emitting an Oracle query against a dictionary nobody has read.
+- 达梦 DM8 (W14): the engine is now **connectable**. DM8 speaks its own wire
+  protocol, so the Oracle driver could never open it — but the SQL dialect is
+  Oracle's (DM's default compatibility mode), which the kernel already models as
+  `sqltext.DM`. The driver is `github.com/sophon-zt/sql-driver/dameng`, a fork of
+  达梦's own Go driver published under **Apache-2.0** (the module ships its LICENSE
+  file); the earlier candidate carried no license file at all and was rejected.
+  `dbcore/dm` implements the full `SQLDriver`/`SQLTxDriver` surface: DSN
+  (`dm://user:pass@host:port?schema=…`, the database travelling as the driver's
+  `schema` parameter because a DM session has no separate database layer), the
+  Oracle-compatible dictionary reads, ROWNUM paging, and DDL reconstruction (DM has
+  no `DBMS_METADATA`, so there is no "ask the server for its DDL" path). `Kind()` is
+  overridden to DM so the Oracle-only panels never claim a DM connection. **The
+  unverified assumption is written down in exactly one place** (`oracleRecipe`): that
+  DM exposes the Oracle-compatible `ALL_*` views. No DM instance was reachable here,
+  so nothing in this build proves DM accepts a statement — `dbcore/dm/dm_live_test.go`
+  is the checklist, gated on `DBCORE_TEST_DM_DSN`, and the catalog reads are
+  read-only so a wrong assumption costs a broken tree, not data. The client's
+  earlier "recognized but refused" machinery stays for engines nobody can open.
 - Oracle object health (W9): an "无效对象" panel listing the schema's INVALID
   objects, one-click recompile, and the dependency view in both directions. The
   pieces are `dbcore.ObjectHealthReader` (optional capability; non-Oracle engines

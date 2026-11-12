@@ -2,27 +2,34 @@ package main
 
 // W14: 达梦 DM8.
 //
-// This build RECOGNIZES the engine and REFUSES to open it. Both halves are
-// deliberate, and both are tested here:
+// DM used to be recognized-but-refused here. It is now a real engine: the client
+// opens it through dbcore/dm, which drives DM8 over its own wire protocol with the
+// Apache-2.0 driver. These tests therefore assert the opposite of the earlier ones
+// — the engine must reach the DM driver, and the failure of a closed port must come
+// from THAT driver (a DM protocol error), not from a client-side refusal. That
+// distinction is the whole regression: "unsupported database type: dm" would mean
+// the wiring silently fell back.
 //
-//   - recognizing it means a DM connection can be created or imported and shows up
-//     as a known engine instead of "unknown";
-//   - refusing it means connecting says WHY (no driver can speak DM's wire
-//     protocol) instead of failing inside a driver lookup, which reads like a bug.
-//
-// The SQL dialect is real and lives in the kernel (sqltext.DM); what is missing is
-// the socket, and the message says exactly that.
+// No DM server is available in this environment, so nothing here proves DM accepts
+// a statement. The live checklist is dbcore/dm/dm_live_test.go, gated on
+// DBCORE_TEST_DM_DSN.
 
 import (
 	"strings"
 	"testing"
+
+	"github.com/dbcore/dbcore"
 )
 
-func TestDMConnectRefusesWithTheReason(t *testing.T) {
+// dmTestConn builds a DM connection pointing at a closed port: connecting must fail,
+// and the error must be the driver's.
+func dmTestConn(t *testing.T, engine string) (*App, string) {
+	t.Helper()
 	app, _ := importApp(t)
 	if err := app.AddConnection(ConnectionConfig{
-		Name: "dm-test", Type: "dm", Host: "127.0.0.1", Port: 5236,
-		Username: "SYSDBA", Database: "DAMENG",
+		Name: "dm-test", Type: engine,
+		Host: "127.0.0.1", Port: 5236,
+		Username: "SYSDBA", Password: "SYSDBA", Database: "SYSDBA",
 	}); err != nil {
 		t.Fatalf("add: %v", err)
 	}
@@ -30,40 +37,64 @@ func TestDMConnectRefusesWithTheReason(t *testing.T) {
 	if len(conns) != 1 {
 		t.Fatalf("conns = %+v", conns)
 	}
-	err := app.Connect(conns[0].ID)
-	if err == nil {
-		t.Fatal("a DM connection cannot be opened by this build")
+	return app, conns[0].ID
+}
+
+func TestDMEngineResolvesToTheDMDialect(t *testing.T) {
+	// The wiring, without a socket: every DM spelling must map to dbcore.KindDM, or
+	// the connection would be handed to a different engine's DSN builder.
+	for _, engine := range []string{"dm", "dameng"} {
+		spec := connSpecAt(ConnectionConfig{Type: engine, Host: "h", Port: 5236}, "h", 5236)
+		if spec.Kind != dbcore.KindDM {
+			t.Fatalf("%s => kind %q, want %q", engine, spec.Kind, dbcore.KindDM)
+		}
 	}
-	// The message must name the actual obstacle: the wire protocol / missing
-	// driver. "unknown engine" would send the user hunting for a typo.
-	msg := err.Error()
-	if !strings.Contains(msg, "达梦") {
-		t.Fatalf("the error should name the product: %q", msg)
-	}
-	if !strings.Contains(msg, "驱动") && !strings.Contains(msg, "线协议") {
-		t.Fatalf("the error should name the obstacle: %q", msg)
+	// And the alias table does not send it somewhere else.
+	if got := builtinEngine("dm8"); got != "dm8" {
+		// dm8 is not aliased to another engine: it is DM itself.
+		t.Fatalf("builtinEngine(dm8) = %q", got)
 	}
 }
 
-func TestDMAliasesAllRefuse(t *testing.T) {
-	for _, engine := range []string{"dm", "dameng", "dm8", "DM8", " DaMeng "} {
-		app, _ := importApp(t)
-		if err := app.AddConnection(ConnectionConfig{
-			Name: "x", Type: engine, Host: "h", Port: 5236,
-		}); err != nil {
-			t.Fatalf("%s: add: %v", engine, err)
-		}
-		conns := app.GetConnections()
-		if err := app.Connect(conns[0].ID); err == nil {
-			t.Fatalf("%s: connecting must be refused", engine)
-		}
+func TestDMConnectReachesTheDMDriver(t *testing.T) {
+	// The regression this file exists for: connecting must fail inside the DM
+	// driver (protocol/handshake), never in the client with "unsupported database
+	// type". A closed port is the cheapest way to force that failure.
+	app, id := dmTestConn(t, "dm")
+	err := app.Connect(id)
+	if err == nil {
+		t.Fatal("a closed port cannot connect")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "unsupported database type") {
+		t.Fatalf("DM fell through to the client's default branch: %q", msg)
+	}
+	if strings.Contains(msg, "不是 Oracle") || strings.Contains(msg, "没有可用的驱动") {
+		t.Fatalf("the old refusal is still in the path: %q", msg)
+	}
+	// The vendored driver tags its errors with DM's own codes / Chinese messages.
+	if !strings.Contains(msg, "6001") && !strings.Contains(msg, "网络通信") &&
+		!strings.Contains(msg, "dial address") {
+		t.Fatalf("the error does not look like the DM driver's: %q", msg)
+	}
+}
+
+func TestDMAliasConnectsThroughTheSameDriver(t *testing.T) {
+	// "dameng" is the spelling the importer and the dialog may persist; it must
+	// reach the same driver rather than a second code path.
+	app, id := dmTestConn(t, "dameng")
+	err := app.Connect(id)
+	if err == nil {
+		t.Fatal("a closed port cannot connect")
+	}
+	if strings.Contains(err.Error(), "unsupported database type") {
+		t.Fatalf("the alias fell through: %v", err)
 	}
 }
 
 func TestDMConnectionCanBeSavedAndListed(t *testing.T) {
-	// The refusal is at CONNECT, not at save: a user migrating a DM profile should
-	// be able to keep the definition (and see it in the sidebar) even though this
-	// build cannot open it yet.
+	// The definition round-trips like any other engine's: a user can prepare a DM
+	// connection (or import one) before a server exists.
 	app, _ := importApp(t)
 	if err := app.AddConnection(ConnectionConfig{
 		Name: "keep-me", Type: "dameng", Host: "dm.local", Port: 5236, Database: "APP",
@@ -74,7 +105,6 @@ func TestDMConnectionCanBeSavedAndListed(t *testing.T) {
 	if len(conns) != 1 || conns[0].Type != "dameng" {
 		t.Fatalf("conns = %+v", conns)
 	}
-	// It round-trips through the state file like any other connection.
 	app2, _ := importApp(t)
 	if err := app2.AddConnection(conns[0]); err != nil {
 		t.Fatalf("re-add: %v", err)
@@ -84,10 +114,10 @@ func TestDMConnectionCanBeSavedAndListed(t *testing.T) {
 	}
 }
 
-func TestDBeaverDMConnectionImportsButWillNotConnect(t *testing.T) {
-	// The realistic path: a DBeaver profile that contains a 达梦 connection. The
-	// import must carry it (so nothing is silently dropped), and the connect must
-	// then say what is missing rather than pretending.
+func TestDBeaverDMConnectionImportsAsAREalEngine(t *testing.T) {
+	// The realistic migration path: a DBeaver profile with a 达梦 connection. The
+	// import must carry it as a DM connection (type "dm"), so the sidebar shows a
+	// working definition rather than dropping it.
 	app, dir := importApp(t)
 	path := writeImportFixture(t, dir, "data-sources.json", `{
 	  "connections": {
@@ -101,8 +131,6 @@ func TestDBeaverDMConnectionImportsButWillNotConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("import: %v", err)
 	}
-	// The importer's engine mapping must know 达梦; dropping it would make the
-	// migration silently incomplete.
 	if len(res.Rows) != 1 {
 		t.Fatalf("rows = %+v skipped = %+v", res.Rows, res.Skipped)
 	}
@@ -113,7 +141,32 @@ func TestDBeaverDMConnectionImportsButWillNotConnect(t *testing.T) {
 	if conns[0].Type != "dm" {
 		t.Fatalf("type = %q, want dm", conns[0].Type)
 	}
-	if err := app.Connect(conns[0].ID); err == nil {
-		t.Fatal("the imported DM connection must not open")
+	if conns[0].Port != 5236 {
+		t.Fatalf("port = %d", conns[0].Port)
+	}
+	// No password was imported, so connecting fails on credentials or the network —
+	// never on the engine being unknown.
+	err = app.Connect(conns[0].ID)
+	if err != nil && strings.Contains(err.Error(), "unsupported database type") {
+		t.Fatalf("the imported DM connection is not routed to the DM driver: %v", err)
+	}
+}
+
+func TestUnknownEngineStillSaysSoClearly(t *testing.T) {
+	// The refusal mechanism that DM used to use is still there for an engine nobody
+	// can open; an unknown spelling must not reach a driver.
+	app, _ := importApp(t)
+	if err := app.AddConnection(ConnectionConfig{
+		Name: "nope", Type: "mystery-db", Host: "h", Port: 1,
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	conns := app.GetConnections()
+	err := app.Connect(conns[0].ID)
+	if err == nil {
+		t.Fatal("an unknown engine cannot connect")
+	}
+	if !strings.Contains(err.Error(), "unsupported database type") {
+		t.Fatalf("the error should name the unsupported type: %v", err)
 	}
 }

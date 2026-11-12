@@ -156,6 +156,8 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       sqlserver: 1433,
       oracle: 1521,
       redis: 6379,
+      // 达梦 DM8 的默认端口。
+      dm: 5236,
       // 协议兼容引擎的常规端口 (OceanBase 2881, StarRocks/Doris FE 9030)。
       oceanbase: 2881,
       greatsql: 3306,
@@ -173,6 +175,8 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
       sqlserver: { username: 'sa', database: 'master' },
       oracle: { username: 'system', database: 'ORCL' },
       redis: { username: '', database: '0' },
+      // 达梦默认管理员 SYSDBA，且「库」在达梦里是 schema。
+      dm: { username: 'SYSDBA', database: 'SYSDBA' },
       oceanbase: { username: 'root', database: '' },
       greatsql: { username: 'root', database: '' },
       starrocks: { username: 'root', database: '' },
@@ -323,6 +327,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               <option value="sqlite">SQLite</option>
               <option value="sqlserver">SQL Server</option>
               <option value="oracle">Oracle</option>
+              <option value="dm">达梦 DM8</option>
               <option value="redis">Redis</option>
               {/* 协议兼容引擎: 与底层引擎同一驱动栈, 仅端口与目录细节不同 */}
               <option value="oceanbase">OceanBase (MySQL 模式)</option>

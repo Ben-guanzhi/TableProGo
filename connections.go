@@ -13,6 +13,7 @@ import (
 	"github.com/dbcore/dbcore"
 	"github.com/dbcore/dbcore/plugindriver"
 
+	dbcoredm "github.com/dbcore/dbcore/dm"
 	dbcoremssql "github.com/dbcore/dbcore/mssql"
 	dbcoremysql "github.com/dbcore/dbcore/mysql"
 	dbcoreoracle "github.com/dbcore/dbcore/oracle"
@@ -729,6 +730,10 @@ func connSpecAt(config ConnectionConfig, host string, port int) dbcore.ConnSpec 
 		kind = dbcore.KindMySQL
 	case "oracle":
 		kind = dbcore.KindOracle
+	case "dm", "dameng":
+		// W14: 达梦 DM8. Its own wire protocol, so its own driver — the Oracle
+		// dialect it shares covers SQL text only.
+		kind = dbcore.KindDM
 	}
 	return dbcore.ConnSpec{
 		Kind:     kind,
@@ -783,6 +788,9 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 	case "oracle":
 		driver = "oracle"
 		dsn = dbcoreoracle.DSN(spec)
+	case "dm", "dameng":
+		driver = "dm"
+		dsn = dbcoredm.DSN(spec)
 	default:
 		return nil, fmt.Errorf("unsupported database type: %s", config.Type)
 	}
