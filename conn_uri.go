@@ -43,6 +43,10 @@ var uriSchemes = map[string]struct {
 	"opengauss":    {"opengauss", 5432},
 	"gaussdb":      {"gaussdb", 5432},
 	"kingbase":     {"kingbase", 5432},
+	// W14: 达梦 DM8. It has its own wire protocol and therefore its own driver, but
+	// a pasted URL is how a user migrates a connection, so the scheme has to work.
+	"dm":     {"dm", 5236},
+	"dameng": {"dm", 5236},
 }
 
 // URISchemes lists the accepted schemes for the dialog's hint text, in a stable

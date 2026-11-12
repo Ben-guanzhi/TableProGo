@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 // W14: 达梦 DM8.
 //
@@ -72,9 +72,12 @@ func TestDMConnectReachesTheDMDriver(t *testing.T) {
 	if strings.Contains(msg, "不是 Oracle") || strings.Contains(msg, "没有可用的驱动") {
 		t.Fatalf("the old refusal is still in the path: %q", msg)
 	}
-	// The vendored driver tags its errors with DM's own codes / Chinese messages.
-	if !strings.Contains(msg, "6001") && !strings.Contains(msg, "网络通信") &&
-		!strings.Contains(msg, "dial address") {
+	// The vendored driver tags its errors with DM's own codes ("Error -6001",
+	// "-2501", …) and its own Chinese messages. Either shape proves the DM driver
+	// answered: a closed port gives a network error, a live server with the wrong
+	// password gives -2501. What must NOT appear is the client's own refusal.
+	if !strings.Contains(msg, "Error -") && !strings.Contains(msg, "网络通信") &&
+		!strings.Contains(msg, "dial address") && !strings.Contains(msg, "用户名或密码") {
 		t.Fatalf("the error does not look like the DM driver's: %q", msg)
 	}
 }

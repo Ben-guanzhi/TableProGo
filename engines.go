@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 // Protocol-compatible engines: one wire protocol, one dialect, several product
 // names. OceanBase's MySQL mode speaks the MySQL wire protocol, GreatSQL and
@@ -74,4 +74,16 @@ func isMySQLLike(engineType string) bool {
 // protocol (including openGauss / GaussDB / KingbaseES).
 func isPostgresLike(engineType string) bool {
 	return builtinEngine(engineType) == "postgresql"
+}
+
+// isDriverCatalogEngine reports whether this engine's catalog comes from its own
+// driver rather than a kernel statement.
+//
+// W14: DM is such an engine. Its dictionary is Oracle-shaped but not Oracle — it
+// has no ALL_TAB_IDENTITY_COLS, and its paging/identity details differ — so the
+// driver carries DM-specific reads that the live suite exercises. Routing the
+// client through them keeps ONE implementation instead of a second, unverified
+// copy in sqltext.
+func isDriverCatalogEngine(engineType string) bool {
+	return builtinEngine(engineType) == "dm"
 }

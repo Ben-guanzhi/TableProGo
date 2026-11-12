@@ -14,6 +14,7 @@ import (
 	_ "github.com/sijms/go-ora/v2"
 
 	"github.com/dbcore/dbcore"
+	"github.com/dbcore/dbcore/dm"
 	"github.com/dbcore/dbcore/mssql"
 	"github.com/dbcore/dbcore/mysql"
 	"github.com/dbcore/dbcore/oracle"
@@ -55,6 +56,11 @@ func driverFor(conn *Connection, db *sql.DB) (dbcore.SQLDriver, error) {
 		return mssql.NewFromDB(db), nil
 	case "oracle":
 		return oracle.NewFromDB(db), nil
+	case "dm":
+		// W14: DM8 has its own wire protocol, so its own driver package. It is an
+		// engine of its own here rather than an Oracle alias: the dictionary and
+		// paging differ in the places this client uses (see dbcore/dm/catalog.go).
+		return dm.NewFromDB(db), nil
 	default:
 		return nil, fmt.Errorf("unsupported type: %s", conn.Type)
 	}
@@ -197,8 +203,18 @@ func (a *App) GetSchemas(connID string, database string) ([]string, error) {
 	// A plugin connection has no pool: the child process answers the catalog with
 	// its own driver, and the client has no dialect knowledge for an engine it
 	// does not compile.
-	if pluginConnection(conn) {
-		drv, err := a.pluginDriver(conn)
+	if pluginConnection(conn) || isDriverCatalogEngine(conn.Type) {
+		// W14: DM answers its catalog through its own driver too — sqltext has no
+		// DM arm for every recipe, and the driver's version is the one the live
+		// tests cover. The plugin branch is the same shape: ask the driver, map the
+		// names.
+		var drv dbcore.SQLDriver
+		var err error
+		if pluginConnection(conn) {
+			drv, err = a.pluginDriver(conn)
+		} else {
+			drv, err = a.sqlDriver(conn, database)
+		}
 		if err != nil {
 			return nil, err
 		}
