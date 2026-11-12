@@ -150,6 +150,13 @@ func (s *Store) Satisfies(depends []Key) bool {
 
 // providerOf returns the uid of the ACTIVE fiber providing k, or "" (single-source
 // discipline: at most one, enforced by O-Insert).
+// providerOf returns the uid of the ACTIVE fiber providing k, or "" (single-source
+// discipline: at most one, enforced by O-Insert).
+//
+// Host-provided keys are the exception that makes the model complete: the host
+// kernel binds connections.store (and any other host-owned key) itself, with the
+// provider name "host". In the paper's terms the host is the ROOT-side provider —
+// its bindings are always available because the host is always running.
 func (s *Store) providerOf(k Key) string {
 	s.mu.Lock()
 	all := make([]*Fiber, 0, len(s.fibers))
@@ -165,6 +172,13 @@ func (s *Store) providerOf(k Key) string {
 			if p == k {
 				return f.uid
 			}
+		}
+	}
+	// Fall back to host-owned bindings: any binding at k whose provider is the
+	// host satisfies the dependency (the host never deactivates).
+	for _, b := range s.table(k).snapshot() {
+		if b.Provider == "host" {
+			return "host"
 		}
 	}
 	return ""

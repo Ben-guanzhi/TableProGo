@@ -232,3 +232,28 @@ func (s *Store) InterceptOf(k Key) any {
 	defer s.mu.Unlock()
 	return s.intercept[k]
 }
+
+// ---------- public table operations (for hosts and effect stages) ----------
+
+// TableInsert binds one entry into a key's commutative table. Callers running
+// INSIDE an effect stage use this directly (the stage's Forward returns the
+// remove inverse — the iterator's accumulator owns it, exactly how Cordis's
+// execute collects each `iter.next()` yield); callers OUTSIDE any effect use
+// Set, which wraps the same mutation as a tracked, armed effect.
+func (s *Store) TableInsert(k Key, tag Tag, provider string, value any) error {
+	return s.table(k).insert(Binding{Tag: tag, Provider: provider, Value: value})
+}
+
+// TableRemove withdraws one entry by its unique tag. Revoking an absent tag is
+// refused (CodeRevokeAbsent): the precondition is what keeps every withdrawal
+// paired with the insertion it undoes.
+func (s *Store) TableRemove(k Key, tag Tag) error {
+	return s.table(k).remove(tag)
+}
+
+// Notify is the PUBLIC reactive dispatch (Algorithm 3): a host or effect stage
+// that changed a key's table calls this so the affected fibers refresh. It is
+// idempotent and re-entrancy-safe (Settle owns the converge loop).
+func (s *Store) Notify(k Key) {
+	s.notify(k)
+}
