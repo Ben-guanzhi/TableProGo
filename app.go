@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/dbcore/dbcore/usability"
 	"strings"
 	"sync"
 
@@ -138,6 +140,9 @@ type App struct {
 	// would let two requests observe nil and create two channels (NF-3).
 	httpGate     chan struct{}
 	httpGateOnce sync.Once
+	// um 是可用性事件记录器（S-01，dbcore/usability）：默认关闭，
+	// POLYDB_USABILITY=1/true 才落盘；关闭时所有调用是 no-op。
+	um *usability.Recorder
 }
 
 // AppSettings holds UI preferences, persisted next to the connection store.
@@ -300,6 +305,9 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 		reclaimer:     NewReclaimer(),
 		httpGate:      make(chan struct{}, httpMaxConcurrentRequests),
 	}
+	// Usability metrics (S-01): a no-op unless POLYDB_USABILITY=1. It lives next
+	// to the other user-data files so a user can read or delete it; never uploaded.
+	a.um = usability.Open("tableprogo", filepath.Join(filepath.Dir(a.filePath), "usability.ndjson"))
 	if configPath != "" {
 		a.filePath = configPath
 	}

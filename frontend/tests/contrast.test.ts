@@ -9,7 +9,16 @@ const BACKGROUNDS = ['canvas', 'panel'] as const;
 const TEXT_TIERS = ['ink', 'secondary', 'muted'] as const;
 // Small dense labels are the worst case for 11px text, so the tiers all have to
 // clear the AA threshold for small text rather than the 3:1 large-text bar.
-const MIN_RATIO = 4.5;
+// 阈值来自共享的可及性契约（S-04，工作区根 spec/a11y-baseline.json），
+// 而不是本文件里的魔法数：契约改窄会先被 a11yContract.test.ts 抓住。
+const A11Y = JSON.parse(
+  readFileSync(fileURLToPath(new URL('../../../dbcore/spec/a11y-baseline.json', import.meta.url)), 'utf8'),
+) as { rules: { id: string; applies_to: string[]; min_ratio?: number }[] };
+const contrastRule = A11Y.rules.find((r) => r.id === 'contrast');
+if (!contrastRule || !contrastRule.applies_to.includes('web') || !contrastRule.min_ratio) {
+  throw new Error('spec/a11y-baseline.json: contrast/web 规则缺失或未给 min_ratio');
+}
+const MIN_RATIO = contrastRule.min_ratio;
 
 // Status colours are used as small text too (grid badges, error lines), so they
 // have to clear the same bar as the text tiers.

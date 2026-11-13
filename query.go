@@ -306,7 +306,25 @@ func (a *App) ExecuteQueryConfirmed(connID string, query string, database string
 	return a.executeQuery(HistorySourceUser, "", connID, query, database, true)
 }
 
-func (a *App) executeQuery(source, tabID, connID string, query string, database string, force bool) QueryResult {
+func (a *App) executeQuery(source, tabID, connID string, query string, database string, force bool) (res QueryResult) {
+	// S-01：一次执行 = 一次 query 任务尝试；defer 覆盖所有 return 路径。
+	started := time.Now()
+	defer func() {
+		outcome := "ok"
+		if res.Error != "" {
+			outcome = "error"
+		}
+		if res.NeedsConfirmation {
+			outcome = "cancelled"
+		}
+		if a.um != nil {
+			a.um.Record("query", outcome, time.Since(started), map[string]string{
+				"statement_type": stmtKeyword(query),
+				"rows":           strconv.Itoa(len(res.Rows)),
+				"truncated":      strconv.FormatBool(res.Truncated),
+			})
+		}
+	}()
 	_, kvErr := a.kvConnection(connID)
 	if kvErr != nil {
 		// Safe Mode guards SQL statements; raw Redis commands have their own

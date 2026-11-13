@@ -416,27 +416,35 @@ func (a *App) txTimeouts() (time.Duration, time.Duration) {
 
 // CommitTransaction finalizes the tab's transaction.
 func (a *App) CommitTransaction(connID, tabID string) (string, error) {
+	started := time.Now()
 	conn, err := a.connection(connID)
 	if err != nil {
+		a.recordTx("commit", started, err)
 		return "", err
 	}
 	s := a.sessionOf(tabID)
 	if err := s.Commit(txOpener{app: a, conn: conn, owner: s}); err != nil {
+		a.recordTx("commit", started, err)
 		return "", err
 	}
+	a.recordTx("commit", started, nil)
 	return s.Describe(), nil
 }
 
 // RollbackTransaction discards the tab's transaction.
 func (a *App) RollbackTransaction(connID, tabID string) (string, error) {
+	started := time.Now()
 	conn, err := a.connection(connID)
 	if err != nil {
+		a.recordTx("rollback", started, err)
 		return "", err
 	}
 	s := a.sessionOf(tabID)
 	if err := s.Rollback(txOpener{app: a, conn: conn, owner: s}); err != nil {
+		a.recordTx("rollback", started, err)
 		return "", err
 	}
+	a.recordTx("rollback", started, nil)
 	return s.Describe(), nil
 }
 
