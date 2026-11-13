@@ -128,6 +128,30 @@ func main() {
 			// string (it did exactly that once).
 			var p map[string]interface{}
 			_ = json.Unmarshal(req.Params, &p)
+			// W-C1: the container actions ride the same channel-data method, so
+			// the fake answers them by the action field before falling back to
+			// terminal keystrokes.
+			if action, _ := p["action"].(string); action != "" {
+				switch action {
+				case "ps":
+					send(map[string]interface{}{"containers": []interface{}{
+						map[string]interface{}{"id": "aaa111", "name": "web", "image": "nginx:1", "state": "running"},
+						map[string]interface{}{"id": "bbb222", "name": "db", "image": "pg:16", "state": "exited"},
+					}}, "", "")
+				case "kubectl":
+					send(map[string]interface{}{"output": "NAME   READY\nweb-0  1/1\n"}, "", "")
+				case "exec":
+					seq++
+					send(map[string]interface{}{"channelId": fmt.Sprintf("cexec-%d", seq)}, "", "")
+				case "exec-data":
+					send(map[string]interface{}{"output": "shell-ok\n", "ended": false}, "", "")
+				case "exec-close":
+					send(map[string]bool{"ok": true}, "", "")
+				default:
+					send(nil, "unknown container action "+action, "ERR_NOT_SUPPORTED")
+				}
+				return
+			}
 			cid, _ := p["channelId"].(string)
 			input, _ := p["input"].(string)
 			if !known[cid] {

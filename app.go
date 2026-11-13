@@ -11,7 +11,6 @@ import (
 	"sync"
 
 	"sync/atomic"
-	"tablepro-go/internal/ctxcore"
 	"tablepro-go/internal/mcp"
 	"tablepro-go/internal/txn"
 	"tablepro-go/internal/workbenchhost"
@@ -36,6 +35,10 @@ type App struct {
 	// the key surface (nav.nodes / terminal.channels / connections.store) and the
 	// broadcast gate live here. Nil-safe at every API entry.
 	workbench *workbenchhost.Runner
+	// workbenchOrch owns the plugin registry when more than one plugin runs
+	// (W-C1: navop-ssh provider + navop-containers consumer over one store).
+	// workbench is the provider runner, kept as the terminal/files entry point.
+	workbenchOrch *workbenchhost.Orchestrator
 	// passcodePath is the argon2id store's location (P2-9); a field rather
 	// than a computed constant so tests point it at a temp dir.
 	passcodePath  string
@@ -315,11 +318,16 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 	a.loadFavorites()
 	a.reclaimer.Start()
 	a.startTxSweeper()
-	// W-T2: the workbench runner owns the plugin fibers. The host binds
+	// W-T2/W-C1: the orchestrator owns the plugin registry. TWO plugins may run
+	// over ONE shared store: navop-ssh (provider: terminal/files/tunnel.proxy)
+	// and navop-containers (consumer: container.session, depends tunnel.proxy).
+	// One registry, two fibers — that is what makes "kill the provider and the
+	// consumer deactivates first" hold (Thm 70's ¬relied guard). The host binds
 	// connections.store itself (AD-6: single writer = the host kernel) — the
 	// archive carries NO secrets, only the ids/labels a terminal tab needs
 	// (AD-4: secret values never enter the key surface).
-	a.workbench = workbenchhost.New(ctxcore.NewStore())
+	a.workbenchOrch = workbenchhost.NewOrchestrator()
+	a.workbench = a.workbenchOrch.SSH()
 	if err := a.workbench.ProvideConnectionsArchive(a.connectionsArchive()); err != nil {
 		log.Printf("workbench: provide connections.store: %v", err)
 	}
@@ -327,8 +335,17 @@ func newAppWithPaths(configPath, passcodePath string) *App {
 	// per plugin. A missing plugin is the NORMAL case (工作台能力默认不接入) — the
 	// fiber simply never exists, and the UI shows no terminal tab.
 	if p := os.Getenv("TABLEPRO_WORKBENCH_NAVOP_SSH"); p != "" {
-		if err := a.workbench.Launch(p); err != nil {
+		if err := a.workbenchOrch.LaunchProvider(p); err != nil {
 			log.Printf("workbench: launch navop-ssh: %v", err)
+		}
+	}
+	// The consumer is optional too: only a configured navop-containers binary
+	// starts a second fiber. Its banner must declare tunnel.proxy (the
+	// orchestrator refuses a mis-wired build) and it stays Inactive until the
+	// provider is Active.
+	if p := os.Getenv("TABLEPRO_WORKBENCH_NAVOP_CONTAINERS"); p != "" {
+		if err := a.workbenchOrch.LaunchConsumer(p); err != nil {
+			log.Printf("workbench: launch navop-containers: %v", err)
 		}
 	}
 	return a
@@ -626,10 +643,14 @@ func (a *App) Shutdown(ctx context.Context) {
 	// Stop the API server first: while it is serving, requests can still open
 	// connections and check out pools, racing the teardown below.
 	a.closeHTTPServer()
-	// W-T2: retire the workbench fibers BEFORE the pools go away — the plugin
-	// processes are separate executables and outlive nothing, but their
-	// accumulator must still run so the key surface clears (Cor 69).
-	if a.workbench != nil {
+	// W-T2/W-C1: retire the workbench fibers BEFORE the pools go away — the
+	// plugin processes are separate executables and outlive nothing, but their
+	// accumulator must still run so the key surface clears (Cor 69). The
+	// orchestrator stops the CONSUMER first (its teardown must not race a
+	// provider that would then wait on the ¬relied guard), then the provider.
+	if a.workbenchOrch != nil {
+		a.workbenchOrch.Stop()
+	} else if a.workbench != nil {
 		a.workbench.Stop()
 	}
 	a.stopTxSweeper()

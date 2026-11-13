@@ -102,6 +102,15 @@ func (s *server) filesAction(raw json.RawMessage) (any, string) {
 		if err := cfg.Validate(); err != nil {
 			return nil, err.Error()
 		}
+		// Record the coordinates for tunnel.proxy (W-C1): a files session rides
+		// the SAME chain kind a terminal does, so it is also a valid source of
+		// the tunnel's coordinates. The password stays out of the record (AD-4).
+		s.mu.Lock()
+		s.sessionSSHHost = p.Host
+		s.sessionSSHPort = p.Port
+		s.sessionSSHUser = p.User
+		s.sessionSSHKeyFile = p.KeyFile
+		s.mu.Unlock()
 		clients, err := sshx.DialChain(cfg)
 		if err != nil {
 			return nil, err.Error()

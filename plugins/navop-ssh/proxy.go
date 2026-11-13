@@ -61,15 +61,24 @@ func (s *server) handleProxy(req plugindriver.Request) plugindriver.Response {
 	case "tunnel.proxy":
 		switch p.Op {
 		case "dial":
+			s.mu.Lock()
+			host, port, user, keyFile := s.sessionSSHHost, s.sessionSSHPort, s.sessionSSHUser, s.sessionSSHKeyFile
+			s.mu.Unlock()
+			if host == "" {
+				// The tunnel IS a live session's chain: with no session there is
+				// nothing to hand over. Name the cause instead of returning empty
+				// coordinates that would fail later as a confusing dial error.
+				return fail("tunnel.proxy: 尚无活跃的 SSH 会话；请先在终端或文件面板连接一次该主机", "ERR_INACTIVE")
+			}
 			var args struct {
 				TargetHost string `json:"targetHost"`
 			}
 			_ = json.Unmarshal(p.Args, &args)
 			info := tunnelInfo{
-				SSHHost:   s.sessionSSHHost,
-				SSHPort:   s.sessionSSHPort,
-				SSHUser:   s.sessionSSHUser,
-				SSHKey:    s.sessionSSHKeyFile,
+				SSHHost:   host,
+				SSHPort:   port,
+				SSHUser:   user,
+				SSHKey:    keyFile,
 				TunnelFor: args.TargetHost,
 			}
 			payload, _ := json.Marshal(info)

@@ -195,6 +195,29 @@ func (s *server) handle(out *bufio.Writer, wmu *sync.Mutex, req plugindriver.Req
 				return
 			}
 			send(res, "", "")
+		case "exec-data":
+			// The container shell rides terminal.channels: write the keystrokes
+			// the host sends and answer with whatever output accumulated since
+			// the last drain (the same read-and-clear contract the PTY channels
+			// use for workbench/channel/data).
+			var d struct {
+				ChannelID string `json:"channelId"`
+				Data      string `json:"data"`
+			}
+			_ = json.Unmarshal(req.Params, &d)
+			res, errText := s.shellData(d.ChannelID, d.Data)
+			if errText != "" {
+				send(nil, errText, "ERR_PLUGIN")
+				return
+			}
+			send(res, "", "")
+		case "exec-close":
+			var d struct {
+				ChannelID string `json:"channelId"`
+			}
+			_ = json.Unmarshal(req.Params, &d)
+			s.closeShell(d.ChannelID)
+			send(map[string]bool{"ok": true}, "", "")
 		default:
 			send(nil, "unknown container action "+p.Action, "ERR_NOT_SUPPORTED")
 		}

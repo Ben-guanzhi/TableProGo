@@ -473,3 +473,107 @@ func (a *App) handleWorkbenchMonitor(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "unknown monitor action "+body.Action)
 	}
 }
+
+// ---------- W-C1: containers (navop-containers over the ssh tunnel) ----------
+
+// containersReady resolves the CONSUMER runner (navop-containers) through the
+// orchestrator. Two plugins run over one shared store: the provider (navop-ssh)
+// serves the terminal/files panels, the consumer serves containers and rides the
+// provider's tunnel.proxy. Without the orchestrator the capability is simply
+// absent — a normal answer, not a panic.
+func (a *App) containersReady(w http.ResponseWriter) *workbenchhost.Runner {
+	if a.workbenchOrch == nil {
+		writeError(w, http.StatusServiceUnavailable,
+			"容器工作台未启用（需要同时加载 navop-ssh 与 navop-containers）")
+		return nil
+	}
+	return a.workbenchOrch.Other()
+}
+
+// workbenchContainersRequest is the container surface: open a session (through
+// the tunnel), list containers, run kubectl on the remote, or drive a container
+// shell (exec reuses the terminal channel contract).
+type workbenchContainersRequest struct {
+	Action     string `json:"action"` // open|ps|kubectl|exec|exec-data|exec-close|close
+	Host       string `json:"host,omitempty"`
+	Port       int    `json:"port,omitempty"`
+	User       string `json:"user,omitempty"`
+	Password   string `json:"password,omitempty"`
+	DockerAddr string `json:"dockerAddr,omitempty"`
+	Session    string `json:"session,omitempty"`
+	Container  string `json:"container,omitempty"`
+	ChannelID  string `json:"channelId,omitempty"`
+	Data       string `json:"data,omitempty"`
+	Args       string `json:"args,omitempty"`
+}
+
+func (a *App) handleWorkbenchContainers(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	consumer := a.containersReady(w)
+	if consumer == nil {
+		return
+	}
+	// The provider's fiber must be the one that answers the proxy request; the
+	// orchestrator owns that routing (navop-ssh records the chain coordinates).
+	var body workbenchContainersRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "open":
+		// OpenContainerSession resolves tunnel.proxy through the provider, then
+		// asks the consumer to dial the daemon INSIDE that chain.
+		id, err := consumer.OpenContainerSession(body.Host, body.Port, body.Password, body.DockerAddr)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"sessionId": id})
+	case "ps":
+		rows, err := consumer.ContainerPS(body.Session)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"containers": rows})
+	case "kubectl":
+		out, err := consumer.ContainerKubectl(body.Session, body.Args)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"output": out})
+	case "exec":
+		id, err := consumer.ContainerExec(body.Session, body.Container)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"channelId": id})
+	case "exec-data":
+		out, ended, err := consumer.ContainerExecData(body.ChannelID, body.Data)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"output": out, "ended": ended})
+	case "exec-close":
+		if err := consumer.ContainerExecClose(body.ChannelID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "close":
+		if err := consumer.ContainerCloseSession(body.Session); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown containers action "+body.Action)
+	}
+}

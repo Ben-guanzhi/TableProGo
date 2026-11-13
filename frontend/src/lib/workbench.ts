@@ -169,3 +169,52 @@ export async function DownloadFile(
 export async function CloseFilesSession(session: string): Promise<void> {
   await post('/api/workbench/files', { action: 'close', session });
 }
+
+// W-C1: containers ride the ssh tunnel (tunnel.proxy). The consumer plugin
+// (navop-containers) stays Inactive until navop-ssh is loaded — so "open" can
+// legitimately refuse with "the container plugin fiber is not active", which the
+// panel surfaces verbatim.
+
+export interface ContainerRow {
+  id: string;
+  name: string;
+  image: string;
+  state: string;
+}
+
+export async function OpenContainerSession(params: {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  dockerAddr?: string;
+}): Promise<{ sessionId: string }> {
+  return post('/api/workbench/containers', { action: 'open', ...params });
+}
+
+export async function ListContainers(session: string): Promise<{ containers: ContainerRow[] }> {
+  return post('/api/workbench/containers', { action: 'ps', session });
+}
+
+export async function KubectlRun(session: string, args: string): Promise<{ output: string }> {
+  return post('/api/workbench/containers', { action: 'kubectl', session, args });
+}
+
+export async function ContainerExec(session: string, container: string): Promise<{ channelId: string }> {
+  return post('/api/workbench/containers', { action: 'exec', session, container });
+}
+
+export async function ContainerExecData(
+  channelId: string,
+  data: string,
+): Promise<{ output: string; ended: boolean }> {
+  return post('/api/workbench/containers', { action: 'exec-data', channelId, data });
+}
+
+export async function ContainerExecClose(channelId: string): Promise<void> {
+  await post('/api/workbench/containers', { action: 'exec-close', channelId });
+}
+
+export async function CloseContainerSession(session: string): Promise<void> {
+  await post('/api/workbench/containers', { action: 'close', session });
+}

@@ -290,6 +290,42 @@ func firstLine(s string) string {
 	return s
 }
 
+// shellData writes keystrokes into one container shell and returns the output
+// accumulated since the previous drain. This is the channel-data contract for
+// the exec channel: the host polls, the shell's pump fills the buffer.
+func (s *server) shellData(channelID, data string) (any, string) {
+	s.mu.Lock()
+	sh := s.shells[channelID]
+	s.mu.Unlock()
+	if sh == nil {
+		return nil, "unknown container shell " + channelID
+	}
+	if data != "" {
+		if _, err := io.WriteString(sh.stdinPipe, data); err != nil {
+			return nil, "exec write: " + err.Error()
+		}
+	}
+	sh.mu.Lock()
+	out := string(sh.buf)
+	sh.buf = sh.buf[:0]
+	ended := sh.ended
+	sh.mu.Unlock()
+	return map[string]any{"output": out, "ended": ended}, ""
+}
+
+// closeShell drops one container shell (its session closes with it).
+func (s *server) closeShell(channelID string) {
+	s.mu.Lock()
+	sh := s.shells[channelID]
+	delete(s.shells, channelID)
+	s.mu.Unlock()
+	if sh == nil {
+		return
+	}
+	_ = sh.stdinPipe.Close()
+	_ = sh.session.Close()
+}
+
 // closeAllFor drops every handle that belongs to one container session (the
 // plugin-side inverse of open).
 func (s *server) closeAllFor(session string) {

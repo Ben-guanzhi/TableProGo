@@ -343,7 +343,13 @@ func (s *Store) Settle() {
 		// guard keeps diverting?) or a view oscillates. A fiber whose load is
 		// executing on THIS call stack is exempt — it finishes when the stack
 		// unwinds into the loop's next pass.
-		if !unloaded && len(keys) == 0 && s.activatingCount() == 0 {
+		//
+		// A fiber that entered Unloading DURING this pass (the sweep above can
+		// retire-then-beginLeave after drainOnce ran) is NOT a stall: the next
+		// pass's drain applies its accumulator. Without this the loop panicked on
+		// a healthy final step (observed as a flaky "converge loop stalled" while
+		// unloading a two-fiber system).
+		if !unloaded && len(keys) == 0 && s.activatingCount() == 0 && !s.hasUnloading() {
 			panic("ctxcore: converge loop stalled: " + s.registryDump())
 		}
 		// Quiescent but keys kept arriving from a concurrent writer; loop again.
@@ -376,6 +382,20 @@ func (s *Store) activatingCount() int {
 	s.notifyMu.Lock()
 	defer s.notifyMu.Unlock()
 	return len(s.activating)
+}
+
+// hasUnloading reports whether any fiber is mid-leave (state Unloading). The
+// converge loop treats that as pending work, not as a stall: the next pass's
+// drainOnce applies the accumulator unless the ¬relied guard still holds.
+func (s *Store) hasUnloading() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, f := range s.fibers {
+		if f.State() == Unloading {
+			return true
+		}
+	}
+	return false
 }
 
 // drainOnce applies L-Unload (the ONLY rule that applies an accumulator) to every

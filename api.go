@@ -579,6 +579,9 @@ func (a *App) routes() *http.ServeMux {
 	// acquisition (stage → commit) with both inverses tracked host-side.
 	mux.HandleFunc("/api/workbench/files", a.handleWorkbenchFiles)
 	mux.HandleFunc("/api/workbench/monitor", a.handleWorkbenchMonitor)
+	// W-C1: containers ride the ssh tunnel (tunnel.proxy) — a SECOND plugin
+	// over the same store; the endpoint is absent unless both are loaded.
+	mux.HandleFunc("/api/workbench/containers", a.handleWorkbenchContainers)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`
