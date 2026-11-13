@@ -54,6 +54,7 @@ export const SHORTCUTS: readonly ShortcutSpec[] = [
   { id: 'gridColumnMenu', group: '结果网格', keys: ['右键列头'], label: '排序 / 筛选该列' },
   { id: 'gridCommit', group: '结果网格', keys: ['Enter'], label: '确认单元格改动' },
   { id: 'gridRevert', group: '结果网格', keys: ['Esc'], label: '放弃单元格改动' },
+  { id: 'gridUndo', group: '结果网格', keys: ['Ctrl / ⌘', 'Z'], label: '撤销最近一次网格改动（焦点在网格时；焦点在编辑器则撤销文本）', combo: 'mod+z' },
   { id: 'gridAutoWidth', group: '结果网格', keys: ['双击列宽把手'], label: '恢复该列自动宽度' },
 
   // ---- magic commands (W1-a) ----

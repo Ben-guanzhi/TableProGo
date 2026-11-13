@@ -323,6 +323,25 @@ const DataGrid: React.FC<DataGridProps> = ({
     };
   }, [exportMenu]);
 
+  // S-02 single-undo-gesture: Ctrl+Z belongs to whatever has the focus. The
+  // Monaco editor consumes it while the caret is in the editor (its own keymap
+  // runs before this window handler); reaching here means the grid has the
+  // focus, so the gesture undoes the last pending cell change. Redo is a
+  // deliberate omission: the undo stack holds pre-change queues, not inverse
+  // operations, so a redo would need a second stack -- tracked in the
+  // interaction contract as the next step.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.ctrlKey || e.metaKey;
+      if (!mod || e.key.toLowerCase() !== 'z') return;
+      if (editor.undoStack.length === 0) return;
+      e.preventDefault();
+      dispatchEditor({ type: 'undo' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [editor.undoStack.length]);
+
   const changeSet = (): ChangeSet | null => {
     if (!editSource) return null;
     return {
