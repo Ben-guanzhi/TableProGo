@@ -59,6 +59,11 @@ type Runner struct {
 	// tracked effects on the fiber's accumulator — unloading stops them.
 	monMu    sync.Mutex
 	monitors map[string]*monitor
+
+	// orchestrator (W-C1): when this runner is part of a multi-plugin system,
+	// the orchestrator owns the shared store and the proxy switch. Nil =
+	// single-plugin deployment (proxy requests are refused).
+	Orchestrator *Orchestrator
 }
 
 // New returns a runner over a fresh context store. The store may already carry
@@ -77,7 +82,19 @@ func New(store *ctxcore.Store) *Runner {
 // connections.store key (single writer = the host, AD-6). Plugins only ever
 // resolve it through their declared dependency; the values are host-owned.
 func (r *Runner) ProvideConnectionsArchive(archive any) error {
-	_, err := r.store.Set(ctxcore.KeyConnectionsStore, "host/connections", "host", archive)
+	const archiveTag = ctxcore.Tag("host/connections")
+	// IDEMPOTENT: the host re-provides after a provider relaunch. The TAG is the
+	// same, so an existing binding must be withdrawn first (Set inserts; the
+	// duplicate tag would be refused). The withdraw→install pair is observable —
+	// notify fires on both halves, and the consumers' inertial reload picks the
+	// fresh snapshot up.
+	if _, exists := r.store.Get(ctxcore.KeyConnectionsStore, archiveTag); exists {
+		if err := r.store.TableRemove(ctxcore.KeyConnectionsStore, archiveTag); err != nil {
+			return err
+		}
+		r.store.Notify(ctxcore.KeyConnectionsStore)
+	}
+	_, err := r.store.Set(ctxcore.KeyConnectionsStore, archiveTag, "host", archive)
 	return err
 }
 
@@ -165,9 +182,11 @@ func (r *Runner) Launch(pluginPath string) error {
 		r.deadOnce.Do(func() { close(r.dead) })
 	}()
 
-	if f.State() != ctxcore.Active {
-		return fmt.Errorf("plugin %s did not activate: %s", banner.PluginID, f.Reason)
-	}
+	// AD-2: a plugin whose dependencies are missing is NOT a launch failure —
+	// its fiber sits Inactive with a reason, and the converge loop activates it
+	// the moment a provider satisfies the declaration. "Inactive 等待" is the
+	// unified semantics; an error here would make the consumer launch order
+	// matter, which Def 53/Thm 70 explicitly do not.
 	return nil
 }
 
@@ -250,7 +269,14 @@ func (r *Runner) validateFrame(banner workbench.Banner, frame workbench.EffectFr
 		// happen over channels after activation, behind Safe Mode).
 		return fmt.Errorf("%s: effect %q is an emission frame during load", workbench.CodeEmissionBlocked, frame.Tag)
 	}
-	if !provides[frame.Key] {
+	if !provides[frame.Key] && frame.Key != string(ctxcore.KeyNavNodes) {
+		// nav.nodes is the HOST-OWNED shared UI table: every plugin registers its
+		// own tabs into it, distinguished by unique TAGS (the commutative-table
+		// discipline — two plugins' tab registrations commute, either withdraws
+		// while the other stands). The single-source discipline does NOT apply:
+		// the provider of record is the HOST (root-side, like connections.store),
+		// and a plugin's effect frames are writes the host mediates, not
+		// provisions. Every OTHER key requires the plugin to declare it.
 		return fmt.Errorf("%s: effect %q writes key %q the plugin does not declare", workbench.CodeUndeclared, frame.Tag, frame.Key)
 	}
 	switch frame.Inverse {

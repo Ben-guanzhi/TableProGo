@@ -76,7 +76,6 @@ func main() {
 				Depends: []workbench.Capability{{Key: "connections.store", Commutative: true}},
 				Provides: []workbench.Capability{
 					{Key: "terminal.channels", Commutative: true},
-					{Key: "nav.nodes", Commutative: true},
 					{Key: "files.session", Commutative: true},
 				},
 			}, "", "")

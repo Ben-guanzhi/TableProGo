@@ -72,12 +72,39 @@ func serveWorkbenchSFTPConn(conn net.Conn, cfg *ssh.ServerConfig, rootDir string
 		}
 		go func(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			defer ch.Close()
+			var echoStarted bool
 			for req := range reqs {
-				ok := req.Type == "subsystem" && parseWorkbenchSub(req.Payload) == "sftp"
+				ok := false
+				switch req.Type {
+				case "subsystem":
+					// RFC 4254: the payload is a name-prefixed string; "sftp" is
+					// the one subsystem this fixture serves.
+					ok = parseWorkbenchSub(req.Payload) == "sftp"
+				case "pty-req", "shell", "window-change":
+					ok = true
+				}
 				if req.WantReply {
 					_ = req.Reply(ok, nil)
 				}
-				if ok {
+				if req.Type == "shell" && !echoStarted && ok {
+					// The provider's terminal test opens a PTY over this fixture;
+					// echo everything (the PTY pump just buffers it).
+					echoStarted = true
+					go func() {
+						buf := make([]byte, 4096)
+						for {
+							n, err := ch.Read(buf)
+							if n > 0 {
+								_, _ = ch.Write(buf[:n])
+							}
+							if err != nil {
+								return
+							}
+						}
+					}()
+					continue
+				}
+				if req.Type == "subsystem" && ok {
 					// Paths resolve against the server's working directory, pinned
 					// to the sandbox root, so the client's "./" stays inside.
 					server, err := sftp.NewServer(ch, sftp.WithServerWorkingDirectory(rootDir))

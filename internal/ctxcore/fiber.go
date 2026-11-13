@@ -76,6 +76,10 @@ type Fiber struct {
 func (f *Fiber) UID() string { return f.uid }
 func (f *Fiber) ID() string  { return f.comp.ID }
 
+// Comp returns the component's declaration (d, p) — the host's proxy switch
+// reads the DECLARED dependencies to enforce confinement at the access point.
+func (f *Fiber) Comp() Component { return f.comp }
+
 // View is a snapshot of the committed view, for tests and diagnostics.
 func (f *Fiber) View() map[Key]string {
 	f.mu.Lock()
@@ -313,6 +317,17 @@ func (s *Store) Settle() {
 		// 2) apply L-Unload to every Unloading fiber the guard frees (one pass).
 		unloaded := s.drainOnce()
 
+		// 2b) ACTIVATION SWEEP: refreshDeclaring only fires fibers that DECLARE
+		// the changed key — but a fiber whose target came from a key it does not
+		// declare in ITS OWN spec (a new provider's provision satisfied a
+		// DIFFERENT fiber's dependency) still needs its L-Begin. The Quiescent
+		// check below would see Inactive-with-target forever and stall. Sweep
+		// every fiber: refresh is IDEMPOTENT (Algorithm 3), so fibers whose view
+		// matches are untouched and the pass stays cheap.
+		if !unloaded {
+			s.refreshAll()
+		}
+
 		// 3) quiescence: nothing pending, nothing Unloading, every Active view
 		// matches its target → the converge loop is DONE (Thm 73: quiescence).
 		if s.Quiescent() {
@@ -334,6 +349,24 @@ func (s *Store) Settle() {
 		// Quiescent but keys kept arriving from a concurrent writer; loop again.
 	}
 	panic("ctxcore: settle did not quiesce within the pass bound (Thm 73 progress violated)")
+}
+
+// refreshAll refreshes EVERY fiber in the registry. The activation sweep of the
+// converge loop: notify's key-based dispatch misses a fiber whose dependency was
+// satisfied by a provider activating on a key the WAITING fiber never declared
+// directly (the waiting fiber's own declare list is what TargetView reads, but
+// the NOTIFY that woke this pass was the provider's provision key). Idempotent.
+func (s *Store) refreshAll() {
+	s.mu.Lock()
+	all := make([]*Fiber, 0, len(s.fibers))
+	for _, f := range s.fibers {
+		all = append(all, f)
+	}
+	s.mu.Unlock()
+	sort.Slice(all, func(i, j int) bool { return all[i].uid < all[j].uid })
+	for _, f := range all {
+		s.refresh(f)
+	}
 }
 
 // activatingCount reports how many fibers have their load iterator on the current
@@ -370,6 +403,10 @@ func (s *Store) drainOnce() bool {
 	return progressed
 }
 
+// RegistryDump is the public form of registryDump: hosts and tests dump the
+// full registry when a lifecycle does not go where they expected.
+func (s *Store) RegistryDump() string { return s.registryDump() }
+
 // registryDump renders the full registry for a stall diagnostic: every fiber's
 // id, uid, state, retirement flag, relied status and committed view.
 func (s *Store) registryDump() string {
@@ -395,8 +432,8 @@ func (s *Store) registryDump() string {
 			committed = fmt.Sprint(c.committed)
 		}
 		c.mu.Unlock()
-		detail = append(detail, fmt.Sprintf("%s[%s] state=%s retired=%v relied=%v committed=%s target=%v",
-			c.comp.ID, c.uid, state, c.Retired(), s.Relied(c.uid), committed, s.TargetView(c)))
+		detail = append(detail, fmt.Sprintf("%s[%s] state=%s retired=%v relied=%v reason=%q committed=%s target=%v",
+			c.comp.ID, c.uid, state, c.Retired(), s.Relied(c.uid), c.Reason, committed, s.TargetView(c)))
 	}
 	return strings.Join(detail, "; ")
 }
@@ -703,7 +740,13 @@ func (s *Store) refresh(f *Fiber) {
 
 	switch state {
 	case Inactive, Unloading:
-		if target != nil && !targetMatches {
+		// L-Begin fires when the target is NON-⊥, whatever the committed view
+		// holds: a fiber that has NEVER activated (committed=⊥) must activate
+		// the moment its dependencies appear, and a fiber reloading after a
+		// leave must NOT re-activate against the SAME view it just abandoned
+		// (that would fight its own unload). Hence: target non-nil AND
+		// (committed ⊥ OR target differs from committed).
+		if target != nil && (committed == nil || !targetMatches) {
 			s.activate(f, target)
 		}
 	case Active, Reloading:

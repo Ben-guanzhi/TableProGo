@@ -32,6 +32,10 @@ type proc struct {
 	rmu    sync.Mutex // serializes reads: bufio.Reader is not safe for concurrent use
 	nextID int64
 	idMu   sync.Mutex
+	// onPush handles a PUSH frame (the provider answering a forwarded proxy
+	// request): the frame's method names the push kind and its ID matches the
+	// pending consumer request. Nil = pushes are discarded (single-plugin).
+	onPush func(plugindriver.Response)
 
 	// deadCh closes when the process exits or a pipe breaks; exitErr records
 	// why. wait() runs the goroutine that closes it — the runner's death
@@ -157,7 +161,15 @@ func (p *proc) readLine(timeout time.Duration) (string, error) {
 }
 
 // call issues one request and reads exactly one response frame.
+//
+// A DEAD process fails immediately: an in-flight unload's inverse (a .tmp
+// discard, a recording stop) must not block 30s on a read that can never
+// complete — the unloader holds the converge loop, and one slow inverse would
+// stall it.
 func (p *proc) call(ctx context.Context, method string, params any, result any) error {
+	if p.Dead() {
+		return fmt.Errorf("%s: plugin process is dead", method)
+	}
 	p.idMu.Lock()
 	p.nextID++
 	id := p.nextID

@@ -93,6 +93,14 @@ type server struct {
 	seq      uint64
 	channels map[string]*channelHandle
 	files    map[string]*fileSession // files.session bindings (W-F1)
+	// sessionSSH* records the coordinates the LAST open used, so tunnel.proxy's
+	// answer (W-C1) tells the consumer how to reach the same chain. The
+	// password is deliberately NOT in this struct: the consumer re-auths with
+	// its own credential flow (AD-4's stdin-lend is the recorded follow-up).
+	sessionSSHHost    string
+	sessionSSHPort    int
+	sessionSSHUser    string
+	sessionSSHKeyFile string
 }
 
 // channelHandle is one open PTY. The pump goroutine fills the buffer from the
@@ -123,6 +131,16 @@ func (s *server) handle(out *bufio.Writer, wmu *sync.Mutex, req plugindriver.Req
 	switch req.Method {
 	case plugindriver.MethodPing:
 		send("pong", "", "")
+	case workbench.MethodProxyRequest:
+		// W-C1: the consumer's coeffect access, answered as a PUSH value frame
+		// (the host forwards it to the requesting plugin). handleProxy resolves
+		// the op against the session's recorded SSH coordinates.
+		resp := s.handleProxy(req)
+		frame, _ := json.Marshal(resp)
+		wmu.Lock()
+		fmt.Fprintf(out, "%s\n", frame)
+		out.Flush()
+		wmu.Unlock()
 	case workbench.MethodHello:
 		send(workbench.Banner{
 			Stream:     workbench.StreamFrameV1,
@@ -131,8 +149,8 @@ func (s *server) handle(out *bufio.Writer, wmu *sync.Mutex, req plugindriver.Req
 			Depends:    []workbench.Capability{{Key: "connections.store", Commutative: true}},
 			Provides: []workbench.Capability{
 				{Key: "terminal.channels", Commutative: true},
-				{Key: "nav.nodes", Commutative: true},
 				{Key: "files.session", Commutative: true},
+				{Key: "tunnel.proxy", Commutative: true},
 			},
 			Secrets: []string{"ssh.password"},
 		}, "", "")
@@ -234,6 +252,15 @@ func (s *server) openChannel(raw json.RawMessage) (string, string) {
 	if err := cfg.Validate(); err != nil {
 		return "", err.Error()
 	}
+	// Record the session's SSH coordinates for tunnel.proxy (W-C1): the provider
+	// answer tells the consumer how to reach the SAME chain. The password stays
+	// out of the record on purpose (AD-4).
+	s.mu.Lock()
+	s.sessionSSHHost = p.Host
+	s.sessionSSHPort = p.Port
+	s.sessionSSHUser = p.User
+	s.sessionSSHKeyFile = p.KeyFile
+	s.mu.Unlock()
 	clients, err := sshx.DialChain(cfg)
 	if err != nil {
 		return "", err.Error()
