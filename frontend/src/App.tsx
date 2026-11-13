@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiActivity, FiBookOpen, FiBox, FiCode, FiDownload, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiBookOpen, FiBox, FiCode, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -40,6 +40,8 @@ import TerminalPanel from './components/TerminalPanel';
 import FilesPanel from './components/FilesPanel';
 import MonitorPanel from './components/MonitorPanel';
 import ContainersPanel from './components/ContainersPanel';
+import MqttPanel from './components/MqttPanel';
+import NotesPanel from './components/NotesPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -210,6 +212,9 @@ function App() {
   const [showMonitor, setShowMonitor] = useState(false);
   // W-C1: containers over the ssh tunnel (second plugin, depends tunnel.proxy).
   const [showContainers, setShowContainers] = useState(false);
+  // W-Q1 / W-N1: the MQTT console (publish gated) and the host-local notes surface.
+  const [showMqtt, setShowMqtt] = useState(false);
+  const [showNotes, setShowNotes] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1947,6 +1952,22 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowMqtt(true)}
+              title="消息：MQTT 控制台（发布是发射，受 Safe Mode 扣留；订阅是获取）"
+              aria-label="消息工作台"
+            >
+              <FiMessageSquare size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowNotes(true)}
+              title="笔记：宿主本地文档（挂 nav.nodes）"
+              aria-label="笔记"
+            >
+              <FiFileText size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2391,6 +2412,14 @@ function App() {
 
       {showContainers && (
         <ContainersPanel onClose={() => setShowContainers(false)} />
+      )}
+
+      {showMqtt && (
+        <MqttPanel onClose={() => setShowMqtt(false)} />
+      )}
+
+      {showNotes && (
+        <NotesPanel onClose={() => setShowNotes(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (

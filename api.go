@@ -582,6 +582,10 @@ func (a *App) routes() *http.ServeMux {
 	// W-C1: containers ride the ssh tunnel (tunnel.proxy) — a SECOND plugin
 	// over the same store; the endpoint is absent unless both are loaded.
 	mux.HandleFunc("/api/workbench/containers", a.handleWorkbenchContainers)
+	// W-Q1: MQTT (publish gated behind Safe Mode, subscribe a tracked acquisition)
+	// + W-N1's host-local notes.
+	mux.HandleFunc("/api/workbench/mqtt", a.handleWorkbenchMQTT)
+	mux.HandleFunc("/api/workbench/notes", a.handleWorkbenchNotes)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

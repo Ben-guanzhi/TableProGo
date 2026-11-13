@@ -57,19 +57,25 @@ const (
 	KeyHostStats        Key = "host.stats"
 	KeyTunnelProxy      Key = "tunnel.proxy"
 	KeyMQTTSession      Key = "mqtt.session"
-	KeyContainerSession Key = "container.session"
-	KeyDesktopSession   Key = "desktop.session"
-	KeyAIProvider       Key = "ai.provider"
-	KeyMCPTools         Key = "mcp.tools"
-	KeyConnectionsStore Key = "connections.store" // single writer = the host kernel
-	KeySafeMode         Key = "safe.mode"         // INTERCEPTION key (Σinter), not an effect
+	// KeyMQTTSubscriptions is W-Q1's acquisition table: a subscription is a
+	// REVERSIBLE registration (unsubscribe removes the row), which is why it is a
+	// key with tags rather than plugin-internal state. Publishing is the emission
+	// side and has no row here — an emission is idΓ and is never tracked as an
+	// effect (AD-3).
+	KeyMQTTSubscriptions Key = "mqtt.subscriptions"
+	KeyContainerSession  Key = "container.session"
+	KeyDesktopSession    Key = "desktop.session"
+	KeyAIProvider        Key = "ai.provider"
+	KeyMCPTools          Key = "mcp.tools"
+	KeyConnectionsStore  Key = "connections.store" // single writer = the host kernel
+	KeySafeMode          Key = "safe.mode"         // INTERCEPTION key (Σinter), not an effect
 )
 
 // AllKeys is the full key surface, used by tests to assert recovery leaves nothing
 // behind (Cor 69: σ^{u+1}_n = ⌀).
 var AllKeys = []Key{
 	KeyNavNodes, KeyTerminalChannels, KeyFilesSession, KeyHostStats,
-	KeyTunnelProxy, KeyMQTTSession, KeyContainerSession, KeyDesktopSession,
+	KeyTunnelProxy, KeyMQTTSession, KeyMQTTSubscriptions, KeyContainerSession, KeyDesktopSession,
 	KeyAIProvider, KeyMCPTools, KeyConnectionsStore, KeySafeMode,
 }
 

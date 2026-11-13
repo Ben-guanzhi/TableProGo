@@ -218,3 +218,96 @@ export async function ContainerExecClose(channelId: string): Promise<void> {
 export async function CloseContainerSession(session: string): Promise<void> {
   await post('/api/workbench/containers', { action: 'close', session });
 }
+
+// W-Q1: MQTT. Publish is an EMISSION held behind Safe Mode: the gated call answers
+// {withheld:true} and the UI re-posts through `publish-confirmed` — the same
+// separate-endpoint discipline as the terminal broadcast.
+
+export interface MqttMessage {
+  topic: string;
+  payload: string;
+  at: string;
+}
+
+export interface MqttPublishResult {
+  withheld?: boolean;
+  published?: boolean;
+  topic?: string;
+  payload?: string;
+  bytes?: number;
+  warning?: string;
+}
+
+export interface MqttSubscription {
+  tag: string;
+  topic?: string;
+}
+
+export async function OpenMqttSession(params: {
+  host: string;
+  port: number;
+  user?: string;
+  password?: string;
+}): Promise<{ sessionId: string }> {
+  return post('/api/workbench/mqtt', { action: 'open', ...params });
+}
+
+export async function SubscribeTopic(session: string, topic: string): Promise<{ subscriptions: MqttSubscription[] }> {
+  return post('/api/workbench/mqtt', { action: 'subscribe', session, topic });
+}
+
+export async function UnsubscribeTopic(
+  session: string,
+  topic: string,
+): Promise<{ subscriptions: MqttSubscription[] }> {
+  return post('/api/workbench/mqtt', { action: 'unsubscribe', session, topic });
+}
+
+export async function ListMqttSubscriptions(session: string): Promise<{ subscriptions: MqttSubscription[] }> {
+  return post('/api/workbench/mqtt', { action: 'subscriptions', session });
+}
+
+export async function PublishTopic(
+  session: string,
+  topic: string,
+  payload: string,
+  confirmed = false,
+): Promise<MqttPublishResult> {
+  return post('/api/workbench/mqtt', {
+    action: confirmed ? 'publish-confirmed' : 'publish',
+    session,
+    topic,
+    payload,
+  });
+}
+
+export async function MqttMessages(
+  session: string,
+  since: number,
+): Promise<{ messages: MqttMessage[]; next: number; total: number }> {
+  return post('/api/workbench/mqtt', { action: 'messages', session, since });
+}
+
+export async function CloseMqttSession(session: string): Promise<void> {
+  await post('/api/workbench/mqtt', { action: 'close', session });
+}
+
+// W-N1: notes are host-local documents (no plugin, no key surface beyond the tab).
+export interface Note {
+  id: string;
+  title: string;
+  body: string;
+  updated: string;
+}
+
+export async function ListNotes(): Promise<Note[]> {
+  return post('/api/workbench/notes', { action: 'list' });
+}
+
+export async function SaveNote(n: { id?: string; title?: string; body: string }): Promise<Note> {
+  return post('/api/workbench/notes', { action: 'save', ...n });
+}
+
+export async function DeleteNote(id: string): Promise<void> {
+  await post('/api/workbench/notes', { action: 'delete', id });
+}

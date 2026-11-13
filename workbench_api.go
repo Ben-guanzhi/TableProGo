@@ -581,3 +581,141 @@ func (a *App) handleWorkbenchContainers(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "unknown containers action "+body.Action)
 	}
 }
+
+// ---------- W-Q1: MQTT (publish = emission, subscribe = acquisition) ----------
+
+// workbenchMQTTRequest drives the MQTT console. publish is GATED: it answers
+// {withheld:true} under Safe Mode and the confirm is publish-confirmed, a separate
+// action — never a flag on the gated path.
+type workbenchMQTTRequest struct {
+	Action   string `json:"action"` // open|subscribe|unsubscribe|publish|publish-confirmed|messages|close|subscriptions
+	Host     string `json:"host,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+	Session  string `json:"session,omitempty"`
+	Topic    string `json:"topic,omitempty"`
+	Payload  string `json:"payload,omitempty"`
+	Since    int    `json:"since,omitempty"`
+}
+
+func (a *App) handleWorkbenchMQTT(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body workbenchMQTTRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "open":
+		// AD-4: the password is lent; an empty one opens anonymously.
+		id, err := runner.OpenMQTTSession(body.Host, body.Port, body.User,
+			"mqtt.password", []byte(body.Password))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"sessionId": id})
+	case "subscribe":
+		// The ACQUISITION: a reversible row at mqtt.subscriptions.
+		if err := runner.SubscribeTopic(body.Session, body.Topic); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "subscriptions": runner.MQTTSubscriptions()})
+	case "unsubscribe":
+		if err := runner.UnsubscribeTopic(body.Session, body.Topic); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true, "subscriptions": runner.MQTTSubscriptions()})
+	case "subscriptions":
+		writeJSON(w, map[string]any{"subscriptions": runner.MQTTSubscriptions()})
+	case "publish":
+		res, err := runner.PublishTopic(body.Session, body.Topic, body.Payload)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, res)
+	case "publish-confirmed":
+		// The separate confirm path: the operator confirmed THIS emission.
+		res, err := runner.PublishConfirmed(body.Session, body.Topic, body.Payload)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, res)
+	case "messages":
+		rows, next, total, err := runner.MQTTMessages(body.Session, body.Since)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"messages": rows, "next": next, "total": total})
+	case "close":
+		if err := runner.CloseMQTTSession(body.Session); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown MQTT action "+body.Action)
+	}
+}
+
+// ---------- W-N1: notes (host-local documents) ----------
+
+// workbenchNotesRequest is the note CRUD surface. Notes are host-local: no plugin,
+// no key surface beyond the nav node that announces the tab.
+type workbenchNotesRequest struct {
+	Action string `json:"action"` // list|save|delete
+	ID     string `json:"id,omitempty"`
+	Title  string `json:"title,omitempty"`
+	Body   string `json:"body,omitempty"`
+}
+
+func (a *App) handleWorkbenchNotes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body workbenchNotesRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "list":
+		notes, err := workbenchhost.ListNotes()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, notes)
+	case "save":
+		n, err := workbenchhost.SaveNote(workbenchhost.Note{
+			ID: body.ID, Title: body.Title, Body: body.Body,
+		})
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, n)
+	case "delete":
+		if err := workbenchhost.DeleteNote(body.ID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown notes action "+body.Action)
+	}
+}

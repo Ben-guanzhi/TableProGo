@@ -31,25 +31,30 @@ import (
 	"tablepro-go/internal/ctxcore"
 )
 
-func buildNavopContainers(t *testing.T) string {
+// buildPluginModule builds one plugin's own Go module into a temp binary. Each
+// workbench plugin is a separate module (its own go.mod + replace directives), so
+// `go build` must run INSIDE the plugin directory — the host module does not
+// contain those packages.
+func buildPluginModule(t *testing.T, name string) string {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := t.TempDir()
-	binary := filepath.Join(dir, "navop-containers")
+	binary := filepath.Join(t.TempDir(), name)
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
-	// Its own module: build in the plugin's directory.
-	pluginDir := filepath.Join(root, "plugins", "navop-containers")
 	cmd := exec.Command("go", "build", "-o", binary, ".")
-	cmd.Dir = pluginDir
+	cmd.Dir = filepath.Join(root, "plugins", name)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build navop-containers: %v\n%s", err, out)
+		t.Fatalf("build %s: %v\n%s", name, err, out)
 	}
 	return binary
+}
+
+func buildNavopContainers(t *testing.T) string {
+	return buildPluginModule(t, "navop-containers")
 }
 
 func TestConsumerWaitsInactiveWithoutProvider(t *testing.T) {

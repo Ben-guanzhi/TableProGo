@@ -125,6 +125,12 @@ func (s *Store) Sigma() map[Key][]Binding {
 			active[f.uid] = true
 		}
 	}
+	// THE HOST IS THE ROOT-SIDE PROVIDER (same exception providerOf documents):
+	// bindings the host installed itself ("host") are always available because the
+	// host is always running. Without this, a host-owned node — the notes tab, the
+	// connections archive — would exist in the table yet be invisible to every
+	// reader of σ, which is precisely the "host is not a fiber" gap.
+	active["host"] = true
 	out := map[Key][]Binding{}
 	for _, k := range AllKeys {
 		bindings := s.table(k).snapshot()
