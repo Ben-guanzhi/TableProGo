@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiActivity, FiBookOpen, FiBox, FiCode, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -43,6 +43,7 @@ import ContainersPanel from './components/ContainersPanel';
 import MqttPanel from './components/MqttPanel';
 import NotesPanel from './components/NotesPanel';
 import DesktopPanel from './components/DesktopPanel';
+import AiProviderPanel from './components/AiProviderPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -218,6 +219,8 @@ function App() {
   const [showNotes, setShowNotes] = useState(false);
   // W-D1: remote desktops (RDP emission with file compensation, VNC channel relay).
   const [showDesktop, setShowDesktop] = useState(false);
+  // W-A1/A2: the assistant (host-privileged context, forced SQL preview).
+  const [showAI, setShowAI] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1979,6 +1982,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowAI(true)}
+              title="AI 提供商：上下文由宿主附加，SQL 只预览不执行"
+              aria-label="AI 助手"
+            >
+              <FiCpu size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2435,6 +2446,10 @@ function App() {
 
       {showDesktop && (
         <DesktopPanel onClose={() => setShowDesktop(false)} />
+      )}
+
+      {showAI && (
+        <AiProviderPanel onClose={() => setShowAI(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (

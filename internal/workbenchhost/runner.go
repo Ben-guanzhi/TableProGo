@@ -68,6 +68,13 @@ type Runner struct {
 	// secrets (AD-4): the erasure receipt log. Names only — an erasure log that
 	// stored the value would defeat the erasure it records.
 	secrets secretLog
+
+	// scrollback (W-A1): a bounded per-channel tail of terminal output. It exists
+	// so the HOST can quote "the last N lines" into an AI context — the plan's
+	// "只有宿主读得到全部键面". Bounded by design: a chatty session must not grow the
+	// process, and a model does not need more than the tail anyway.
+	tailMu sync.Mutex
+	tail   map[string]*scrollback
 }
 
 // New returns a runner over a fresh context store. The store may already carry
@@ -79,6 +86,7 @@ func New(store *ctxcore.Store) *Runner {
 		dead:       make(chan struct{}),
 		recordings: map[string]*recordingState{},
 		monitors:   map[string]*monitor{},
+		tail:       map[string]*scrollback{},
 	}
 }
 
@@ -101,6 +109,10 @@ func (r *Runner) ProvideConnectionsArchive(archive any) error {
 	_, err := r.store.Set(ctxcore.KeyConnectionsStore, archiveTag, "host", archive)
 	return err
 }
+
+// Store is the context store this runner registered its fiber in. The API layer
+// needs it for the aggregate tables (mcp.tools, desktop.session, …).
+func (r *Runner) Store() *ctxcore.Store { return r.store }
 
 // Fiber returns the live fiber (nil before the first Launch).
 func (r *Runner) Fiber() *ctxcore.Fiber {
@@ -377,6 +389,10 @@ func (r *Runner) WriteChannel(channelID, input string, maxBytes int) (string, bo
 	r.recordChannelFrame(channelID, "i", input)
 	if res.Output != "" {
 		r.recordChannelFrame(channelID, "o", res.Output)
+		// W-A1: the host keeps a bounded tail so the AI context referencer can
+		// quote "the last N lines" without asking the plugin (and without the
+		// model ever touching a channel directly).
+		r.appendScrollback(channelID, res.Output)
 	}
 	if res.Ended {
 		r.stopRecordingsFor(channelID)

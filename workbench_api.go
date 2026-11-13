@@ -744,6 +744,115 @@ func (a *App) handleWorkbenchDesktop(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ---------- W-A1/A2: AI provider, host-privileged context, forced preview ----------
+
+// workbenchAIRequest drives the assistant. The nl2sql action takes NO execute
+// field on purpose: the response is a PREVIEW and running it is the editor's job
+// through the normal confirm path. A request that carries `execute` is REFUSED
+// rather than ignored, so a client cannot believe it ran something.
+type workbenchAIRequest struct {
+	Action   string                    `json:"action"` // open|chat|nl2sql|providers
+	BaseURL  string                    `json:"baseUrl,omitempty"`
+	Model    string                    `json:"model,omitempty"`
+	APIKey   string                    `json:"apiKey,omitempty"`
+	Session  string                    `json:"session,omitempty"`
+	Messages []workbenchhost.AIMessage `json:"messages,omitempty"`
+	Question string                    `json:"question,omitempty"`
+	Dialect  string                    `json:"dialect,omitempty"`
+	Context  workbenchhost.AIContext   `json:"context,omitempty"`
+	// Execute is accepted only to be REFUSED with a message; see the handler.
+	Execute bool `json:"execute,omitempty"`
+}
+
+func (a *App) handleWorkbenchAI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body workbenchAIRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "open":
+		// AD-4: the API key is lent; a local gateway needs none.
+		p, err := runner.OpenAIProvider(body.BaseURL, body.Model, "ai.apiKey", []byte(body.APIKey))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, p)
+	case "providers":
+		writeJSON(w, map[string]any{"providers": runner.AIProviders()})
+	case "chat":
+		text, err := runner.AIChat(body.Session, body.Messages, body.Context)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]string{"text": text})
+	case "nl2sql":
+		if body.Execute {
+			// The refusal is the feature: there is no execute path from this
+			// endpoint, and saying so is better than silently downgrading.
+			writeError(w, http.StatusBadRequest,
+				"NL→SQL 只返回预览，不执行：请把生成的 SQL 放进编辑器，再走确认路径执行")
+			return
+		}
+		res, err := runner.AINL2SQL(body.Session, body.Question, body.Dialect, body.Context)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, res)
+	default:
+		writeError(w, http.StatusBadRequest, "unknown AI action "+body.Action)
+	}
+}
+
+// handleWorkbenchMCPTools lists the aggregate mcp.tools table and answers the
+// permission gate for one call. The gate is what a caller must consult before
+// invoking a tool: withheld means "re-post through the confirmed path".
+func (a *App) handleWorkbenchMCPTools(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body struct {
+		Action    string `json:"action"` // list|gate
+		Name      string `json:"name,omitempty"`
+		Confirmed bool   `json:"confirmed,omitempty"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "list":
+		writeJSON(w, map[string]any{"tools": runner.MCPTools()})
+	case "gate":
+		level, allowed, withheld, err := runner.ToolGate(body.Name, body.Confirmed)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{
+			"level": string(level), "allowed": allowed, "withheld": withheld,
+		})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown mcptools action "+body.Action)
+	}
+}
+
 // ---------- W-N1: notes (host-local documents) ----------
 // workbenchNotesRequest is the note CRUD surface. Notes are host-local: no plugin,
 // no key surface beyond the nav node that announces the tab.

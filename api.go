@@ -588,6 +588,10 @@ func (a *App) routes() *http.ServeMux {
 	mux.HandleFunc("/api/workbench/notes", a.handleWorkbenchNotes)
 	// W-D1: remote desktops (RDP emission with .rdp file compensation, VNC channel relay).
 	mux.HandleFunc("/api/workbench/desktop", a.handleWorkbenchDesktop)
+	// W-A1/A2: the assistant (host-privileged context, forced SQL preview, and the
+	// mcp.tools permission table it consults).
+	mux.HandleFunc("/api/workbench/ai", a.handleWorkbenchAI)
+	mux.HandleFunc("/api/workbench/mcptools", a.handleWorkbenchMCPTools)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

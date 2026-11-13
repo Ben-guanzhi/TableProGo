@@ -353,3 +353,63 @@ export async function CloseDesktopSession(session: string): Promise<void> {
 export async function DesktopState(): Promise<{ sessions: DesktopRow[] }> {
   return post('/api/workbench/desktop', { action: 'state' });
 }
+
+// W-A1/A2: the assistant. The CONTEXT is assembled by the HOST (schema / terminal
+// tail / notes / file snippet) — the panel only says which sources to attach. NL→SQL
+// returns a PREVIEW: there is no execute call here, and the host refuses one.
+
+export interface AIContext {
+  schema?: string;
+  terminal?: string;
+  notes?: string;
+  file?: string;
+}
+
+export interface AIProviderInfo {
+  session: string;
+  model: string;
+  baseUrl: string;
+}
+
+export interface AISQL {
+  sql: string;
+  explanation: string;
+  preview: boolean;
+  source: string;
+}
+
+export interface MCPTool {
+  name: string;
+  level: 'safe' | 'confirm' | 'auto';
+  description?: string;
+  owner?: string;
+}
+
+export async function OpenAIProvider(params: {
+  baseUrl?: string;
+  model?: string;
+  apiKey?: string;
+}): Promise<AIProviderInfo> {
+  return post('/api/workbench/ai', { action: 'open', ...params });
+}
+
+export async function AIChat(
+  session: string,
+  messages: { role: string; content: string }[],
+  ctx: AIContext,
+): Promise<{ text: string }> {
+  return post('/api/workbench/ai', { action: 'chat', session, messages, context: ctx });
+}
+
+export async function AINL2SQL(
+  session: string,
+  question: string,
+  ctx: AIContext,
+  dialect?: string,
+): Promise<AISQL> {
+  return post('/api/workbench/ai', { action: 'nl2sql', session, question, context: ctx, dialect });
+}
+
+export async function ListMCPTools(): Promise<{ tools: MCPTool[] }> {
+  return post('/api/workbench/mcptools', { action: 'list' });
+}
