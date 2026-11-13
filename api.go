@@ -592,6 +592,10 @@ func (a *App) routes() *http.ServeMux {
 	// mcp.tools permission table it consults).
 	mux.HandleFunc("/api/workbench/ai", a.handleWorkbenchAI)
 	mux.HandleFunc("/api/workbench/mcptools", a.handleWorkbenchMCPTools)
+	// W-S1: the extension catalog (digest-verified install) and team sync
+	// (manifest + scrubbed archive only, LWW with conflict copies).
+	mux.HandleFunc("/api/workbench/extensions", a.handleWorkbenchExtensions)
+	mux.HandleFunc("/api/workbench/sync", a.handleWorkbenchSync)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`

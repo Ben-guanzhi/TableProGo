@@ -853,6 +853,134 @@ func (a *App) handleWorkbenchMCPTools(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ---------- W-S1: extensions (catalog + install) and team sync ----------
+
+// workbenchExtensionsRequest drives the extensions page: fetch a catalog (Git raw /
+// WebDAV both serve JSON over HTTP), list what is installed, install one entry by
+// its digest-verified binary.
+type workbenchExtensionsRequest struct {
+	Action string `json:"action"` // catalog|installed|install|rows
+	URL    string `json:"url,omitempty"`
+	Entry  string `json:"entry,omitempty"` // entry id to install
+}
+
+func (a *App) handleWorkbenchExtensions(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body workbenchExtensionsRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "catalog":
+		cat, err := workbenchhost.FetchCatalog(r.Context(), body.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		installed, err := workbenchhost.LoadInstalled(workbenchhost.PluginsDir())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"rows": workbenchhost.Classify(cat, installed)})
+	case "installed":
+		installed, err := workbenchhost.LoadInstalled(workbenchhost.PluginsDir())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"installed": installed})
+	case "install":
+		cat, err := workbenchhost.FetchCatalog(r.Context(), body.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		var chosen *workbenchhost.CatalogEntry
+		for i := range cat.Entries {
+			if cat.Entries[i].ID == body.Entry {
+				chosen = &cat.Entries[i]
+				break
+			}
+		}
+		if chosen == nil {
+			writeError(w, http.StatusBadRequest, "目录里没有条目 "+body.Entry)
+			return
+		}
+		local, err := workbenchhost.InstallEntry(r.Context(), *chosen, workbenchhost.PluginsDir())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{
+			"installed": local,
+			"notice":    "已按摘要校验安装。加载需要把插件路径写进对应的 TABLEPRO_WORKBENCH_* 环境变量后重启宿主。",
+		})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown extensions action "+body.Action)
+	}
+}
+
+// workbenchSyncRequest drives team sync: pull/merge/push one document.
+type workbenchSyncRequest struct {
+	Action string `json:"action"` // pull|push
+	URL    string `json:"url,omitempty"`
+}
+
+func (a *App) handleWorkbenchSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var body workbenchSyncRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// The LOCAL document: the host's own connections (scrubbed) + installed plugins.
+	installed, err := workbenchhost.LoadInstalled(workbenchhost.PluginsDir())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	local := workbenchhost.BuildSyncDoc(a.connectionsArchive(), installed)
+
+	switch body.Action {
+	case "pull":
+		remote, err := workbenchhost.SyncPull(r.Context(), body.URL)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		winner, conflict := workbenchhost.MergeSync(local, remote)
+		resp := map[string]any{
+			"document": winner,
+			"conflict": conflict,
+			"local":    local,
+			"notice":   "只同步插件清单与连接档案（秘密为 ref，永不外传）。LWW 按 updatedAt。",
+		}
+		if conflict {
+			// The loser is preserved, never overwritten in place.
+			if path, perr := workbenchhost.WriteConflictCopy(workbenchhost.PluginsDir(), remote); perr == nil {
+				resp["conflictCopy"] = path
+			}
+		}
+		writeJSON(w, resp)
+	case "push":
+		if err := workbenchhost.SyncPush(r.Context(), body.URL, local); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"pushed": true, "document": local})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown sync action "+body.Action)
+	}
+}
+
 // ---------- W-N1: notes (host-local documents) ----------
 // workbenchNotesRequest is the note CRUD surface. Notes are host-local: no plugin,
 // no key surface beyond the nav node that announces the tab.

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiActivity, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiPackage, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -44,6 +44,7 @@ import MqttPanel from './components/MqttPanel';
 import NotesPanel from './components/NotesPanel';
 import DesktopPanel from './components/DesktopPanel';
 import AiProviderPanel from './components/AiProviderPanel';
+import ExtensionsPanel from './components/ExtensionsPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -221,6 +222,8 @@ function App() {
   const [showDesktop, setShowDesktop] = useState(false);
   // W-A1/A2: the assistant (host-privileged context, forced SQL preview).
   const [showAI, setShowAI] = useState(false);
+  // W-S1: extension catalog + team sync.
+  const [showExtensions, setShowExtensions] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1990,6 +1993,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowExtensions(true)}
+              title="扩展：目录安装（摘要校验）+ 团队同步（秘密为 ref）"
+              aria-label="扩展"
+            >
+              <FiPackage size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2450,6 +2461,10 @@ function App() {
 
       {showAI && (
         <AiProviderPanel onClose={() => setShowAI(false)} />
+      )}
+
+      {showExtensions && (
+        <ExtensionsPanel onClose={() => setShowExtensions(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (

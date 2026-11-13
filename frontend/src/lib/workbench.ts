@@ -413,3 +413,45 @@ export async function AINL2SQL(
 export async function ListMCPTools(): Promise<{ tools: MCPTool[] }> {
   return post('/api/workbench/mcptools', { action: 'list' });
 }
+
+// W-S1: extensions (catalog over Git raw / WebDAV, digest-verified install) and
+// team sync (manifest + scrubbed archive; secrets never leave the machine).
+
+export interface ExtensionRow {
+  id: string;
+  name: string;
+  version: string;
+  digest: string;
+  url: string;
+  description?: string;
+  state: 'installable' | 'installed' | 'updatable';
+  localVersion?: string;
+}
+
+export interface SyncDoc {
+  version: number;
+  updatedAt: string;
+  connections: Record<string, unknown>[];
+  plugins: { id: string; version: string; digest: string }[];
+}
+
+export async function FetchExtensions(url: string): Promise<{ rows: ExtensionRow[] }> {
+  return post('/api/workbench/extensions', { action: 'catalog', url });
+}
+
+export async function InstallExtension(url: string, entry: string): Promise<{ notice: string }> {
+  return post('/api/workbench/extensions', { action: 'install', url, entry });
+}
+
+export async function SyncPull(url: string): Promise<{
+  document: SyncDoc;
+  conflict: boolean;
+  conflictCopy?: string;
+  notice: string;
+}> {
+  return post('/api/workbench/sync', { action: 'pull', url });
+}
+
+export async function SyncPush(url: string): Promise<{ pushed: boolean; document: SyncDoc }> {
+  return post('/api/workbench/sync', { action: 'push', url });
+}
