@@ -46,11 +46,11 @@ func TestFKValuesQueryPerDialect(t *testing.T) {
 		dbType string
 		want   string
 	}{
-		{"sqlite", `SELECT DISTINCT "id", "name" FROM "parent" ORDER BY "id" LIMIT 200`},
-		{"mysql", "SELECT DISTINCT `id`, `name` FROM `shop`.`parent` ORDER BY `id` LIMIT 200"},
-		{"postgresql", `SELECT DISTINCT "id", "name" FROM "public"."parent" ORDER BY "id" LIMIT 200`},
-		{"sqlserver", `SELECT DISTINCT [id], [name] FROM [db].[dbo].[parent] ORDER BY [id] OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY`},
-		{"oracle", `SELECT DISTINCT "id", "name" FROM "parent" ORDER BY "id" OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY`},
+		{"sqlite", `SELECT DISTINCT "id", "name" FROM "parent" WHERE "id" IS NOT NULL ORDER BY "id" LIMIT 200`},
+		{"mysql", "SELECT DISTINCT `id`, `name` FROM `shop`.`parent` WHERE `id` IS NOT NULL ORDER BY `id` LIMIT 200"},
+		{"postgresql", `SELECT DISTINCT "id", "name" FROM "public"."parent" WHERE "id" IS NOT NULL ORDER BY "id" LIMIT 200`},
+		{"sqlserver", `SELECT DISTINCT [id], [name] FROM [db].[dbo].[parent] WHERE [id] IS NOT NULL ORDER BY [id] OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY`},
+		{"oracle", `SELECT DISTINCT "id", "name" FROM "parent" WHERE "id" IS NOT NULL ORDER BY "id" OFFSET 0 ROWS FETCH NEXT 200 ROWS ONLY`},
 	}
 
 	for _, tc := range cases {
@@ -85,7 +85,7 @@ func TestFKValuesQueryWithoutALabelColumn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query: %v", err)
 	}
-	if query != `SELECT DISTINCT "id" FROM "parent" ORDER BY "id" LIMIT 50` {
+	if query != `SELECT DISTINCT "id" FROM "parent" WHERE "id" IS NOT NULL ORDER BY "id" LIMIT 50` {
 		t.Errorf("unexpected query: %s", query)
 	}
 }
@@ -189,6 +189,100 @@ func TestForeignKeyValuesReportsTruncation(t *testing.T) {
 	}
 	if !got.Truncated || len(got.Values) != 2 {
 		t.Errorf("want 2 values marked truncated, got %+v", got)
+	}
+}
+
+// A table holding exactly `limit` distinct keys is complete, not truncated:
+// the old `>= limit` judgment claimed more values existed, so the picker
+// showed its "只读了前 N 条" note over a full list. (P2-5)
+func TestForeignKeyValuesExactlyAtLimitIsNotTruncated(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE parent (id integer primary key, name text)`); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	if _, err := conn.DB.Exec(`CREATE TABLE child (id integer primary key, parent_id integer references parent(id))`); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO parent (id, name) VALUES (1, 'a'), (2, 'b'), (3, 'c')`); err != nil {
+		t.Fatalf("insert parents: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO child (id, parent_id) VALUES (1, 1)`); err != nil {
+		t.Fatalf("insert child: %v", err)
+	}
+
+	got, err := searchApp(conn).ForeignKeyValues(conn.ID, "", "", "child", "parent_id", 3)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if got.Truncated {
+		t.Errorf("exactly `limit` keys must not read as truncated: %+v", got)
+	}
+	if len(got.Values) != 3 {
+		t.Errorf("want all 3 values, got %+v", got.Values)
+	}
+}
+
+// A NULL in the referenced key column must not occupy a probe slot. The old
+// plain-LIMIT window over a key column holding NULL started with the NULL row
+// (NULLs sort first on SQLite and PostgreSQL): the client dropped it, so a
+// real key silently vanished from a list that carried no truncation note. The
+// query's IS NOT NULL filter makes every fetched row a value the grid can
+// show. The reference here targets a nullable UNIQUE column — a primary key
+// never holds NULL — so the candidate stream itself contains the NULL.
+func TestForeignKeyValuesNullKeyDoesNotDisplaceCandidates(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE parent (id integer primary key, code integer unique, name text)`); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	if _, err := conn.DB.Exec(`CREATE TABLE child (id integer primary key, parent_code integer references parent(code))`); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO parent (id, code, name) VALUES (1, NULL, 'a'), (2, 7, 'b'), (3, 8, 'c')`); err != nil {
+		t.Fatalf("insert parents: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO child (id, parent_code) VALUES (10, 7), (11, 8)`); err != nil {
+		t.Fatalf("insert child: %v", err)
+	}
+
+	got, err := searchApp(conn).ForeignKeyValues(conn.ID, "", "", "child", "parent_code", 2)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if got.Truncated {
+		t.Errorf("all non-NULL keys fetched must not read as truncated: %+v", got)
+	}
+	if len(got.Values) != 2 || got.Values[0].Value != "7" || got.Values[1].Value != "8" {
+		t.Errorf("NULL must not displace a candidate, got %+v", got.Values)
+	}
+}
+
+// With a NULL in the referenced key column and one key past the limit,
+// truncation still fires and the shown list carries `limit` real values —
+// the NULL never counts toward the cap.
+func TestForeignKeyValuesNullKeyStillTruncatesPastLimit(t *testing.T) {
+	conn := sqliteDB(t, "conn_0", "scratch")
+	if _, err := conn.DB.Exec(`CREATE TABLE parent (id integer primary key, code integer unique, name text)`); err != nil {
+		t.Fatalf("create parent: %v", err)
+	}
+	if _, err := conn.DB.Exec(`CREATE TABLE child (id integer primary key, parent_code integer references parent(code))`); err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO parent (id, code, name) VALUES (1, NULL, 'a'), (2, 7, 'b'), (3, 8, 'c'), (4, 9, 'd')`); err != nil {
+		t.Fatalf("insert parents: %v", err)
+	}
+	if _, err := conn.DB.Exec(`INSERT INTO child (id, parent_code) VALUES (10, 7)`); err != nil {
+		t.Fatalf("insert child: %v", err)
+	}
+
+	got, err := searchApp(conn).ForeignKeyValues(conn.ID, "", "", "child", "parent_code", 2)
+	if err != nil {
+		t.Fatalf("candidates: %v", err)
+	}
+	if !got.Truncated {
+		t.Errorf("a key past the limit must read as truncated even with a NULL present: %+v", got)
+	}
+	if len(got.Values) != 2 || got.Values[0].Value != "7" || got.Values[1].Value != "8" {
+		t.Errorf("want the first 2 non-NULL keys, got %+v", got.Values)
 	}
 }
 

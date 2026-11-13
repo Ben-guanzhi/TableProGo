@@ -171,7 +171,11 @@ func (a *App) ForeignKeyValues(connID, database, schema, table, column string, l
 		labelColumn = pickLabelColumn(columns, refColumn)
 	}
 
-	query, err := fkValuesQuery(conn.Type, name, refColumn, labelColumn, limit)
+	// One row past the shown limit is the truncation probe — the same shape
+	// the buffered query path uses (query.go): a window that comes back full
+	// proves a value exists past the ones the picker displays, a shorter
+	// window proves every candidate was fetched.
+	query, err := fkValuesQuery(conn.Type, name, refColumn, labelColumn, limit+1)
 	if err != nil {
 		return ForeignKeyCandidates{}, err
 	}
@@ -206,14 +210,21 @@ func (a *App) ForeignKeyValues(connID, database, schema, table, column string, l
 		values = append(values, ForeignKeyValue{Value: value, Label: label})
 	}
 
+	// The query filters NULL keys, so every returned row is a value the grid
+	// can show — "more distinct values were fetched than are shown" is
+	// exactly "more values exist", and a table with exactly `limit` keys no
+	// longer reads as truncated (the old `>= limit` judgment claimed more
+	// values existed when the list was already complete).
+	truncated := len(values) > limit
+	if truncated {
+		values = values[:limit]
+	}
+
 	return ForeignKeyCandidates{
 		RefTable:    fk.RefTable,
 		RefColumn:   refColumn,
 		LabelColumn: labelColumn,
 		Values:      values,
-		// The query stopped at `limit` raw rows; after de-duplication fewer
-		// distinct values may remain, so truncation is judged on what the
-		// user actually sees.
-		Truncated: len(values) >= limit,
+		Truncated:   truncated,
 	}, nil
 }

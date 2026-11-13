@@ -133,10 +133,11 @@ type App struct {
 	apiToken string
 
 	// httpGate is a semaphore limiting in-flight HTTP requests. Created with
-	// the app, not lazily: a lazy init inside the handler would race when two
-	// requests arrive before the first server response (both could observe
-	// nil and create two channels).
-	httpGate chan struct{}
+	// the app, and guarded by httpGateOnce for literal-built Apps (tests) that
+	// skip newAppWithPaths: a lazy init inside the handler without the Once
+	// would let two requests observe nil and create two channels (NF-3).
+	httpGate     chan struct{}
+	httpGateOnce sync.Once
 }
 
 // AppSettings holds UI preferences, persisted next to the connection store.

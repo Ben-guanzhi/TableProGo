@@ -516,12 +516,18 @@ function App() {
   // txPending records the op in flight per tab; a click while one is pending is
   // ignored and the buttons are disabled for the same reason.
   const [txPending, setTxPending] = useState<Record<string, TxOp | null>>({});
+  // Transaction-level isolation override (TXN-03): '' keeps the connection's
+  // configured level. Read at Begin so the picker can change between
+  // transactions without touching the saved connection.
+  const [txIsolation, setTxIsolation] = useState('');
   const txHandlers = (tab: Tab) => ({
     txActive: !!tab.txStatus,
     txStatus: tab.txStatus ?? '',
     txRemainingMs: tab.txRemainingMs ?? 0,
     txWarned: tab.txWarned ?? false,
     txBusy: txBusy(txPending[tab.id] ?? null),
+    txIsolation,
+    onTxIsolationChange: setTxIsolation,
     onBeginTx: async () => {
       if (!activeConnection) return;
       const pending = txGate(txPending[tab.id] ?? null, 'begin');
@@ -531,7 +537,7 @@ function App() {
         // One round trip: the status and the countdown detail arrive together,
         // so a hiccup cannot strand an open transaction behind a missing badge
         // (the calibrator below only re-syncs tabs that already carry one).
-        const { status, detail } = await BeginTransaction(activeConnection.id, tab.id, tabDatabase(tab));
+        const { status, detail } = await BeginTransaction(activeConnection.id, tab.id, tabDatabase(tab), txIsolation);
         setTabs(current =>
           current.map(t =>
             t.id === tab.id
@@ -1273,16 +1279,23 @@ function App() {
     try {
       const result = await ExplainQuery(activeConnection.id, sql, database);
       if (!stillCurrent()) return;
-      // W11: fetch the structured tree alongside the text grid, so the
-      // "可视化" button has something to draw. A failure here must not lose the
-      // text plan the user already asked for, so it is swallowed.
-      const tree = await ExplainPlanTree(activeConnection.id, sql, database).catch(() => null);
-      if (!stillCurrent()) return;
+      // Render the text plan the moment it lands. The structured tree is a
+      // second round trip and must not withhold it (NF-2): the grid used to
+      // stay empty until the tree came back, so a slow or failing tree call
+      // made the whole explain look stuck.
       setTabs(current => current.map(t =>
         t.id === tabId
-          ? { ...t, database, result, comments: undefined, source: null, loading: false, plan: tree ?? undefined }
+          ? { ...t, database, result, comments: undefined, source: null, loading: false, plan: undefined }
           : t
       ));
+      // W11: the visual tree is best-effort. A failure leaves the text plan in
+      // place and says why the tree view is missing.
+      const tree = await ExplainPlanTree(activeConnection.id, sql, database).catch(() => null);
+      if (!stillCurrent()) return;
+      setTabs(current => current.map(t => (t.id === tabId ? { ...t, plan: tree ?? undefined } : t)));
+      if (!tree) {
+        toast('可视化计划不可用，已显示文本计划');
+      }
     } catch (error) {
       if (!stillCurrent()) return;
       toast.error(`执行计划失败：${(error as Error).message}`, { duration: 8000 });

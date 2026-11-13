@@ -803,8 +803,15 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 	if err != nil {
 		return nil, err
 	}
-	db.SetMaxOpenConns(dbMaxOpenConns)
-	db.SetMaxIdleConns(dbMaxIdleConns)
+	// The four pool knobs are applied through the kernel's PoolConfig so the
+	// two definitions of the same caps cannot drift (NF-1): this file owns the
+	// constants, the kernel owns the application.
+	dbcore.PoolConfig{
+		MaxOpen:     dbMaxOpenConns,
+		MaxIdle:     dbMaxIdleConns,
+		MaxLifetime: dbConnMaxLifetime,
+		MaxIdleTime: dbConnMaxIdleTime,
+	}.Apply(db)
 	// SQLite `:memory:` is per-connection: every pool connection would see its
 	// own separate empty database, so a concurrent query could land on a fresh
 	// handle and observe a table that was just created on another. Pin the pool
@@ -813,8 +820,6 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 		db.SetMaxOpenConns(1)
 		db.SetMaxIdleConns(1)
 	}
-	db.SetConnMaxLifetime(dbConnMaxLifetime)
-	db.SetConnMaxIdleTime(dbConnMaxIdleTime)
 	return db, nil
 }
 

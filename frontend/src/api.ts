@@ -1276,8 +1276,8 @@ export interface BeginTxResponse {
   };
 }
 
-export async function BeginTransaction(connId: string, tabId: string, database = ''): Promise<BeginTxResponse> {
-  const res = await post('/api/begin-tx', { connId, tabId, database });
+export async function BeginTransaction(connId: string, tabId: string, database = '', isolation = ''): Promise<BeginTxResponse> {
+  const res = await post('/api/begin-tx', { connId, tabId, database, isolation });
   const r = res as BeginTxResponse;
   // Tolerate an older backend that still answers {status} only.
   if (r && typeof r === 'object' && 'detail' in r) return r;

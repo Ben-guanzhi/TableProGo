@@ -193,6 +193,10 @@ type txOpener struct {
 	conn  *Connection
 	owner *txn.Session
 	db    string
+	// isolation overrides the connection's configured level for this one
+	// transaction (TXN-03: the backend always wired the level, but no caller
+	// could choose per transaction — the only knob was the connection dialog).
+	isolation string
 }
 
 func (o txOpener) Begin(database string) (string, error) {
@@ -213,6 +217,9 @@ func (o txOpener) Begin(database string) (string, error) {
 // IsolationLevel is the connection's configured level, read back onto the
 // session's status line ("" = the engine's default).
 func (o txOpener) IsolationLevel() string {
+	if o.isolation != "" {
+		return o.isolation
+	}
 	return o.conn.Config.IsolationLevel
 }
 
@@ -341,6 +348,27 @@ func errorOf(result QueryResult) error {
 // settings: 0 minutes disables governance, anything else fixes
 // deadline = now + timeout at Begin — statements never extend it.
 func (a *App) BeginTransaction(connID, tabID, database string) (string, error) {
+	return a.BeginTransactionIsolated(connID, tabID, database, "")
+}
+
+// validIsolation reports whether s is one of the kernel's isolation-level
+// spellings (dbcore.TxMode.IsolationLevel). Anything else would silently
+// degrade to the engine default inside TxOptionsFromMode, which is exactly the
+// invisibility TXN-03 was about.
+func validIsolation(s string) bool {
+	switch s {
+	case "read_uncommitted", "read_committed", "repeatable_read", "serializable":
+		return true
+	}
+	return false
+}
+
+// BeginTransactionIsolated opens a transaction with an explicit isolation level;
+// an empty level falls back to the connection's configured one.
+func (a *App) BeginTransactionIsolated(connID, tabID, database, isolation string) (string, error) {
+	if isolation != "" && !validIsolation(isolation) {
+		return "", fmt.Errorf("不支持的隔离级别: %s", isolation)
+	}
 	conn, err := a.connection(connID)
 	if err != nil {
 		return "", err
@@ -350,7 +378,7 @@ func (a *App) BeginTransaction(connID, tabID, database string) (string, error) {
 	}
 	s := a.sessionOf(tabID)
 	s.BindConnection(connID)
-	opener := txOpener{app: a, conn: conn, owner: s}
+	opener := txOpener{app: a, conn: conn, owner: s, isolation: isolation}
 	timeout, warnAhead := a.txTimeouts()
 	if err := s.Begin(opener, database, timeout, warnAhead); err != nil {
 		return "", err
@@ -366,8 +394,8 @@ func (a *App) BeginTransaction(connID, tabID, database string) (string, error) {
 // carry a badge, so it stayed invisible until the sweeper rolled it back and
 // the user's edits vanished. One round trip makes the pair atomic; the detail
 // read here cannot fail (same process, same session the Begin just wrote).
-func (a *App) BeginTransactionDetail(connID, tabID, database string) (string, TxStatusDetail, error) {
-	status, err := a.BeginTransaction(connID, tabID, database)
+func (a *App) BeginTransactionDetail(connID, tabID, database, isolation string) (string, TxStatusDetail, error) {
+	status, err := a.BeginTransactionIsolated(connID, tabID, database, isolation)
 	if err != nil {
 		return "", TxStatusDetail{}, err
 	}

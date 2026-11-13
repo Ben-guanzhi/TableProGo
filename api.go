@@ -218,6 +218,9 @@ type txRequest struct {
 	ConnID   string `json:"connId"`
 	TabID    string `json:"tabId"`
 	Database string `json:"database"`
+	// Isolation is the transaction-level override (TXN-03); empty keeps the
+	// connection's configured level.
+	Isolation string `json:"isolation"`
 }
 
 // tabQueryRequest is queryRequest plus the tab, so the statement joins that tab's
@@ -1046,7 +1049,7 @@ func (a *App) routes() *http.ServeMux {
 		// then status read used to be two awaits in one try block, and a
 		// failed second left the transaction open server-side with no badge
 		// (see BeginTransactionDetail).
-		status, detail, err := a.BeginTransactionDetail(body.ConnID, body.TabID, body.Database)
+		status, detail, err := a.BeginTransactionDetail(body.ConnID, body.TabID, body.Database, body.Isolation)
 		if err != nil {
 			return nil, err
 		}
@@ -1254,11 +1257,16 @@ const httpShutdownTimeout = 3 * time.Second
 // fallback keeps those usable. The gate lives on the App so every server this
 // process builds shares one admission budget.
 func concurrencyGate(a *App, next http.Handler) http.Handler {
+	// The gate is normally built by newAppWithPaths; a literal-built App (test
+	// helpers) may have skipped it. sync.Once makes the fallback single-flight:
+	// two servers built concurrently used to install two different channels and
+	// each admitted its own 32 requests (NF-3).
+	a.httpGateOnce.Do(func() {
+		if a.httpGate == nil {
+			a.httpGate = make(chan struct{}, httpMaxConcurrentRequests)
+		}
+	})
 	gate := a.httpGate
-	if gate == nil {
-		gate = make(chan struct{}, httpMaxConcurrentRequests)
-		a.httpGate = gate
-	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case gate <- struct{}{}:

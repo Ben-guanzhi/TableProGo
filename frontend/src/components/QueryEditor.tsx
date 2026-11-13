@@ -102,6 +102,10 @@ interface QueryEditorProps {
   // refresh flips the tab back to autocommit. 0 = no deadline (governance off).
   txRemainingMs?: number;
   txWarned?: boolean;
+  // Transaction-level isolation override (TXN-03): '' keeps the connection's
+  // configured level. The picker is only meaningful before Begin.
+  txIsolation?: string;
+  onTxIsolationChange?: (value: string) => void;
   onBeginTx?: () => void;
   onCommitTx?: () => void;
   onRollbackTx?: () => void;
@@ -277,6 +281,8 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
     txBusy = false,
     txRemainingMs = 0,
     txWarned = false,
+    txIsolation = '',
+    onTxIsolationChange,
     onBeginTx,
     onCommitTx,
     onRollbackTx,
@@ -943,15 +949,31 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                 </button>
               </>
             ) : (
-              <button
-                className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
-                onClick={onBeginTx}
-                disabled={loading || txBusy}
-                title="开始事务：之后的语句都在事务里，直到提交或回滚"
-              >
-                <FiGitCommit size={11} className="mr-1 shrink-0" />
-                开始事务
-              </button>
+              <>
+                <select
+                  aria-label="事务隔离级别"
+                  className="px-1 py-1 rounded text-2xs bg-raised text-secondary border border-line disabled:opacity-40"
+                  value={txIsolation}
+                  onChange={e => onTxIsolationChange?.(e.target.value)}
+                  disabled={loading || txBusy}
+                  title="事务隔离级别：开始事务时生效，默认沿用连接的设置"
+                >
+                  <option value="">默认隔离级别</option>
+                  <option value="read_uncommitted">读未提交</option>
+                  <option value="read_committed">读已提交</option>
+                  <option value="repeatable_read">可重复读</option>
+                  <option value="serializable">串行化</option>
+                </select>
+                <button
+                  className="flex items-center whitespace-nowrap px-2 py-1 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
+                  onClick={onBeginTx}
+                  disabled={loading || txBusy}
+                  title="开始事务：之后的语句都在事务里，直到提交或回滚"
+                >
+                  <FiGitCommit size={11} className="mr-1 shrink-0" />
+                  开始事务
+                </button>
+              </>
             )}
             {txStatus && (
               <span
