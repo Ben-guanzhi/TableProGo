@@ -13,6 +13,7 @@ package main
 // an undo.
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -671,8 +672,79 @@ func (a *App) handleWorkbenchMQTT(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// ---------- W-N1: notes (host-local documents) ----------
+// ---------- W-D1: desktop (RDP = emission + file compensation, VNC = channel) ----------
 
+// workbenchDesktopRequest drives the remote-desktop surface. The RDP start is an
+// EMISSION: the response says so and offers no undo; the .rdp file is the tracked
+// compensation. VNC rides the channel with base64 payloads.
+type workbenchDesktopRequest struct {
+	Action  string `json:"action"` // rdp|vnc|relay|close|state
+	Host    string `json:"host,omitempty"`
+	Port    int    `json:"port,omitempty"`
+	User    string `json:"user,omitempty"`
+	Session string `json:"session,omitempty"`
+	Data    string `json:"data,omitempty"` // base64 for relay
+}
+
+func (a *App) handleWorkbenchDesktop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	runner := a.workbenchReady(w)
+	if runner == nil {
+		return
+	}
+	var body workbenchDesktopRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	switch body.Action {
+	case "rdp":
+		res, err := runner.StartRDP(body.Host, body.Port, body.User)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, res)
+	case "vnc":
+		res, err := runner.OpenVNCSession(body.Host, body.Port)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, res)
+	case "relay":
+		payload, err := base64.StdEncoding.DecodeString(body.Data)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "data 必须是 base64: "+err.Error())
+			return
+		}
+		reply, ended, err := runner.VNCRelay(body.Session, payload)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{
+			"data":  base64.StdEncoding.EncodeToString(reply),
+			"ended": ended,
+			"bytes": len(reply),
+		})
+	case "close":
+		if err := runner.CloseDesktopSession(body.Session); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, statusOK)
+	case "state":
+		writeJSON(w, map[string]any{"sessions": runner.DesktopSessions()})
+	default:
+		writeError(w, http.StatusBadRequest, "unknown desktop action "+body.Action)
+	}
+}
+
+// ---------- W-N1: notes (host-local documents) ----------
 // workbenchNotesRequest is the note CRUD surface. Notes are host-local: no plugin,
 // no key surface beyond the nav node that announces the tab.
 type workbenchNotesRequest struct {

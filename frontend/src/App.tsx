@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiActivity, FiBookOpen, FiBox, FiCode, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiBookOpen, FiBox, FiCode, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -42,6 +42,7 @@ import MonitorPanel from './components/MonitorPanel';
 import ContainersPanel from './components/ContainersPanel';
 import MqttPanel from './components/MqttPanel';
 import NotesPanel from './components/NotesPanel';
+import DesktopPanel from './components/DesktopPanel';
 import KvValuePanel from './components/KvValuePanel';
 import ERDiagram from './components/ERDiagram';
 import { foreignKeyEditRows, indexEditRows } from './lib/structureEdit';
@@ -215,6 +216,8 @@ function App() {
   // W-Q1 / W-N1: the MQTT console (publish gated) and the host-local notes surface.
   const [showMqtt, setShowMqtt] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
+  // W-D1: remote desktops (RDP emission with file compensation, VNC channel relay).
+  const [showDesktop, setShowDesktop] = useState(false);
   // W17: the plugin console (vector DB / MQ actions declared by a plugin).
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
@@ -1968,6 +1971,14 @@ function App() {
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
+              onClick={() => setShowDesktop(true)}
+              title="远程桌面：RDP（发射 + .rdp 清理逆）与 VNC 通道"
+              aria-label="远程桌面"
+            >
+              <FiMonitor size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2420,6 +2431,10 @@ function App() {
 
       {showNotes && (
         <NotesPanel onClose={() => setShowNotes(false)} />
+      )}
+
+      {showDesktop && (
+        <DesktopPanel onClose={() => setShowDesktop(false)} />
       )}
 
       {showPlan && activeTabData?.plan && (

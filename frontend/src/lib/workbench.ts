@@ -311,3 +311,45 @@ export async function SaveNote(n: { id?: string; title?: string; body: string })
 export async function DeleteNote(id: string): Promise<void> {
   await post('/api/workbench/notes', { action: 'delete', id });
 }
+
+// W-D1: remote desktops. RDP start is an EMISSION — the response says so and there
+// is no undo; the .rdp temp file is the host's tracked compensation (deleted on
+// unload). VNC rides the channel with base64 payloads.
+
+export interface RdpStart {
+  file: string;
+  session: string;
+  launched: boolean;
+  target: string;
+  notice: string;
+}
+
+export interface DesktopRow {
+  tag: string;
+  kind?: string;
+  target?: string;
+  file?: string;
+}
+
+export async function StartRdp(host: string, port: number, user?: string): Promise<RdpStart> {
+  return post('/api/workbench/desktop', { action: 'rdp', host, port, user });
+}
+
+export async function OpenVnc(host: string, port: number): Promise<{ session: string; target: string }> {
+  return post('/api/workbench/desktop', { action: 'vnc', host, port });
+}
+
+export async function VncRelay(
+  session: string,
+  base64Data: string,
+): Promise<{ data: string; ended: boolean; bytes: number }> {
+  return post('/api/workbench/desktop', { action: 'relay', session, data: base64Data });
+}
+
+export async function CloseDesktopSession(session: string): Promise<void> {
+  await post('/api/workbench/desktop', { action: 'close', session });
+}
+
+export async function DesktopState(): Promise<{ sessions: DesktopRow[] }> {
+  return post('/api/workbench/desktop', { action: 'state' });
+}

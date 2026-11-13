@@ -586,6 +586,8 @@ func (a *App) routes() *http.ServeMux {
 	// + W-N1's host-local notes.
 	mux.HandleFunc("/api/workbench/mqtt", a.handleWorkbenchMQTT)
 	mux.HandleFunc("/api/workbench/notes", a.handleWorkbenchNotes)
+	// W-D1: remote desktops (RDP emission with .rdp file compensation, VNC channel relay).
+	mux.HandleFunc("/api/workbench/desktop", a.handleWorkbenchDesktop)
 	post(a, mux, "/api/plugins/trust", 400, func(a *App, body struct {
 		Path string `json:"path"`
 		Type string `json:"type"`
