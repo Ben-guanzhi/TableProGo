@@ -36,10 +36,11 @@ type tunnelInfo struct {
 // sessionOpenParams: where the SSH host is and which daemon address inside the
 // chain to talk to. The tunnel coordinates come from the proxy flow — the host
 // resolves tunnel.proxy against the consumer's committed view before this call
-// is ever forwarded.
+// is ever forwarded. The SSH password is NOT here: AD-4 lends it (Secret names
+// the lend), so no credential crosses the envelope.
 type sessionOpenParams struct {
 	Tunnel     tunnelInfo `json:"tunnel"`
-	Password   string     `json:"password"`
+	Secret     string     `json:"secret,omitempty"`
 	DockerAddr string     `json:"dockerAddr,omitempty"`
 }
 
@@ -47,6 +48,21 @@ func (s *server) sessionOpen(raw json.RawMessage) (any, string) {
 	var p sessionOpenParams
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return nil, "bad open params: " + err.Error()
+	}
+	// AD-4: a password in the parameters is refused.
+	var probe map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &probe)
+	if _, leaked := probe["password"]; leaked {
+		return nil, "AD-4: 密码必须经秘密借出（stdin 原始体），不得随参数传输"
+	}
+	var password string
+	if p.Secret != "" {
+		val, erase, ok := s.vault.Take(p.Secret)
+		if !ok {
+			return nil, "secret " + p.Secret + " 未被借出（lend 是一次性的，请重新借出）"
+		}
+		defer erase()
+		password = string(val)
 	}
 	dockerAddr := p.DockerAddr
 	if dockerAddr == "" {
@@ -57,7 +73,7 @@ func (s *server) sessionOpen(raw json.RawMessage) (any, string) {
 		Host:     p.Tunnel.SSHHost,
 		Port:     p.Tunnel.SSHPort,
 		User:     p.Tunnel.SSHUser,
-		Password: p.Password,
+		Password: password,
 	}
 	clients, err := sshx.DialChain(cfg)
 	if err != nil {

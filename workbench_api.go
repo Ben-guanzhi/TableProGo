@@ -50,9 +50,8 @@ func (a *App) handleWorkbenchState(w http.ResponseWriter, r *http.Request) {
 }
 
 // workbenchChannelRequest drives ONE channel: open / data / resize / close.
-// Open carries the connection target (host/port/user/password — the AD-4
-// stdin-lend path is a recorded follow-up; see navop-ssh's package comment);
-// data carries keystrokes and returns the shell's output.
+// The password field is the USER's input at this boundary; the handler lends it
+// (AD-4) instead of forwarding it — the open params carry only the lend NAME.
 type workbenchChannelRequest struct {
 	Action    string `json:"action"`
 	Host      string `json:"host,omitempty"`
@@ -82,10 +81,13 @@ func (a *App) handleWorkbenchChannel(w http.ResponseWriter, r *http.Request) {
 	}
 	switch body.Action {
 	case "open":
-		id, err := runner.OpenChannel(map[string]any{
+		// AD-4: the password is lent (raw stdin body) and the params name the
+		// lend. A password field here is the USER's input at the HTTP boundary;
+		// it never becomes a plugin parameter.
+		id, err := runner.OpenChannelWithSecret(map[string]any{
 			"host": body.Host, "port": body.Port, "user": body.User,
-			"password": body.Password, "cols": body.Cols, "rows": body.Rows,
-		})
+			"cols": body.Cols, "rows": body.Rows,
+		}, "ssh.password", []byte(body.Password))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -352,7 +354,8 @@ func (a *App) handleWorkbenchFiles(w http.ResponseWriter, r *http.Request) {
 	}
 	switch body.Action {
 	case "open":
-		id, err := runner.OpenFilesSession(body.Host, body.Port, body.User, body.Password, body.Roots)
+		id, err := runner.OpenFilesSession(body.Host, body.Port, body.User, body.Roots,
+			"ssh.password", []byte(body.Password))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -527,7 +530,8 @@ func (a *App) handleWorkbenchContainers(w http.ResponseWriter, r *http.Request) 
 	case "open":
 		// OpenContainerSession resolves tunnel.proxy through the provider, then
 		// asks the consumer to dial the daemon INSIDE that chain.
-		id, err := consumer.OpenContainerSession(body.Host, body.Port, body.Password, body.DockerAddr)
+		id, err := consumer.OpenContainerSession(body.Host, body.Port, body.DockerAddr,
+			"ssh.password", []byte(body.Password))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

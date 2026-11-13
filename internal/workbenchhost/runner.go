@@ -64,6 +64,10 @@ type Runner struct {
 	// the orchestrator owns the shared store and the proxy switch. Nil =
 	// single-plugin deployment (proxy requests are refused).
 	Orchestrator *Orchestrator
+
+	// secrets (AD-4): the erasure receipt log. Names only — an erasure log that
+	// stored the value would defeat the erasure it records.
+	secrets secretLog
 }
 
 // New returns a runner over a fresh context store. The store may already carry
@@ -295,6 +299,26 @@ func (r *Runner) validateFrame(banner workbench.Banner, frame workbench.EffectFr
 // OpenChannel asks the plugin for a new terminal session and registers it as a
 // RUNTIME effect on the fiber (ctxcore.Track): the channel's binding lands in
 // terminal.channels and is reclaimed by the accumulator on unload.
+// OpenChannelWithSecret lends a secret, opens one channel that names the lend,
+// and erases the caller's copy when the open returns. This is the shape the API
+// uses: the password reaches the plugin as a raw stdin body, never as a param.
+func (r *Runner) OpenChannelWithSecret(params map[string]any, secretName string, secret []byte) (string, error) {
+	if secretName == "" || len(secret) == 0 {
+		return r.OpenChannel(params)
+	}
+	erase, err := r.LendSecret(secretName, secret)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = erase() }()
+	withSecret := make(map[string]any, len(params)+1)
+	for k, v := range params {
+		withSecret[k] = v
+	}
+	withSecret["secret"] = secretName
+	return r.OpenChannel(withSecret)
+}
+
 func (r *Runner) OpenChannel(params map[string]any) (string, error) {
 	r.mu.Lock()
 	p, f := r.proc, r.fiber

@@ -34,13 +34,13 @@ import (
 // realm Σiso assigns THIS session to. Empty roots = allow all (loopback dev);
 // a real deployment declares the subtrees the session may touch.
 type filesOpenParams struct {
-	Host       string   `json:"host"`
-	Port       int      `json:"port"`
-	User       string   `json:"user"`
-	Password   string   `json:"password"`
-	KeyFile    string   `json:"keyFile,omitempty"`
-	Passphrase string   `json:"passphrase,omitempty"`
-	Roots      []string `json:"roots,omitempty"`
+	Host    string   `json:"host"`
+	Port    int      `json:"port"`
+	User    string   `json:"user"`
+	Secret  string   `json:"secret,omitempty"` // AD-4 lend name
+	KeyFile string   `json:"keyFile,omitempty"`
+	Passphr string   `json:"passphrase,omitempty"`
+	Roots   []string `json:"roots,omitempty"`
 }
 
 // fileSession is one SFTP session with its realm.
@@ -95,9 +95,24 @@ func (s *server) filesAction(raw json.RawMessage) (any, string) {
 		if err := json.Unmarshal(raw, &p); err != nil {
 			return nil, "bad open params: " + err.Error()
 		}
+		// AD-4: a password in the parameters is refused (see openChannel).
+		var probe map[string]json.RawMessage
+		_ = json.Unmarshal(raw, &probe)
+		if _, leaked := probe["password"]; leaked {
+			return nil, "AD-4: 密码必须经秘密借出（stdin 原始体），不得随参数传输"
+		}
+		var password string
+		if p.Secret != "" {
+			val, erase, ok := s.vault.Take(p.Secret)
+			if !ok {
+				return nil, "secret " + p.Secret + " 未被借出（lend 是一次性的，请重新借出）"
+			}
+			defer erase()
+			password = string(val)
+		}
 		cfg := sshx.SSHConfig{
 			Enabled: true, Host: p.Host, Port: p.Port, User: p.User,
-			Password: p.Password, KeyFile: p.KeyFile, Passphrase: p.Passphrase,
+			Password: password, KeyFile: p.KeyFile, Passphrase: p.Passphr,
 		}
 		if err := cfg.Validate(); err != nil {
 			return nil, err.Error()

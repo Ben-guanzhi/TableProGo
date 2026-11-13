@@ -55,7 +55,11 @@ func main() {
 	fmt.Fprintf(out, "%s\n", banner)
 	out.Flush()
 
-	srv := &server{sessions: map[string]*dockerSession{}, shells: map[string]*containerShell{}}
+	srv := &server{
+		sessions: map[string]*dockerSession{},
+		shells:   map[string]*containerShell{},
+		vault:    workbench.NewSecretVault(),
+	}
 	in := bufio.NewReader(os.Stdin)
 	var wmu sync.Mutex
 	for {
@@ -63,10 +67,28 @@ func main() {
 		if len(line) > 0 {
 			var req plugindriver.Request
 			if json.Unmarshal(line, &req) == nil {
+				// AD-4: the lend's raw body must be consumed by the LINE LOOP
+				// before any handler goroutine touches the reader.
+				if req.Method == workbench.MethodSecret {
+					var lend workbench.SecretLend
+					_ = json.Unmarshal(req.Params, &lend)
+					body, berr := workbench.ReadSecretBody(in, lend.Bytes)
+					if berr != nil {
+						srv.reply(out, &wmu, req.ID, nil, berr.Error(), "ERR_PLUGIN")
+					} else if lerr := srv.vault.Lend(lend.Name, body); lerr != nil {
+						workbench.Zero(body)
+						srv.reply(out, &wmu, req.ID, nil, lerr.Error(), "ERR_PLUGIN")
+					} else {
+						workbench.Zero(body)
+						srv.reply(out, &wmu, req.ID, workbench.SecretLend{Names: []string{lend.Name}}, "", "")
+					}
+					continue
+				}
 				go func(req plugindriver.Request) { srv.handle(out, &wmu, req) }(req)
 			}
 		}
 		if err != nil {
+			srv.vault.ZeroAll()
 			return
 		}
 	}
@@ -81,6 +103,20 @@ type server struct {
 	seq      uint64
 	sessions map[string]*dockerSession
 	shells   map[string]*containerShell
+	// vault holds the AD-4 lent secrets (one-shot Take + eraser): the consumer
+	// needs the SSH password to dial its own chain to the daemon, and gets it the
+	// same way the provider does — as a raw stdin body, never a JSON field.
+	vault *workbench.SecretVault
+}
+
+// reply writes one response frame (the line loop uses it for lends).
+func (s *server) reply(out *bufio.Writer, wmu *sync.Mutex, id int64, result any, errText, code string) {
+	payload, _ := json.Marshal(result)
+	frame, _ := json.Marshal(plugindriver.Response{ID: id, Result: payload, Error: errText, Code: code})
+	wmu.Lock()
+	fmt.Fprintf(out, "%s\n", frame)
+	wmu.Unlock()
+	out.Flush()
 }
 
 // dockerSession is one container daemon handle: the SSH chain it rides on.
@@ -127,6 +163,9 @@ func (s *server) handle(out *bufio.Writer, wmu *sync.Mutex, req plugindriver.Req
 			Provides: []workbench.Capability{
 				{Key: "container.session", Commutative: true},
 			},
+			// AD-4: the consumer dials its own chain to the daemon, so it declares
+			// the SSH password for a lend (raw stdin body, never a JSON field).
+			Secrets: []string{"ssh.password"},
 		}, "", "")
 	case workbench.MethodEffect:
 		// The load iterator is ONE stage: register the 容器 nav node. Its

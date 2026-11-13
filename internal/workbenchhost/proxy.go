@@ -89,14 +89,19 @@ func (r *Runner) providerRunnerOf(key string) *Runner {
 }
 
 // OpenContainerSession is the consumer's session open (W-C1's proof flow):
-// resolve tunnel.proxy through the orchestrator, then hand the coordinates to
-// the consumer plugin's open action. The consumer dials the daemon INSIDE the
-// resolved chain.
-func (r *Runner) OpenContainerSession(targetHost string, sshPort int, password, dockerAddr string) (string, error) {
+// resolve tunnel.proxy through the orchestrator, lend the SSH secret (AD-4), then
+// hand the coordinates to the consumer plugin's open action. The consumer dials
+// the daemon INSIDE the resolved chain.
+func (r *Runner) OpenContainerSession(targetHost string, sshPort int, dockerAddr, secretName string, secret []byte) (string, error) {
 	f := r.Fiber()
 	if f == nil || f.State() != ctxcore.Active {
 		return "", fmt.Errorf("%s: the consumer fiber is not active", workbench.CodeInactive)
 	}
+	erase, err := r.LendSecret(secretName, secret)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = erase() }()
 	value, err := r.proxyRequest("tunnel.proxy", "dial",
 		map[string]any{"targetHost": targetHost}, 15*time.Second)
 	if err != nil {
@@ -123,7 +128,7 @@ func (r *Runner) OpenContainerSession(targetHost string, sshPort int, password, 
 	}
 	err = p.call(context.Background(), workbench.MethodChannelOpen, map[string]any{
 		"tunnel":     value,
-		"password":   password,
+		"secret":     secretName,
 		"dockerAddr": dockerAddr,
 	}, &res)
 	if err != nil {

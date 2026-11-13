@@ -160,6 +160,65 @@ func (p *proc) readLine(timeout time.Duration) (string, error) {
 	}
 }
 
+// lendSecret writes one SecretLend control line followed IMMEDIATELY by the raw
+// secret body (no newline, no JSON escaping) and waits for the plugin's
+// acknowledgement. This is AD-4's transport: the value never enters an envelope,
+// so no frame log, no cast, no key surface can contain it.
+//
+// The write is a single critical section under wmu: a concurrent call() must not
+// slip a JSON frame between the control line and its body, or the plugin's reader
+// would consume the wrong bytes as the secret.
+func (p *proc) lendSecret(ctx context.Context, name string, value []byte) error {
+	if p.Dead() {
+		return fmt.Errorf("%s: plugin process is dead", workbench.MethodSecret)
+	}
+	if len(value) == 0 || len(value) > workbench.MaxSecretBytes {
+		return fmt.Errorf("%s: secret %s has an invalid length %d", workbench.CodeBadBanner, name, len(value))
+	}
+	p.idMu.Lock()
+	p.nextID++
+	id := p.nextID
+	p.idMu.Unlock()
+
+	raw, err := json.Marshal(workbench.SecretLend{Name: name, Bytes: len(value)})
+	if err != nil {
+		return err
+	}
+	frame, err := json.Marshal(plugindriver.Request{ID: id, Method: workbench.MethodSecret, Params: raw})
+	if err != nil {
+		return err
+	}
+	p.wmu.Lock()
+	if _, werr := fmt.Fprintf(p.stdin, "%s\n", frame); werr != nil {
+		p.wmu.Unlock()
+		return fmt.Errorf("write secret control line: %w", werr)
+	}
+	if _, werr := p.stdin.Write(value); werr != nil {
+		p.wmu.Unlock()
+		return fmt.Errorf("write secret body: %w", werr)
+	}
+	if f, ok := p.stdin.(interface{ Flush() error }); ok {
+		_ = f.Flush()
+	}
+	p.wmu.Unlock()
+
+	line, err := p.readLine(30 * time.Second)
+	if err != nil {
+		return fmt.Errorf("%s: %w", workbench.MethodSecret, err)
+	}
+	var resp plugindriver.Response
+	if err := json.Unmarshal([]byte(line), &resp); err != nil {
+		return fmt.Errorf("decode secret ack: %w", err)
+	}
+	if resp.ID != id {
+		return fmt.Errorf("secret ack id %d, want %d", resp.ID, id)
+	}
+	if resp.Error != "" {
+		return fmt.Errorf("secret %s refused: %s", name, resp.Error)
+	}
+	return nil
+}
+
 // call issues one request and reads exactly one response frame.
 //
 // A DEAD process fails immediately: an in-flight unload's inverse (a .tmp

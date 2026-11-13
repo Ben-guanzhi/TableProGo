@@ -33,10 +33,11 @@
 // A terminal tab being "reconnectable" is therefore a COROLLARY of the
 // architecture (AD-2), not a patched special case.
 //
-// AD-4 obligation NOT yet discharged (recorded honestly): the SSH password
-// currently arrives inside the channel-open parameters, i.e. over a JSON frame.
-// The plan's secret discipline (lend over stdin with an erasing inverse) is a
-// required follow-up before this plugin is exposed beyond loopback.
+// AD-4 (DISCHARGED): the SSH password never travels in the channel-open
+// parameters. The host lends it as a RAW STDIN BODY (workbench.SecretLend names
+// it, the bytes follow the control line), the plugin keeps it in a one-shot
+// vault, and 打开时 Take 拿到值 + 擦除器，用完即擦。一个带 password 字段的 open
+// 参数会被显式拒绝——这条纪律不是注释里的约定，是代码里的拒绝。
 
 package main
 
@@ -66,7 +67,11 @@ func main() {
 	fmt.Fprintf(out, "%s\n", banner)
 	out.Flush()
 
-	srv := &server{channels: map[string]*channelHandle{}, files: map[string]*fileSession{}}
+	srv := &server{
+		channels: map[string]*channelHandle{},
+		files:    map[string]*fileSession{},
+		vault:    workbench.NewSecretVault(),
+	}
 	in := bufio.NewReader(os.Stdin)
 	var wmu sync.Mutex
 	for {
@@ -74,10 +79,30 @@ func main() {
 		if len(line) > 0 {
 			var req plugindriver.Request
 			if json.Unmarshal(line, &req) == nil {
+				// AD-4: a lend's raw body follows its control line, so the LINE
+				// LOOP must consume it before any handler goroutine runs — the
+				// reader is not safe to share, and a body read by a handler would
+				// race the next line.
+				if req.Method == workbench.MethodSecret {
+					var lend workbench.SecretLend
+					_ = json.Unmarshal(req.Params, &lend)
+					body, berr := workbench.ReadSecretBody(in, lend.Bytes)
+					if berr != nil {
+						srv.reply(out, &wmu, req.ID, nil, berr.Error(), "ERR_PLUGIN")
+					} else if lerr := srv.vault.Lend(lend.Name, body); lerr != nil {
+						workbench.Zero(body)
+						srv.reply(out, &wmu, req.ID, nil, lerr.Error(), "ERR_PLUGIN")
+					} else {
+						workbench.Zero(body)
+						srv.reply(out, &wmu, req.ID, workbench.SecretLend{Names: []string{lend.Name}}, "", "")
+					}
+					continue
+				}
 				go func(req plugindriver.Request) { srv.handle(out, &wmu, req) }(req)
 			}
 		}
 		if err != nil {
+			srv.vault.ZeroAll()
 			return
 		}
 	}
@@ -93,6 +118,9 @@ type server struct {
 	seq      uint64
 	channels map[string]*channelHandle
 	files    map[string]*fileSession // files.session bindings (W-F1)
+	// vault holds the AD-4 lent secrets (one-shot Take + eraser). The password
+	// NEVER arrives in a JSON field: it is a raw stdin body.
+	vault *workbench.SecretVault
 	// sessionSSH* records the coordinates the LAST open used, so tunnel.proxy's
 	// answer (W-C1) tells the consumer how to reach the same chain. The
 	// password is deliberately NOT in this struct: the consumer re-auths with
@@ -226,14 +254,24 @@ func effectFrame(stage int) workbench.EffectFrame {
 	}
 }
 
-// openParams is what the host sends to start one terminal. The SSH password
-// rides here for now — the AD-4 stdin-lend path is a recorded follow-up (see the
-// package comment).
+// reply writes one response frame. The line loop uses it for lends (which are
+// consumed outside any handler goroutine); handlers keep their local `send`.
+func (s *server) reply(out *bufio.Writer, wmu *sync.Mutex, id int64, result any, errText, code string) {
+	payload, _ := json.Marshal(result)
+	frame, _ := json.Marshal(plugindriver.Response{ID: id, Result: payload, Error: errText, Code: code})
+	wmu.Lock()
+	fmt.Fprintf(out, "%s\n", frame)
+	out.Flush()
+	wmu.Unlock()
+}
+
+// openParams is what the host sends to start one terminal. The SSH password is
+// NOT here: AD-4 lends it as a raw stdin body and this names the lend.
 type openParams struct {
 	Host       string `json:"host"`
 	Port       int    `json:"port"`
 	User       string `json:"user"`
-	Password   string `json:"password"`
+	Secret     string `json:"secret,omitempty"` // vault name, e.g. "ssh.password"
 	KeyFile    string `json:"keyFile,omitempty"`
 	Passphrase string `json:"passphrase,omitempty"`
 	Cols       uint16 `json:"cols"`
@@ -245,9 +283,25 @@ func (s *server) openChannel(raw json.RawMessage) (string, string) {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return "", "bad open params: " + err.Error()
 	}
+	// AD-4: a password in the parameters is refused. Accepting it would silently
+	// reintroduce the leak the lend exists to prevent.
+	var probe map[string]json.RawMessage
+	_ = json.Unmarshal(raw, &probe)
+	if _, leaked := probe["password"]; leaked {
+		return "", "AD-4: 密码必须经秘密借出（stdin 原始体），不得随参数传输"
+	}
+	var password string
+	if p.Secret != "" {
+		val, erase, ok := s.vault.Take(p.Secret)
+		if !ok {
+			return "", "secret " + p.Secret + " 未被借出（lend 是一次性的，请重新借出）"
+		}
+		defer erase()
+		password = string(val)
+	}
 	cfg := sshx.SSHConfig{
 		Enabled: true, Host: p.Host, Port: p.Port, User: p.User,
-		Password: p.Password, KeyFile: p.KeyFile, Passphrase: p.Passphrase,
+		Password: password, KeyFile: p.KeyFile, Passphrase: p.Passphrase,
 	}
 	if err := cfg.Validate(); err != nil {
 		return "", err.Error()

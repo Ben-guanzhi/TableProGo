@@ -41,7 +41,7 @@ func TestRealmRefusalAtTheHostGate(t *testing.T) {
 	f := r.Fiber()
 	waitFiberState(t, f, ctxcore.Active, 5*time.Second)
 
-	sess, err := r.OpenFilesSession("x", 22, "u", "p", []string{"/data"})
+	sess, err := r.OpenFilesSession("x", 22, "u", []string{"/data"}, "ssh.password", []byte("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestRealmRefusalResolvesTraversal(t *testing.T) {
 	defer r.Stop()
 	f := r.Fiber()
 	waitFiberState(t, f, ctxcore.Active, 5*time.Second)
-	sess, err := r.OpenFilesSession("x", 22, "u", "p", []string{"/data"})
+	sess, err := r.OpenFilesSession("x", 22, "u", []string{"/data"}, "ssh.password", []byte("p"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestFilesEndToEndUploadDownload(t *testing.T) {
 	f := r.Fiber()
 	waitFiberState(t, f, ctxcore.Active, 10*time.Second)
 
-	sess, err := r.OpenFilesSession(sshHost, sshPort, "tester", "secret", nil)
+	sess, err := r.OpenFilesSession(sshHost, sshPort, "tester", nil, "ssh.password", []byte("secret"))
 	if err != nil {
 		t.Fatalf("open files session: %v", err)
 	}
@@ -197,7 +197,7 @@ func TestFilesBindingReclaimedOnUnload(t *testing.T) {
 	}
 	f := r.Fiber()
 	waitFiberState(t, f, ctxcore.Active, 5*time.Second)
-	if _, err := r.OpenFilesSession("x", 22, "u", "p", nil); err != nil {
+	if _, err := r.OpenFilesSession("x", 22, "u", nil, "ssh.password", []byte("p")); err != nil {
 		t.Fatal(err)
 	}
 	if len(chanOrFilesTags(store)) != 1 {

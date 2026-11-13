@@ -34,6 +34,8 @@ const fakeSSHPluginSource = `package main
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -57,6 +59,20 @@ func main() {
 	var wmu sync.Mutex
 	seq := 0
 	known := map[string]bool{}
+	// AD-4: the lent secret arrives as a raw body, never in a line. The fake
+	// keeps it here (one-shot) so the open can prove it came through the lend.
+	var secretMu sync.Mutex
+	secretName := ""
+	secretBody := []byte{}
+	lines := []string{}
+	sendRaw := func(id int64, result interface{}, errText, code string) {
+		payload, _ := json.Marshal(result)
+		frame, _ := json.Marshal(plugindriver.Response{ID: id, Result: payload, Error: errText, Code: code})
+		wmu.Lock()
+		fmt.Fprintf(out, "%s\n", frame)
+		out.Flush()
+		wmu.Unlock()
+	}
 	handle := func(req plugindriver.Request) {
 		send := func(result interface{}, errText, code string) {
 			payload, _ := json.Marshal(result)
@@ -78,6 +94,7 @@ func main() {
 					{Key: "terminal.channels", Commutative: true},
 					{Key: "files.session", Commutative: true},
 				},
+				Secrets: []string{"ssh.password"},
 			}, "", "")
 		case workbench.MethodEffect:
 			var p struct{ Stage int }
@@ -95,11 +112,52 @@ func main() {
 			}
 			send(frame, "", "")
 		case workbench.MethodChannelOpen:
-			// Generator-allocated id (Thm 47): two opens NEVER share a tag.
+			// AD-4: prove the two halves. A password in the params is refused
+			// (the leak the lend exists to prevent); a declared secret name must
+			// resolve to a body that arrived OUT OF BAND, and the response carries
+			// the body's hash plus whether any LINE ever contained it. An open
+			// WITHOUT a secret name is a plain channel (most tests) and passes.
+			var probe map[string]interface{}
+			_ = json.Unmarshal(req.Params, &probe)
+			if _, leaked := probe["password"]; leaked {
+				send(nil, "AD-4: password must be lent, not passed", "ERR_UNDECLARED")
+				return
+			}
+			name, _ := probe["secret"].(string)
+			if name == "" {
+				seq++
+				id := fmt.Sprintf("ch-%d", seq)
+				known[id] = true
+				send(map[string]interface{}{"channelId": id}, "", "")
+				return
+			}
+			secretMu.Lock()
+			haveBody := len(secretBody) > 0 && name == secretName
+			sum := sha256.Sum256(secretBody)
+			inLines := false
+			for _, l := range lines {
+				if len(secretBody) > 0 && strings.Contains(l, string(secretBody)) {
+					inLines = true
+				}
+			}
+			if haveBody {
+				workbench.Zero(secretBody)
+				secretBody = nil
+				secretName = ""
+			}
+			secretMu.Unlock()
+			if !haveBody {
+				send(nil, "secret "+name+" not lent", "ERR_INACTIVE")
+				return
+			}
 			seq++
 			id := fmt.Sprintf("ch-%d", seq)
 			known[id] = true
-			send(map[string]string{"channelId": id}, "", "")
+			send(map[string]interface{}{
+				"channelId":     id,
+				"secretSha":     hex.EncodeToString(sum[:]),
+				"secretInLines": inLines,
+			}, "", "")
 		case workbench.MethodChannelSize:
 			send(map[string]bool{"ok": true}, "", "")
 		case workbench.MethodChannelClose:
@@ -171,10 +229,32 @@ func main() {
 		if len(line) > 0 {
 			var req plugindriver.Request
 			if json.Unmarshal(line, &req) == nil {
+				// AD-4: consume the lend body IN THE LOOP (the reader is shared
+				// with the next line), then record that no LINE ever held it.
+				if req.Method == workbench.MethodSecret {
+					var lend workbench.SecretLend
+					_ = json.Unmarshal(req.Params, &lend)
+					body, berr := workbench.ReadSecretBody(in, lend.Bytes)
+					if berr != nil {
+						sendRaw(req.ID, nil, berr.Error(), "ERR_PLUGIN")
+						continue
+					}
+					secretMu.Lock()
+					secretName = lend.Name
+					secretBody = append([]byte{}, body...)
+					secretMu.Unlock()
+					workbench.Zero(body)
+					sendRaw(req.ID, workbench.SecretLend{Names: []string{lend.Name}}, "", "")
+					continue
+				}
+				lines = append(lines, string(line))
 				handle(req)
 			}
 		}
 		if err != nil {
+			secretMu.Lock()
+			workbench.Zero(secretBody)
+			secretMu.Unlock()
 			return
 		}
 	}
@@ -376,10 +456,11 @@ func TestRealPTYEndToEnd(t *testing.T) {
 		t.Fatalf("nav tags = %v", got)
 	}
 
-	ch, err := r.OpenChannel(map[string]any{
-		"host": sshHost, "port": sshPort, "user": "tester", "password": "secret",
+	// AD-4: the real provider gets the password as a LEND, never in the params.
+	ch, err := r.OpenChannelWithSecret(map[string]any{
+		"host": sshHost, "port": sshPort, "user": "tester",
 		"cols": 80, "rows": 24,
-	})
+	}, "ssh.password", []byte("secret"))
 	if err != nil {
 		t.Fatalf("open PTY channel: %v", err)
 	}

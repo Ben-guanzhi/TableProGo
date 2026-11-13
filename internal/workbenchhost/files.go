@@ -36,7 +36,15 @@ import (
 
 // OpenFilesSession asks the plugin for an SFTP session with the realm roots and
 // binds it under files.session (a runtime effect, tracked like a channel).
-func (r *Runner) OpenFilesSession(host string, port int, user, password string, roots []string) (string, error) {
+//
+// AD-4: the password is LENT (raw stdin body) under secretName; the open params
+// carry the NAME only. The caller's copy is erased when this returns.
+func (r *Runner) OpenFilesSession(host string, port int, user string, roots []string, secretName string, secret []byte) (string, error) {
+	erase, err := r.LendSecret(secretName, secret)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = erase() }()
 	r.mu.Lock()
 	p, f := r.proc, r.fiber
 	r.mu.Unlock()
@@ -48,11 +56,11 @@ func (r *Runner) OpenFilesSession(host string, port int, user, password string, 
 	}
 	if err := p.call(context.Background(), workbench.MethodFilesAction, map[string]any{
 		"action": "open", "host": host, "port": port, "user": user,
-		"password": password, "roots": roots,
+		"secret": secretName, "roots": roots,
 	}, &res); err != nil {
 		return "", err
 	}
-	err := r.store.Track(f, "open-files:"+res.ChannelID, func(st *ctxcore.Store) (ctxcore.Inverse, error) {
+	err = r.store.Track(f, "open-files:"+res.ChannelID, func(st *ctxcore.Store) (ctxcore.Inverse, error) {
 		if err := st.TableInsert(ctxcore.KeyFilesSession, ctxcore.Tag(res.ChannelID), f.UID(),
 			map[string]any{"roots": roots}); err != nil {
 			return nil, err

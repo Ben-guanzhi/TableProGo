@@ -159,9 +159,9 @@ func TestProxyFlowThroughOrchestrator(t *testing.T) {
 	}
 	providerF := o.SSH().Fiber()
 	waitFiberState(t, providerF, ctxcore.Active, 10*time.Second)
-	if _, err := o.SSH().OpenChannel(map[string]any{
-		"host": sshHost, "port": sshPort, "user": "tester", "password": "secret",
-	}); err != nil {
+	if _, err := o.SSH().OpenChannelWithSecret(map[string]any{
+		"host": sshHost, "port": sshPort, "user": "tester",
+	}, "ssh.password", []byte("secret")); err != nil {
 		t.Fatalf("open provider terminal: %v", err)
 	}
 
@@ -177,7 +177,7 @@ func TestProxyFlowThroughOrchestrator(t *testing.T) {
 	// RESOLUTION, which is the wave's deliverable, by refusing at the known
 	// point: the plugin's open fails at the daemon probe with a clear message
 	// that PROVES the dial happened inside the resolved chain).
-	_, err := o.Other().OpenContainerSession(sshHost, sshPort, "secret", "")
+	_, err := o.Other().OpenContainerSession(sshHost, sshPort, "", "ssh.password", []byte("secret"))
 	if err == nil {
 		// The daemon probe may genuinely succeed if the sandbox answers; both
 		// outcomes prove the flow — a refusal NAMES the probe, success opens.
