@@ -202,7 +202,15 @@ type llmAskRequest struct {
 	Question string `json:"question"`
 }
 
+// sessionTitleRequest is the window-title follow body: the active tab's
+// connection and database (privacy mode sends masked names from the frontend).
+type sessionTitleRequest struct {
+	Conn string `json:"conn"`
+	DB   string `json:"db"`
+}
+
 // llmRefineRequest is the repair loop's body: user's correction for one proposal.
+
 type llmRefineRequest struct {
 	ID       string `json:"id"`
 	Feedback string `json:"feedback"`
@@ -1013,7 +1021,12 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/llm/proposal/reject", 400, func(a *App, body llmProposalRequest) (any, error) {
 		return map[string]bool{"rejected": a.RejectProposal(body.ID) == nil}, nil
 	})
-	// SQLucid 修复环（Q-02）：用户改"意图说明"，模型重写等待中的 proposal。
+	// 窗口标题跟随会话（波 94 界面对标，Navicat/TablePlus 惯例）：前端在活动
+	// 标签的连接/库变化时调用；隐私模式下前端传遮蔽后的名字。
+	post(a, mux, "/api/session/title", 400, func(a *App, body sessionTitleRequest) (any, error) {
+		return map[string]string{"title": a.SetSessionTitle(body.Conn, body.DB)}, nil
+	})
+		// SQLucid 修复环（Q-02）：用户改"意图说明"，模型重写等待中的 proposal。
 	// 不执行新语句——重写后的 proposal 回到等待列表，接受仍走上面的 accept。
 	// 手写而非 post()：refine 的模型调用需要请求上下文（用户关掉面板时中止计费）。
 	mux.HandleFunc("/api/llm/proposal/refine", func(w http.ResponseWriter, r *http.Request) {

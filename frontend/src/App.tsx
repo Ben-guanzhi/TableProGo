@@ -105,6 +105,7 @@ import {
   GetSchemas,
   GetRoutines,
   ExportWorkbook,
+  SetSessionTitle,
 } from './api';
 import { mergeKVWindow } from './kvPaging';
 import { applyTheme } from './theme';
@@ -316,6 +317,7 @@ function App() {
   }, [activeConnection]);
 
   const tabDatabase = (tab?: Tab) => tab?.database || activeConnection?.database || '';
+
 
   const changeSettings = (next: AppSettings) => {
     setSettings(next);
@@ -1666,6 +1668,14 @@ function App() {
   };
 
   const activeTabData = tabs.find(t => t.id === activeTab);
+// 波 94（Navicat/TablePlus 惯例）：OS 窗口标题跟随活动标签的「连接 @ 库」，
+// 让多窗口/多连接时标题栏始终回答"这个窗口连的是哪台服务器"。隐私模式下
+// 传遮蔽后的名字（与树上的遮蔽口径一致，标题不能成为漏点）。
+useEffect(() => {
+  const conn = privateTitle(activeConnection?.name, settings.privacyMode) ?? '';
+  const db = privateTitle(tabDatabase(activeTabData), settings.privacyMode) ?? '';
+  SetSessionTitle(conn, db).catch(() => { /* 标题失败不碍会话 */ });
+}, [activeConnection, activeTabData, settings.privacyMode]);
   // An error result is just a banner, so let the editor absorb that space
   // instead of leaving a blank result pane under it.
   const isErrorResult = !!activeTabData?.result?.error && !activeTabData?.loading;
@@ -1860,6 +1870,16 @@ function App() {
                 {kvRef && <FiKey size={12} aria-hidden className="mr-1.5 shrink-0 text-accent" />}
                 {erRef && <FiGitBranch size={12} aria-hidden className="mr-1.5 shrink-0 text-accent" />}
                 <span className="text-sm max-w-[200px] truncate">{tab.title}</span>
+                {/* 波 94（DBeaver 惯例）：页签上直接给出结果行数——切页签前就知道
+                   上一次查询的规模，不用点回去看。截断时以 + 收尾。*/}
+                {tab.result && !tab.loading && tab.result.error === undefined && (tab.result.rowCount > 0 || tab.result.affectedRows > 0) && (
+                  <span
+                    className="ml-2 text-2xs text-muted bg-canvas rounded px-1"
+                    title={tab.result.truncated ? `结果被行数上限截断，共显示 ${tab.result.rowCount} 行` : `${tab.result.rowCount} 行`}
+                  >
+                    {tab.result.rowCount > 0 ? `${tab.result.rowCount}${tab.result.truncated ? "+" : ""}` : `${tab.result.affectedRows} affected`}
+                  </span>
+                )}
                 {tab.isDirty && <span className="ml-2 text-warning">*</span>}
                 <button
                   className="ml-1 flex items-center justify-center w-5 h-5 text-secondary hover:text-ink"

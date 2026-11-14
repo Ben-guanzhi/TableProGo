@@ -206,6 +206,13 @@ export async function DisconnectAll(): Promise<void> {
   await post('/api/disconnect-all');
 }
 
+// SetSessionTitle updates the OS window title to "conn @ db — TablePro Go"
+// (波 94: the Navicat/TablePlus convention — the title always answers "which
+// server am I pointed at"). Privacy mode passes masked names.
+export async function SetSessionTitle(conn: string, db: string): Promise<string> {
+  const res = await post('/api/session/title', { conn, db });
+  return res?.title ?? '';
+}
 export async function GetDatabases(connId: string): Promise<string[]> {
   return post('/api/databases', { connId });
 }
