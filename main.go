@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"context"
@@ -13,11 +13,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )

@@ -16,11 +16,6 @@ import (
 	"tablepro-go/internal/mcp"
 	"tablepro-go/internal/txn"
 	"tablepro-go/internal/workbenchhost"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
 )
 
 type App struct {

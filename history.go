@@ -4,11 +4,6 @@ import (
 	"log"
 	"strings"
 	"time"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
 )
 
 // HistoryEntry is one executed statement. The object view's history page and

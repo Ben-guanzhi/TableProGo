@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 func TestGetOpensOncePerDatabase(t *testing.T) {
@@ -20,7 +20,7 @@ func TestGetOpensOncePerDatabase(t *testing.T) {
 		mu.Lock()
 		opens[database]++
 		mu.Unlock()
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 4)
 	defer s.Close()
 
@@ -46,7 +46,7 @@ func TestGetOpensOncePerDatabase(t *testing.T) {
 // More databases than the cap must evict the least-recently-used one.
 func TestGetEvictsLeastRecentlyUsed(t *testing.T) {
 	s := New(func(database string) (*sql.DB, error) {
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 2)
 	defer s.Close()
 
@@ -90,7 +90,7 @@ func TestGetPropagatesOpenerError(t *testing.T) {
 }
 
 func TestCloseDropsEverything(t *testing.T) {
-	s := New(func(string) (*sql.DB, error) { return sql.Open("sqlite", ":memory:") }, 2)
+	s := New(func(string) (*sql.DB, error) { return sql.Open("sqlite3", ":memory:") }, 2)
 	if _, err := s.Get("a"); err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestDialLandingAfterCloseIsDropped(t *testing.T) {
 	release := make(chan struct{})
 	s := New(func(string) (*sql.DB, error) {
 		<-release // block until the test releases the dial
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 4)
 	// Start a dial and let it block.
 	done := make(chan struct{})
@@ -140,7 +140,7 @@ func TestGetConcurrentSameDatabaseDialsOnce(t *testing.T) {
 	s := New(func(database string) (*sql.DB, error) {
 		opens.Add(1)
 		time.Sleep(50 * time.Millisecond) // a handshake-sized window
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 4)
 	defer s.Close()
 
@@ -177,7 +177,7 @@ func TestGetSlowOpenerDoesNotBlockOtherDatabases(t *testing.T) {
 		if database == "slow" {
 			time.Sleep(600 * time.Millisecond)
 		}
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 8)
 	defer s.Close()
 
@@ -217,7 +217,7 @@ func TestGlobalGateEvictsOldestPool(t *testing.T) {
 	defer func() { GlobalMaxPools, GlobalGateTimeout = oldMax, oldTimeout }()
 
 	s := New(func(database string) (*sql.DB, error) {
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 4)
 	defer s.Close()
 
@@ -252,7 +252,7 @@ func TestGlobalGateEmptySetTimesOut(t *testing.T) {
 	defer func() { GlobalMaxPools, GlobalGateTimeout = oldMax, oldTimeout }()
 
 	filler := New(func(string) (*sql.DB, error) {
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 4)
 	defer filler.Close()
 	if _, err := filler.Get("x"); err != nil {
@@ -260,7 +260,7 @@ func TestGlobalGateEmptySetTimesOut(t *testing.T) {
 	}
 
 	empty := New(func(string) (*sql.DB, error) {
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, 4)
 	defer empty.Close()
 
@@ -288,7 +288,7 @@ func TestGetContextCancelsDialGateWait(t *testing.T) {
 	s := New(func(database string) (*sql.DB, error) {
 		entered.Add(1)
 		<-release
-		return sql.Open("sqlite", ":memory:")
+		return sql.Open("sqlite3", ":memory:")
 	}, slots)
 	defer s.Close()
 

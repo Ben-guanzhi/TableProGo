@@ -8,11 +8,6 @@ import (
 	"strconv"
 	"strings"
 
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
-
 	"github.com/dbcore/dbcore"
 	"github.com/dbcore/dbcore/dm"
 	"github.com/dbcore/dbcore/mssql"

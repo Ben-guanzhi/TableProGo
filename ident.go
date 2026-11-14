@@ -5,11 +5,6 @@ import (
 
 	"regexp"
 	"strings"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
 )
 
 // sqlCommentRe strips comments so a commented-out "FROM x" cannot be mistaken

@@ -17,11 +17,6 @@ import (
 	"tablepro-go/internal/llm"
 	"tablepro-go/internal/sqlformat"
 
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
-
 	"github.com/Ben-guanzhi/TableProGo/tableproxlsx"
 	"github.com/dbcore/dbcore"
 )

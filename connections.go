@@ -16,16 +16,11 @@ import (
 	dbcoredm "github.com/dbcore/dbcore/dm"
 	dbcoremssql "github.com/dbcore/dbcore/mssql"
 	dbcoremysql "github.com/dbcore/dbcore/mysql"
-	dbcoreoracle "github.com/dbcore/dbcore/oracle"
+	oracledsn "github.com/dbcore/dbcore/oracledsn"
 	dbcorepg "github.com/dbcore/dbcore/postgres"
 	dbcoresqlite "github.com/dbcore/dbcore/sqlite"
 	"tablepro-go/internal/catalogsnap"
 	"tablepro-go/internal/pool"
-
-	_ "github.com/go-sql-driver/mysql"
-	_ "github.com/lib/pq"
-	_ "github.com/mattn/go-sqlite3"
-	_ "github.com/sijms/go-ora/v2"
 )
 
 type Connection struct {
@@ -799,7 +794,7 @@ func createConnectionAt(config ConnectionConfig, host string, port int) (*sql.DB
 		dsn = dbcoremssql.DSN(spec)
 	case "oracle":
 		driver = "oracle"
-		dsn = dbcoreoracle.DSN(spec)
+		dsn = oracledsn.DSN(spec)
 	case "dm", "dameng":
 		driver = "dm"
 		dsn = dbcoredm.DSN(spec)
