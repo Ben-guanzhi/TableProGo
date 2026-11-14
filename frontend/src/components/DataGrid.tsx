@@ -35,6 +35,7 @@ import {
   toRowChanges,
 } from '../gridView';
 import { download, downloadBlob } from '../datagrid/download';
+import { isNumericType } from '../sqlFilters';
 import { columnReducer, emptyColumnState } from '../datagrid/columnState';
 import { editReducer, emptyEditState, primarySelected } from '../datagrid/editorState';
 import { fkReducer, emptyFKState, highlightedIndex, pickerList } from '../datagrid/fkState';
@@ -1206,7 +1207,7 @@ const DataGrid: React.FC<DataGridProps> = ({
                           <div
                             className={`truncate whitespace-pre grid-cell-value ${
                               shownNull && !omitted ? 'italic text-muted' : ''
-                            } ${typeof value === 'number' || magic?.kind === 'number' ? 'tabular-nums' : ''} ${
+                            } ${typeof value === 'number' || magic?.kind === 'number' || isNumericType(col.type) ? 'tabular-nums text-right' : ''} ${
                               hasFk || linkable || isLarge ? 'pr-4' : ''
                             }`}
                           >
