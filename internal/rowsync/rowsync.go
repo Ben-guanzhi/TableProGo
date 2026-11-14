@@ -45,8 +45,8 @@ const (
 
 // Accessor aliases.
 var (
-	TryGetInt          = dbcore.TryGetInt
-	DecimalToFloat64   = dbcore.DecimalToFloat64
+	TryGetInt        = dbcore.TryGetInt
+	DecimalToFloat64 = dbcore.DecimalToFloat64
 )
 
 func stringsCompare(a, b string) int {
@@ -102,7 +102,7 @@ const (
 
 // Change is one plan entry.
 type Change struct {
-	Op   Op
+	Op Op
 	// Key is the row's primary-key tuple, as it appears on the SOURCE for
 	// insert/update and on the TARGET for delete.
 	Key []Value

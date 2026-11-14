@@ -147,8 +147,8 @@ type pgPlanBody struct {
 	HashCond     string   `json:"Hash Cond"`
 	MergeCond    string   `json:"Merge Cond"`
 	JoinType     string   `json:"Join Type"`
-	SortKey      []string     `json:"Sort Key"`
-	SubplanName  string       `json:"Subplan Name"`
+	SortKey      []string `json:"Sort Key"`
+	SubplanName  string   `json:"Subplan Name"`
 	// Plans holds the child nodes. In PostgreSQL's FORMAT JSON only the TOP level
 	// wraps its body in {"Plan": …}; every nested node under "Plans" is a bare
 	// plan body. Declaring them as pgNode would parse each child as an empty

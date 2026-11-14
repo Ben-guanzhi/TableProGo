@@ -56,7 +56,7 @@ type Row struct {
 	Database string
 	User     string
 	// SSL is the source's SSL flag, already folded onto this app's SSLMode.
-	SSL      string
+	SSL string
 	// Source names where the row came from, for the report.
 	Source string
 	// URL is the raw connection URL when the row came from one (generic import).
@@ -105,8 +105,8 @@ type dbeaverConnection struct {
 	Name     string `json:"name"`
 	// SavePassword says a password exists in DBeaver's store; it is read only to
 	// explain the omission, never to obtain the secret.
-	SavePassword  bool                `json:"save-password"`
-	Configuration dbeaverConfig       `json:"configuration"`
+	SavePassword  bool          `json:"save-password"`
+	Configuration dbeaverConfig `json:"configuration"`
 }
 
 type dbeaverConfig struct {

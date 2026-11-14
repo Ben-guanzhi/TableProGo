@@ -9,9 +9,9 @@ import (
 
 // ---- builders ----
 
-func vInt(n int64) Value    { return Value{Kind: ValInt, I: n} }
-func vText(s string) Value  { return Value{Kind: ValText, S: s} }
-func vNull() Value          { return Value{Kind: ValNull} }
+func vInt(n int64) Value   { return Value{Kind: ValInt, I: n} }
+func vText(s string) Value { return Value{Kind: ValText, S: s} }
+func vNull() Value         { return Value{Kind: ValNull} }
 
 func row(key int64, cols map[string]Value) Row {
 	return Row{Key: []Value{vInt(key)}, Cols: cols}
@@ -326,6 +326,7 @@ func TestDiffStreamEarlyStop(t *testing.T) {
 		t.Fatalf("emit called %d times, want 1", count)
 	}
 }
+
 // batchFetcher returns rows in batches of n, so the merger's cross-batch
 // boundary is exercised (a batch-1 stream never tests that the merger carries
 // its position across a pull).
@@ -407,4 +408,3 @@ func TestDiffStreamMultiBatchPlan(t *testing.T) {
 		}
 	}
 }
-

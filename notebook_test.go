@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // W11b: notebooks, end to end on a real SQLite database.
 //
@@ -167,6 +167,7 @@ func TestNotebookRunObeysSafeMode(t *testing.T) {
 		t.Fatalf("error = %q", res.Result.Error)
 	}
 }
+
 // cellInt reads an integer cell whatever numeric shape the driver produced.
 func cellInt(v interface{}) (int64, bool) {
 	switch x := v.(type) {

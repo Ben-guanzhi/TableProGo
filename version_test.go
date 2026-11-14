@@ -57,13 +57,13 @@ func TestNewerThanComparesDottedVersions(t *testing.T) {
 
 func TestVersionParts(t *testing.T) {
 	cases := map[string][]int{
-		"1.2.3":       {1, 2, 3},
-		"v1.2.3":      {1, 2, 3},
-		"V2":          {2},
-		"1.2.3-rc1":   {1, 2, 3},
+		"1.2.3":        {1, 2, 3},
+		"v1.2.3":       {1, 2, 3},
+		"V2":           {2},
+		"1.2.3-rc1":    {1, 2, 3},
 		"1.2.3+build5": {1, 2, 3},
-		"":            {},
-		"dev":         {},
+		"":             {},
+		"dev":          {},
 	}
 	for in, want := range cases {
 		got := versionParts(in)

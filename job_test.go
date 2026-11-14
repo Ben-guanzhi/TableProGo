@@ -56,7 +56,7 @@ func TestJobRecipeValidateRejectsUnknownKind(t *testing.T) {
 func TestJobRecipeValidateRejectsSelfTransfer(t *testing.T) {
 	// Copying a database onto itself is never what the operator meant.
 	r := &JobRecipe{Steps: []JobStep{{
-		Kind:     "transfer",
+		Kind: "transfer",
 		Transfer: &TransferRequest{
 			Source: TransferTarget{ConnID: "c1", Database: "shop"},
 			Target: TransferTarget{ConnID: "c1", Database: "shop"},

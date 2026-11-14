@@ -52,7 +52,7 @@ type PluginPanel struct {
 	// RegistryPath is where the registry was read from (empty when none).
 	RegistryPath string `json:"registryPath"`
 	// TrustPath is the trust store's location, shown so a user can back it up.
-	TrustPath string `json:"trustPath"`
+	TrustPath string   `json:"trustPath"`
 	Warnings  []string `json:"warnings"`
 }
 

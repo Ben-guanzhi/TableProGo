@@ -51,9 +51,9 @@ type JobStep struct {
 	// Name labels the step in logs; optional.
 	Name string `json:"name,omitempty"`
 
-	Backup   *BackupRequest    `json:"backup,omitempty"`
-	Transfer *TransferRequest  `json:"transfer,omitempty"`
-	RowSync  *RowSyncJobStep   `json:"rowsync,omitempty"`
+	Backup   *BackupRequest   `json:"backup,omitempty"`
+	Transfer *TransferRequest `json:"transfer,omitempty"`
+	RowSync  *RowSyncJobStep  `json:"rowsync,omitempty"`
 	// Wait pauses before the next step (a dump that must finish before the next
 	// connection opens, or a fixed gap between two syncs of the same table).
 	Wait *JobWait `json:"wait,omitempty"`
@@ -180,10 +180,10 @@ type JobStepResult struct {
 
 // JobResult is the whole run's outcome.
 type JobResult struct {
-	Name    string           `json:"name"`
-	Steps   []JobStepResult  `json:"steps"`
-	OK      bool             `json:"ok"`
-	Elapsed string           `json:"elapsed"`
+	Name    string          `json:"name"`
+	Steps   []JobStepResult `json:"steps"`
+	OK      bool            `json:"ok"`
+	Elapsed string          `json:"elapsed"`
 	// FailedStep identifies where the run stopped (0-based); -1 when every step
 	// ran. The exit code and the log both key off it.
 	FailedStep int `json:"failedStep"`

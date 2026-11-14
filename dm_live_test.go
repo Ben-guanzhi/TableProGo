@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // W14: the client path against a live DM8.
 //

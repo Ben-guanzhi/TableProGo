@@ -158,35 +158,35 @@ type serverAuth struct {
 // default, and the reviewer has to decide which side it belongs on. A blocklist would
 // silently publish every future route.
 var readOnlyRoutes = map[string]bool{
-	"/api/connections":              true,
-	"/api/connections/test":         true,
-	"/api/schemas":                  true,
-	"/api/tables":                   true,
-	"/api/columns":                  true,
-	"/api/indexes":                  true,
-	"/api/foreignkeys":              true,
-	"/api/query":                    true,
-	"/api/explain":                  true,
-	"/api/explain-plan":             true,
-	"/api/preview":                  true,
-	"/api/history":                  true,
-	"/api/favorites":                true,
-	"/api/search":                   true,
-	"/api/objects/search":           true,
-	"/api/data-search":              true,
-	"/api/notebooks":                true,
-	"/api/notebooks/run":            true,
-	"/api/build-info":               true,
-	"/api/plugins":                  true,
+	"/api/connections":      true,
+	"/api/connections/test": true,
+	"/api/schemas":          true,
+	"/api/tables":           true,
+	"/api/columns":          true,
+	"/api/indexes":          true,
+	"/api/foreignkeys":      true,
+	"/api/query":            true,
+	"/api/explain":          true,
+	"/api/explain-plan":     true,
+	"/api/preview":          true,
+	"/api/history":          true,
+	"/api/favorites":        true,
+	"/api/search":           true,
+	"/api/objects/search":   true,
+	"/api/data-search":      true,
+	"/api/notebooks":        true,
+	"/api/notebooks/run":    true,
+	"/api/build-info":       true,
+	"/api/plugins":          true,
 	// Listing a plugin's console actions is read-only, so a server-mode viewer can see
 	// that a connection offers "向量检索" or "消费消息". RUNNING one is deliberately NOT
 	// whitelisted: the host cannot tell a read-only action (a similarity search) from a
 	// writing one (publish-config, produce-message), and guessing wrong in the permissive
 	// direction is exactly what the read-only default exists to prevent.
-	"/api/plugin/actions":           true,
-	"/api/oracle/invalid-objects":   true,
-	"/api/oracle/dependencies":      true,
-	"/api/settings":                 true,
+	"/api/plugin/actions":         true,
+	"/api/oracle/invalid-objects": true,
+	"/api/oracle/dependencies":    true,
+	"/api/settings":               true,
 }
 
 // loginRequest is the login form.
@@ -374,4 +374,3 @@ func (a *App) verifyTOTPNow(code string, now time.Time) (bool, error) {
 	_, ok, verr := secret.Verify(code, now, totp.Options{Skew: 1})
 	return ok, verr
 }
-

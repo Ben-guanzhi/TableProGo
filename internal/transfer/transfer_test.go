@@ -238,19 +238,19 @@ func assertDependenciesPrecede(t *testing.T, steps []Step) {
 
 func TestFamilyOf(t *testing.T) {
 	cases := map[string]string{
-		"varchar(64)":                  "string",
-		"character varying(255)":       "string",
-		"timestamp without time zone":  "datetime",
-		"timestamptz":                  "datetime",
-		"numeric(10,2)":                "decimal",
-		"bigint":                       "int",
-		"tinyint(1)":                   "tinyint",
-		"bytea":                        "binary",
-		"double precision":             "float",
-		"jsonb":                        "json",
-		"bool":                         "bool",
-		"uniqueidentifier":             "uuid",
-		"weird_custom_type":            "",
+		"varchar(64)":                 "string",
+		"character varying(255)":      "string",
+		"timestamp without time zone": "datetime",
+		"timestamptz":                 "datetime",
+		"numeric(10,2)":               "decimal",
+		"bigint":                      "int",
+		"tinyint(1)":                  "tinyint",
+		"bytea":                       "binary",
+		"double precision":            "float",
+		"jsonb":                       "json",
+		"bool":                        "bool",
+		"uniqueidentifier":            "uuid",
+		"weird_custom_type":           "",
 	}
 	for raw, want := range cases {
 		if got := familyOf(raw); got != want {

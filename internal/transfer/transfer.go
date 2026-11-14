@@ -58,7 +58,7 @@ type Cycle struct {
 // Step is one unit of work, in execution order.
 type Step struct {
 	// Kind is what the step does: "create", "rows", "fk".
-	Kind string
+	Kind  string
 	Table string
 	// DependsOn names the steps that must have completed first (table names,
 	// not step ids, since one table contributes several steps).
@@ -272,11 +272,11 @@ func sortWarnings(warnings *[]string) {
 // target engine. It is reported rather than silently coerced: a decimal that
 // becomes a float is data loss the user must choose, not a copy detail.
 type TypeLoss struct {
-	Table    string
-	Column   string
-	Source   string
-	Target   string
-	Reason   string
+	Table  string
+	Column string
+	Source string
+	Target string
+	Reason string
 }
 
 // typeFamilies groups type spellings by what they can hold, which is what a

@@ -54,18 +54,18 @@ type RowSyncPreview struct {
 	PlanID string `json:"planId"`
 	Table  string `json:"table"`
 	// PK is the primary-key column order both sides agreed on.
-	PK []string `json:"pk"`
-	Inserts int `json:"inserts"`
-	Updates int `json:"updates"`
-	Deletes int `json:"deletes"`
-	Total   int `json:"total"`
+	PK      []string `json:"pk"`
+	Inserts int      `json:"inserts"`
+	Updates int      `json:"updates"`
+	Deletes int      `json:"deletes"`
+	Total   int      `json:"total"`
 	// Sample is the first N changes, for the UI's list.
 	Sample []RowSyncChange `json:"sample"`
 	// Truncated says there are more changes than the sample shows.
 	Truncated bool `json:"truncated"`
 	// ReadRows is how many rows each side yielded.
-	SourceRows int64 `json:"sourceRows"`
-	TargetRows int64 `json:"targetRows"`
+	SourceRows int64  `json:"sourceRows"`
+	TargetRows int64  `json:"targetRows"`
 	Elapsed    string `json:"elapsed"`
 }
 
@@ -96,10 +96,10 @@ type RowSyncApplyResult struct {
 // rowSyncPlan is the stored plan: enough to re-render every change's SQL at
 // apply time from the values this process computed.
 type rowSyncPlan struct {
-	req     RowSyncRequest
-	pk      []string
-	columns []string
-	changes []rowsync.Change
+	req       RowSyncRequest
+	pk        []string
+	columns   []string
+	changes   []rowsync.Change
 	createdAt time.Time
 }
 

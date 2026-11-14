@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // Protocol-compatible engines: one wire protocol, one dialect, several product
 // names. OceanBase's MySQL mode speaks the MySQL wire protocol, GreatSQL and

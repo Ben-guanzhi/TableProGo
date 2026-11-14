@@ -89,7 +89,7 @@ type pluginHostEntry struct {
 	// still recorded, so a concurrent acquireHost waits on done instead of
 	// starting a second process for the same key (TP-16).
 	withdrawing bool
-	done         chan struct{} // closed once host.Close() returned
+	done        chan struct{} // closed once host.Close() returned
 }
 
 // hostKey identifies a plugin process by executable AND the engine it serves.

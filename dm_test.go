@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 // W14: 达梦 DM8.
 //

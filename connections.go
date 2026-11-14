@@ -133,7 +133,7 @@ type ConnectionConfig struct {
 	// of the CONN_COLORS keys ("red"/"amber"/"green"/"teal"/"blue"/"purple"),
 	// "" = none. The palette lives in the frontend, which renders it; the
 	// backend just stores the key so saved connections keep their colour.
-	Color string `json:"color,omitempty"`
+	Color   string            `json:"color,omitempty"`
 	Options map[string]string `json:"options"`
 	// SSH optionally routes the connection through a jump host. The database
 	// host/port above stay the ones the user typed; the tunnel rewrites only the

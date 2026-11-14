@@ -18,12 +18,12 @@ type SSHResolveResult struct {
 	// Found is false when the config has no block for the host; the dialog then
 	// shows the alias unchanged and says so, instead of pretending a mapping
 	// exists.
-	Found     bool     `json:"found"`
-	Alias     string   `json:"alias"`
-	HostName  string   `json:"hostName"`
-	User      string   `json:"user"`
-	Port      int      `json:"port"`
-	KeyFiles  []string `json:"keyFiles"`
+	Found    bool     `json:"found"`
+	Alias    string   `json:"alias"`
+	HostName string   `json:"hostName"`
+	User     string   `json:"user"`
+	Port     int      `json:"port"`
+	KeyFiles []string `json:"keyFiles"`
 	// Rejected and Warnings are surfaced, not swallowed: "why did my
 	// ProxyJump not take effect" is answerable from the dialog.
 	Rejected []sshconfig.Rejected `json:"rejected"`
@@ -53,9 +53,9 @@ func (a *App) ResolveSSHConfig(host string) (SSHResolveResult, error) {
 
 // SSHConfigSummary is the whole file, for a "pick an alias" list.
 type SSHConfigSummary struct {
-	Hosts    []SSHHostSummary       `json:"hosts"`
-	Rejected []sshconfig.Rejected   `json:"rejected"`
-	Warnings []string               `json:"warnings"`
+	Hosts    []SSHHostSummary     `json:"hosts"`
+	Rejected []sshconfig.Rejected `json:"rejected"`
+	Warnings []string             `json:"warnings"`
 }
 
 // SSHHostSummary is one selectable alias.

@@ -1,4 +1,4 @@
-﻿package totp
+package totp
 
 // Correctness is pinned by the RFC's OWN vectors (Appendix B): a TOTP implementation
 // that "looks right" will accept a code from the wrong window or truncate wrongly, and

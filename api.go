@@ -1021,7 +1021,7 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/session/title", 400, func(a *App, body sessionTitleRequest) (any, error) {
 		return map[string]string{"title": a.SetSessionTitle(body.Conn, body.DB)}, nil
 	})
-		// SQLucid 修复环（Q-02）：用户改"意图说明"，模型重写等待中的 proposal。
+	// SQLucid 修复环（Q-02）：用户改"意图说明"，模型重写等待中的 proposal。
 	// 不执行新语句——重写后的 proposal 回到等待列表，接受仍走上面的 accept。
 	// 手写而非 post()：refine 的模型调用需要请求上下文（用户关掉面板时中止计费）。
 	mux.HandleFunc("/api/llm/proposal/refine", func(w http.ResponseWriter, r *http.Request) {

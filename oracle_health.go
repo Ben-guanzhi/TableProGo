@@ -55,7 +55,7 @@ type OracleRecompileResult struct {
 	// Compiled is whether the statement itself ran.
 	Compiled bool `json:"compiled"`
 	// StillInvalid is the real answer to "did that fix it".
-	StillInvalid bool `json:"stillInvalid"`
+	StillInvalid bool                 `json:"stillInvalid"`
 	Errors       []OracleCompileError `json:"errors"`
 	// Error is a failure of the request itself (no connection, refused, …).
 	Error string `json:"error,omitempty"`
