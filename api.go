@@ -202,6 +202,17 @@ type llmAskRequest struct {
 	Question string `json:"question"`
 }
 
+// llmRefineRequest is the repair loop's body: user's correction for one proposal.
+type llmRefineRequest struct {
+	ID       string `json:"id"`
+	Feedback string `json:"feedback"`
+}
+
+// llmExplainRequest asks for the clause-step breakdown of one SQL statement.
+type llmExplainRequest struct {
+	SQL string `json:"sql"`
+}
+
 // llmProposalRequest addresses one proposed statement.
 type llmProposalRequest struct {
 	ID string `json:"id"`
@@ -1001,6 +1012,31 @@ func (a *App) routes() *http.ServeMux {
 	})
 	post(a, mux, "/api/llm/proposal/reject", 400, func(a *App, body llmProposalRequest) (any, error) {
 		return map[string]bool{"rejected": a.RejectProposal(body.ID) == nil}, nil
+	})
+	// SQLucid 修复环（Q-02）：用户改"意图说明"，模型重写等待中的 proposal。
+	// 不执行新语句——重写后的 proposal 回到等待列表，接受仍走上面的 accept。
+	// 手写而非 post()：refine 的模型调用需要请求上下文（用户关掉面板时中止计费）。
+	mux.HandleFunc("/api/llm/proposal/refine", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(405)
+			return
+		}
+		var body llmRefineRequest
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, apiBodyLimit)).Decode(&body); err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		proposal, err := a.refineProposal(r.Context(), body.ID, body.Feedback)
+		if err != nil {
+			writeError(w, 400, err.Error())
+			return
+		}
+		writeJSON(w, map[string]any{"proposal": proposal})
+	})
+	// SQLucid 视觉对应（Q-01）：proposal 卡的分句解释——每步原文 + 引用的列名
+	// 清单，前端 hover 解释步时高亮结果网格里同名的列。
+	post(a, mux, "/api/llm/proposal/explain", 400, func(a *App, body llmExplainRequest) (any, error) {
+		return map[string]any{"steps": splitSQLSteps(body.SQL)}, nil
 	})
 	// Hand-written instead of post() so the question's cancel reaches the
 	// upstream model call: the generic wrapper has no request context to hand

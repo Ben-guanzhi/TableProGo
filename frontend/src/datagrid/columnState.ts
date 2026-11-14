@@ -23,6 +23,8 @@ export interface ColumnState {
   // position - a sort can move a column without losing its size.
   overrides: Record<string, number>;
   locate: string;
+  // SQLucid (Q-01): AI 面板 hover 解释步时高亮的列名集合（小写）。空 = 无。
+  aiHighlight: string[];
   // Which match the locate box is pointing at. 0 until Enter walks it.
   activeMatch: number;
   sort: SortState | null;
@@ -39,6 +41,7 @@ export interface ColumnState {
 export const emptyColumnState = (): ColumnState => ({
   overrides: {},
   locate: '',
+  aiHighlight: [],
   activeMatch: 0,
   sort: null,
   filters: {},
@@ -49,6 +52,8 @@ export const emptyColumnState = (): ColumnState => ({
 
 export type ColumnAction =
   | { type: 'locateType'; value: string }
+  | { type: 'aiHighlight'; columns: string[] }
+  | { type: 'aiHighlightClear' }
   | { type: 'locateClear' }
   | { type: 'locateNext'; total: number }
   | { type: 'sortToggle'; column: string; dir: 'asc' | 'desc' }
@@ -73,6 +78,12 @@ export const columnReducer = (state: ColumnState, action: ColumnAction): ColumnS
 
     case 'locateClear':
       return { ...state, locate: '', activeMatch: 0 };
+
+    // SQLucid (Q-01): AI 面板 hover 解释步 → 高亮引用的列；离开 → 清除。
+    case 'aiHighlight':
+      return { ...state, aiHighlight: action.columns };
+    case 'aiHighlightClear':
+      return { ...state, aiHighlight: [] };
 
     // Enter walks the matches and wraps, so a long list never dead-ends.
     case 'locateNext':

@@ -103,6 +103,30 @@ export async function RejectLlmProposal(id: string): Promise<void> {
   await post('/api/llm/proposal/reject', { id });
 }
 
+// One clause step of the SQLucid breakdown (Q-01): the clause's original text
+// plus the column names it references, so hovering a step can highlight the
+// matching columns in the results grid.
+export interface LlmSqlStep {
+  clause: string;
+  text: string;
+  columns: string[];
+}
+
+// ExplainLlmSQL breaks one SQL statement into clause steps (static, no round
+// trip to the database) — the visual-correspondence half of the SQLucid trio.
+export async function ExplainLlmSQL(sql: string): Promise<LlmSqlStep[]> {
+  const res = await post('/api/llm/proposal/explain', { sql });
+  return (res?.steps ?? []) as LlmSqlStep[];
+}
+
+// RefineLlmProposal is the editable-explanation loop (Q-02): the user corrects
+// the intent, the model rewrites the waiting proposal in place (same id, risk
+// re-assessed). Nothing executes — the rewritten proposal waits again.
+export async function RefineLlmProposal(id: string, feedback: string): Promise<LlmProposal> {
+  const res = await post('/api/llm/proposal/refine', { id, feedback });
+  return (res?.proposal ?? {}) as LlmProposal;
+}
+
 // LoadLlmHistory reads the remembered conversation.
 export async function LoadLlmHistory(): Promise<LlmMessage[]> {
   const res = await post('/api/llm/history', {});

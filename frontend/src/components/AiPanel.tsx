@@ -4,10 +4,13 @@ import {
   AcceptLlmProposal,
   AskLlm,
   ClearLlmHistory,
+  ExplainLlmSQL,
   LlmConfig,
   LlmMessage,
   LlmProposal,
   LlmProvider,
+  LlmSqlStep,
+  RefineLlmProposal,
   LoadLlmProposals,
   RejectLlmProposal,
   LoadLlmConfig,
@@ -42,6 +45,16 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose, confirm }) => {
   // The proposal currently being accepted or rejected, so a double click cannot
   // send the same one twice and meet the backend's "no longer waiting" error.
   const [actingId, setActingId] = useState<string | null>(null);
+  // SQLucid (Q-01): 每张 proposal 卡的分句解释（clause steps），按 id 缓存；
+  // hover 某一步时把该步引用的列名广播给网格高亮（aiHighlight）。
+  const [steps, setSteps] = useState<Record<string, LlmSqlStep[]>>({});
+  const [hoverStep, setHoverStep] = useState<string | null>(null); // `${id}:${idx}`
+  // SQLucid (Q-02): 修复环的局部状态——哪张卡打开了修正输入、输入内容、提交中。
+  const [refineId, setRefineId] = useState<string | null>(null);
+  const [refineText, setRefineText] = useState('');
+  const [refiningId, setRefiningId] = useState<string | null>(null);
+  // 展开了分句解释的卡 id（Q-01）。
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const askAbort = useRef<AbortController | null>(null);
 
@@ -65,6 +78,54 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose, confirm }) => {
       setProposals(await LoadLlmProposals());
     } catch {
       /* the panel stays as it is */
+    }
+  };
+
+  // SQLucid (Q-01): 拉（或用缓存）一张卡的分句解释，展开卡片时调用一次。
+  const ensureSteps = async (p: LlmProposal) => {
+    if (steps[p.id]) return;
+    try {
+      const got = await ExplainLlmSQL(p.sql);
+      setSteps(current => ({ ...current, [p.id]: got }));
+    } catch {
+      /* 解释失败不阻断卡片：卡上仍有原始 SQL */
+    }
+  };
+
+  // SQLucid (Q-01): hover 某一步 → 广播该步引用的列名给网格；离开 → 清除。
+  const dispatchHighlight = (p: LlmProposal, idx: number | null) => {
+    if (idx === null) {
+      setHoverStep(null);
+      window.dispatchEvent(new CustomEvent('tabula:ai-highlight', { detail: { columns: [] } }));
+      return;
+    }
+    setHoverStep(`${p.id}:${idx}`);
+    const step = steps[p.id]?.[idx];
+    const columns = step ? (step.columns ?? []) : [];
+    window.dispatchEvent(new CustomEvent('tabula:ai-highlight', { detail: { columns } }));
+  };
+
+  // SQLucid (Q-02): 修复环提交——用户改"意图说明"，模型重写等待中的 proposal。
+  const submitRefine = async (p: LlmProposal) => {
+    const feedback = refineText.trim();
+    if (!feedback || refiningId) return;
+    setError('');
+    setRefiningId(p.id);
+    try {
+      const rewritten = await RefineLlmProposal(p.id, feedback);
+      setRefineId(null);
+      setRefineText('');
+      await refreshProposals();
+      // 重写后的 SQL 变了：作废旧解释，重新拉取。
+      setSteps(current => {
+        const next = { ...current };
+        delete next[rewritten.id ?? p.id];
+        return next;
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRefiningId(null);
     }
   };
 
@@ -325,7 +386,65 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose, confirm }) => {
               {p.risk && p.risk.level === 'read' && p.risk.unboundedScan && (
                 <div className="mb-1 text-2xs text-muted">· 无 LIMIT：结果可能很大（按行数上限截断）</div>
               )}
+              {expandedId === p.id && steps[p.id] && steps[p.id].length > 0 && (
+                <div className="mb-1.5 space-y-0.5">
+                  {steps[p.id].map((s, i) => {
+                    const hovered = hoverStep === `${p.id}:${i}`;
+                    return (
+                      <div
+                        key={i}
+                        data-testid={`ai-step-${p.id}-${i}`}
+                        className={`rounded px-1.5 py-0.5 cursor-help ${hovered ? 'bg-success/15 border border-success/40' : 'bg-raised'}`}
+                        onMouseEnter={() => dispatchHighlight(p, i)}
+                        onMouseLeave={() => dispatchHighlight(p, null)}
+                        onFocus={() => dispatchHighlight(p, i)}
+                        onBlur={() => dispatchHighlight(p, null)}
+                        tabIndex={0}
+                        role="note"
+                        aria-label={`步骤 ${s.clause}：引用列 ${(s.columns ?? []).join('、') || '无'}`}
+                      >
+                        <span className="text-2xs font-semibold text-accent">{s.clause}</span>
+                        <pre className="text-2xs text-ink whitespace-pre-wrap break-words">{s.text}</pre>
+                      </div>
+                    );
+                  })}
+                  <div className="text-2xs text-muted">悬停某一步会在结果网格中高亮它引用的列。</div>
+                </div>
+              )}
               <pre className="text-2xs text-ink whitespace-pre-wrap break-words mb-1.5">{p.sql}</pre>
+              {refineId === p.id ? (
+                <div className="mb-1.5 space-y-1">
+                  <textarea
+                    className="w-full bg-canvas border border-line rounded px-1.5 py-1 text-2xs text-ink focus:outline-none focus:border-accent resize-none"
+                    rows={2}
+                    value={refineText}
+                    placeholder="描述哪里不对 / 你其实想要什么，模型会重写这条语句（不执行）"
+                    aria-label="修正说明"
+                    onChange={e => setRefineText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        submitRefine(p);
+                      }
+                    }}
+                  />
+                  <div className="flex items-center gap-1">
+                    <button
+                      className="px-2 py-0.5 rounded text-2xs bg-accent text-on-accent hover:bg-accent-hover disabled:opacity-40"
+                      onClick={() => submitRefine(p)}
+                      disabled={!!refiningId || !refineText.trim()}
+                    >
+                      {refiningId === p.id ? '重写中…' : '让模型重写'}
+                    </button>
+                    <button
+                      className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink"
+                      onClick={() => { setRefineId(null); setRefineText(''); }}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               <div className="flex items-center gap-1">
                 <button
                   className={`px-2 py-0.5 rounded text-2xs disabled:opacity-40 ${
@@ -339,11 +458,30 @@ const AiPanel: React.FC<AiPanelProps> = ({ onClose, confirm }) => {
                   {p.risk?.level === 'destructive' ? '确认执行（高风险）' : '执行'}
                 </button>
                 <button
+                  className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink"
+                  onClick={() => {
+                    if (expandedId === p.id) { dispatchHighlight(p, null); setExpandedId(null); }
+                    else { setExpandedId(p.id); ensureSteps(p); }
+                  }}
+                  aria-expanded={expandedId === p.id}
+                  title="分句解释（悬停步骤高亮网格列）"
+                >
+                  {expandedId === p.id ? '收起解释' : '解释'}
+                </button>
+                <button
                   className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
                   onClick={() => reject(p.id)}
                   disabled={!!actingId}
                 >
                   放弃
+                </button>
+                <button
+                  className="px-2 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink disabled:opacity-40"
+                  onClick={() => { setRefineId(refineId === p.id ? null : p.id); setRefineText(''); }}
+                  disabled={!!refiningId}
+                  title="改意图说明，让模型重写这条语句（SQLucid 修复环）"
+                >
+                  修正
                 </button>
                 <span className="text-2xs text-muted ml-auto">连接 {p.connection}</span>
               </div>

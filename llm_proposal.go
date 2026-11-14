@@ -81,6 +81,27 @@ func (p *proposalStore) list() []Proposal {
 	return out
 }
 
+// get returns a waiting proposal without removing it (the repair loop reads
+// the original SQL/Reason before asking the model for a rewrite).
+func (p *proposalStore) get(id string) (Proposal, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	proposal, ok := p.items[id]
+	return proposal, ok
+}
+
+// replace swaps a waiting proposal's SQL/Reason/Risk in place, keeping the ID
+// (the repair loop's card must not jump under the user's cursor).
+func (p *proposalStore) replace(proposal Proposal) (Proposal, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, ok := p.items[proposal.ID]; !ok {
+		return Proposal{}, false
+	}
+	p.items[proposal.ID] = proposal
+	return proposal, true
+}
+
 // ProposeStatement records a statement the model wants to run and returns its id.
 // The statement is not executed here.
 func (a *App) ProposeStatement(connection, database, sql, reason string) (Proposal, error) {

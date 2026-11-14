@@ -133,7 +133,7 @@ const DataGrid: React.FC<DataGridProps> = ({
   // Selection itself is a set now (P1-6), so anything that used to read a single
   // index goes through this.
   const primaryRow = primarySelected(editor);
-  const { overrides, locate, activeMatch, sort, filters, menu, filterDraft, exportMenu } = gridCols;
+  const { overrides, locate, activeMatch, sort, filters, menu, filterDraft, exportMenu, aiHighlight } = gridCols;
   const { picker, query: fkQuery, activeOption, lists: fkLists, foreignKeys } = fk;
 
   // The table's own key columns, read from the catalog: a duplicate leaves them
@@ -302,6 +302,19 @@ const DataGrid: React.FC<DataGridProps> = ({
       window.removeEventListener('keydown', onKey);
     };
   }, [menu]);
+
+  // SQLucid (Q-01): the AI panel broadcasts the columns a hovered explanation
+  // step references; the grid highlights those headers. The event carries the
+  // lowercase column names; a name that matches no column here simply no-ops.
+  useEffect(() => {
+    const onAI = (e: Event) => {
+      const detail = (e as CustomEvent<{ columns?: string[] }>).detail;
+      const columns = Array.isArray(detail?.columns) ? detail.columns : [];
+      dispatchColumns({ type: 'aiHighlight', columns });
+    };
+    window.addEventListener('tabula:ai-highlight', onAI);
+    return () => window.removeEventListener('tabula:ai-highlight', onAI);
+  }, []);
 
   // Same for the export menu: Escape and a click anywhere else close it, while
   // Tab walks straight into the items because they sit next to the button.
@@ -882,8 +895,9 @@ const DataGrid: React.FC<DataGridProps> = ({
               </th>
               {columns.map((col, i) => {
                 const comment = showComments ? comments?.[col.name.toLowerCase()] : undefined;
+                const aiHit = aiHighlight.includes(col.name.toLowerCase());
                 const highlight =
-                  i === activeColumn ? 'bg-accent/40' : matches.includes(i) ? 'bg-accent/15' : 'bg-panel';
+                  i === activeColumn ? 'bg-accent/40' : aiHit ? 'bg-success/30 border-success/60' : matches.includes(i) ? 'bg-accent/15' : 'bg-panel';
                 const sorted = sort?.column === col.name ? sort.dir : null;
                 const filtered = filters[col.name];
                 const hint = [
