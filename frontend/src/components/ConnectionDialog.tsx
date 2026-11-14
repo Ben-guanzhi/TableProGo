@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { ConnectionConfig, EngineType } from '../types';
+import { ConnectionConfig, EngineType, CONN_COLORS } from '../types';
 import type { SSHConfig } from '../types';
 import { FiX, FiDatabase, FiCheck } from 'react-icons/fi';
 import toast from 'react-hot-toast';
@@ -45,6 +45,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
     options: {},
     ssh: { ...emptySSH },
     isolationLevel: '',
+    color: '',
   });
 
   const [testing, setTesting] = useState(false);
@@ -144,6 +145,7 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
         ssh: initialConfig.ssh ? { ...emptySSH, ...initialConfig.ssh } : { ...emptySSH },
         databaseFilter: initialConfig.databaseFilter,
         isolationLevel: initialConfig.isolationLevel ?? '',
+    color: initialConfig.color ?? '',
       });
     }
   }, [initialConfig]);
@@ -480,6 +482,33 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
               </p>
             </div>
           )}
+
+          <div>
+            <label htmlFor="conn-color" className="block text-sm text-secondary mb-1">
+              连接颜色
+            </label>
+            <div id="conn-color" role="radiogroup" aria-label="连接颜色" className="flex items-center gap-2 flex-wrap">
+              {CONN_COLORS.map(c => (
+                <button
+                  key={c.key || 'none'}
+                  type="button"
+                  role="radio"
+                  aria-checked={(config.color ?? '') === c.key}
+                  title={c.label}
+                  onClick={() => setConfig({ ...config, color: c.key })}
+                  className={`w-6 h-6 rounded-full border-2 flex items-center justify-center ${
+                    (config.color ?? '') === c.key ? 'border-ink' : 'border-transparent'
+                  }`}
+                  style={{ background: c.hex || 'transparent' }}
+                >
+                  {!c.hex && <span className="text-2xs text-secondary">无</span>}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1 text-xs text-secondary">
+              侧栏里该连接名旁显示色点（红=生产、橙=预发……）——写语句前先看见「连的是哪台」。
+            </p>
+          </div>
 
           {config.type !== 'sqlite' && (
             <div className="border-t border-line pt-4 space-y-3">

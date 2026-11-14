@@ -32,6 +32,9 @@ export interface Connection {
   sslMode: string;
   // Sidebar section label; empty = ungrouped section.
   group?: string;
+  // Connection colour tag (TablePlus 惯例): preset key, "" = none. Rendered
+  // as a dot beside the connection name — "which server" at a glance.
+  color?: string;
   options: Record<string, string>;
   ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
@@ -80,10 +83,30 @@ export interface ConnectionConfig {
   sslMode: string;
   // Sidebar section label; empty = ungrouped section.
   group?: string;
+  // Connection colour tag preset key; "" = none (see CONN_COLORS).
+  color?: string;
   options: Record<string, string>;
   ssh?: SSHConfig;
   databaseFilter?: DatabaseFilter;
   isolationLevel?: string;
+}
+
+// Connection colour presets (TablePlus 惯例). Keys are what the backend
+// stores; hexes are tuned to stay distinguishable on light and dark themes.
+// db-dev's CONN_COLORS uses the same hues so the family stays consistent.
+export const CONN_COLORS: { key: string; label: string; hex: string }[] = [
+  { key: '', label: '无', hex: '' },
+  { key: 'red', label: '红（生产）', hex: '#e5484d' },
+  { key: 'amber', label: '橙（预发）', hex: '#f5874f' },
+  { key: 'green', label: '绿（开发）', hex: '#46a758' },
+  { key: 'teal', label: '青（测试）', hex: '#12a594' },
+  { key: 'blue', label: '蓝（本地）', hex: '#0091ff' },
+  { key: 'purple', label: '紫（其他）', hex: '#8e4ec6' },
+];
+
+export function connColorHex(key?: string): string {
+  if (!key) return '';
+  return CONN_COLORS.find(c => c.key === key)?.hex ?? '';
 }
 
 export interface Column {

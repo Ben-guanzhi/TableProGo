@@ -1,6 +1,6 @@
 import React, { useEffect, useReducer, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Connection, DatabaseFilter, KVKeyInfo } from '../types';
+import { Connection, DatabaseFilter, KVKeyInfo, connColorHex } from '../types';
 import { GetColumns, GetDatabases, GetKVKeyInfo, GetKVKeys, GetSchemas, GetTableStructure, GetTables, TableRef } from '../api';
 import DatabaseFilterDialog from './DatabaseFilterDialog';
 import SidebarMenu from './SidebarMenu';
@@ -616,6 +616,20 @@ const Sidebar: React.FC<SidebarProps> = ({
               .privacy CSS blurs it. Non-connection nodes are structure, not
               identity, and stay readable. */}
           <span data-private={node.kind === 'connection' ? '' : undefined}>{node.label}</span>
+
+          {/* 波 97（TablePlus 惯例）：连接色点在名字前回答「连的是哪台」。
+              色键存在连接上（connColorHex 解析），无色不占位。非纯色信号：
+              连接菜单里同名可改，色点是冗余通道不是唯一标识。 */}
+          {node.kind === 'connection' && (() => {
+            const hex = connColorHex(node.connection?.color);
+            return hex ? (
+              <span
+                aria-hidden="true"
+                className="w-2 h-2 rounded-full shrink-0 mr-1"
+                style={{ background: hex }}
+              />
+            ) : null;
+          })()}
         </span>
 
         {node.kind === 'column' && node.dataType && (

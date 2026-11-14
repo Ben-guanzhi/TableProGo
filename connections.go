@@ -131,7 +131,14 @@ type ConnectionConfig struct {
 	IsolationLevel string `json:"isolationLevel,omitempty"`
 	// Group labels the sidebar section the connection renders under (P2-3);
 	// "" is the ungrouped section, so old connection files keep their layout.
-	Group   string            `json:"group,omitempty"`
+	Group string `json:"group,omitempty"`
+	// Color is a preset connection tag (TablePlus/Navicat 惯例): a coloured dot
+	// beside the connection answers "which server" before a statement is
+	// written — the cheap guard against running a DROP on the wrong host. One
+	// of the CONN_COLORS keys ("red"/"amber"/"green"/"teal"/"blue"/"purple"),
+	// "" = none. The palette lives in the frontend, which renders it; the
+	// backend just stores the key so saved connections keep their colour.
+	Color string `json:"color,omitempty"`
 	Options map[string]string `json:"options"`
 	// SSH optionally routes the connection through a jump host. The database
 	// host/port above stay the ones the user typed; the tunnel rewrites only the
