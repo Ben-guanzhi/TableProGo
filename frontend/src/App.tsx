@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiActivity, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiPackage, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiAlertTriangle, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiFolder, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiPackage, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
@@ -1903,7 +1903,7 @@ useEffect(() => {
           >
             +
           </button>
-          <div className="ml-auto flex items-center gap-1 pr-2">
+          <div className="ml-auto flex items-center gap-1 pr-2 shrink-0 overflow-x-auto min-w-0">
             <button
               className="p-1.5 text-secondary hover:text-ink"
               onClick={openCompareTab}
@@ -1951,7 +1951,7 @@ useEffect(() => {
               title="无效对象：列出并重编译（Oracle）"
               aria-label="无效对象"
             >
-              <FiCode size={14} />
+              <FiAlertTriangle size={14} />
             </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="工作台 · 控制台/终端/文件/监控/容器/消息" />
             <button
@@ -1976,7 +1976,7 @@ useEffect(() => {
               title="文件：SFTP 浏览/上传/下载（navop-ssh 插件）"
               aria-label="文件工作台"
             >
-              <FiDownload size={14} />
+              <FiFolder size={14} />
             </button>
             <button
               className="p-1.5 text-secondary hover:text-ink"
