@@ -1,14 +1,14 @@
 // Package tableprosql is a compatibility facade over dbcore/sqltext.
 //
-// The implementation moved to github.com/dbcore/dbcore/sqltext so every client
+// The implementation moved to github.com/Ben-guanzhi/dbcore/sqltext so every client
 // (TablePro, Fynequery, future consumers) shares one dialect layer. This package
 // keeps the historical import path working; new code should import sqltext
 // directly.
 //
-// Deprecated: use github.com/dbcore/dbcore/sqltext.
+// Deprecated: use github.com/Ben-guanzhi/dbcore/sqltext.
 package tableprosql
 
-import "github.com/dbcore/dbcore/sqltext"
+import "github.com/Ben-guanzhi/dbcore/sqltext"
 
 // Engine identifiers, re-exported for callers that still spell them here.
 const (

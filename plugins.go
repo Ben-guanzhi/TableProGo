@@ -2,7 +2,7 @@ package main
 
 // Plugin drivers: an engine this binary cannot compile can still be browsed and
 // queried, by running it in a child process that speaks the dbcore plugin protocol
-// (github.com/dbcore/dbcore/plugindriver).
+// (github.com/Ben-guanzhi/dbcore/plugindriver).
 //
 // The interesting part is not the launch — it is that a plugin-backed connection has
 // no *sql.DB, so every path that assumed one has to be answered deliberately:
@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 	"tablepro-go/internal/pluginreg"
 )
 

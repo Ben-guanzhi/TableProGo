@@ -3,7 +3,7 @@ module github.com/Ben-guanzhi/TableProGo/tableproxlsx
 go 1.25.0
 
 require (
-	github.com/dbcore/dbcore v0.1.0
+	github.com/Ben-guanzhi/dbcore v0.2.0
 	github.com/xuri/excelize/v2 v2.11.0
 )
 
@@ -17,5 +17,3 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 )
-
-replace github.com/dbcore/dbcore => ../../dbcore

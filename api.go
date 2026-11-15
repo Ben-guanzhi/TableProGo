@@ -18,7 +18,7 @@ import (
 	"tablepro-go/internal/sqlformat"
 
 	"github.com/Ben-guanzhi/TableProGo/tableproxlsx"
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // statusOK is the shared success payload of the mutating endpoints.

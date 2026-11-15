@@ -3,7 +3,7 @@ module navop-containers
 go 1.25.0
 
 require (
-	github.com/dbcore/dbcore v0.1.0
+	github.com/Ben-guanzhi/dbcore v0.2.0
 	golang.org/x/crypto v0.55.0
 	tablepro-go v0.0.0
 )
@@ -20,5 +20,3 @@ require (
 // canonical one-way edge (§6.5: no cycle by construction), so the lifecycle
 // tests can drive "Inactive until ssh appears, dead the moment ssh dies".
 replace tablepro-go => ../..
-
-replace github.com/dbcore/dbcore => ../../../dbcore

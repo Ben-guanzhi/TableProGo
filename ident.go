@@ -1,7 +1,7 @@
 package main
 
 import (
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 
 	"regexp"
 	"strings"

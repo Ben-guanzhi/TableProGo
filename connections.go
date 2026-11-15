@@ -10,15 +10,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
 
-	dbcoredm "github.com/dbcore/dbcore/dm"
-	dbcoremssql "github.com/dbcore/dbcore/mssql"
-	dbcoremysql "github.com/dbcore/dbcore/mysql"
-	oracledsn "github.com/dbcore/dbcore/oracledsn"
-	dbcorepg "github.com/dbcore/dbcore/postgres"
-	dbcoresqlite "github.com/dbcore/dbcore/sqlite"
+	dbcoredm "github.com/Ben-guanzhi/dbcore/dm"
+	dbcoremssql "github.com/Ben-guanzhi/dbcore/mssql"
+	dbcoremysql "github.com/Ben-guanzhi/dbcore/mysql"
+	oracledsn "github.com/Ben-guanzhi/dbcore/oracledsn"
+	dbcorepg "github.com/Ben-guanzhi/dbcore/postgres"
+	dbcoresqlite "github.com/Ben-guanzhi/dbcore/sqlite"
 	"tablepro-go/internal/catalogsnap"
 	"tablepro-go/internal/pool"
 )

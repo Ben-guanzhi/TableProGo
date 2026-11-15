@@ -15,8 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
 )
 
 // driverFor resolves the driver for a connection's engine.

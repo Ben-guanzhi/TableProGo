@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dbcore/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
 )
 
 // fakeConsolePluginSource is a plugin that declares one console action and echoes its
@@ -33,8 +33,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
 )
 
 func main() {
@@ -131,8 +131,8 @@ func buildFakeConsolePlugin(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("abs: %v", err)
 	}
-	goMod := "module fakeconsole\n\ngo 1.25\n\nrequire github.com/dbcore/dbcore v0.0.0\n\n" +
-		"replace github.com/dbcore/dbcore => " + filepath.ToSlash(repoRoot) + "\n"
+	goMod := "module fakeconsole\n\ngo 1.25\n\nrequire github.com/Ben-guanzhi/dbcore v0.0.0\n\n" +
+		"replace github.com/Ben-guanzhi/dbcore => " + filepath.ToSlash(repoRoot) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}

@@ -8,12 +8,12 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/drivertest"
-	dbcoremssql "github.com/dbcore/dbcore/mssql"
-	dbcoremysql "github.com/dbcore/dbcore/mysql"
-	dbcoreoracle "github.com/dbcore/dbcore/oracle"
-	dbcorepg "github.com/dbcore/dbcore/postgres"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/drivertest"
+	dbcoremssql "github.com/Ben-guanzhi/dbcore/mssql"
+	dbcoremysql "github.com/Ben-guanzhi/dbcore/mysql"
+	dbcoreoracle "github.com/Ben-guanzhi/dbcore/oracle"
+	dbcorepg "github.com/Ben-guanzhi/dbcore/postgres"
 )
 
 // TestLiveEngineContract runs the shared engine contract (dbcore/drivertest)

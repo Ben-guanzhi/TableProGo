@@ -9,8 +9,8 @@
 package paging
 
 import (
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/keyset"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/keyset"
 
 	"tablepro-go/internal/catalogmodel"
 )

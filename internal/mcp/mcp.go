@@ -19,7 +19,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dbcore/dbcore/masking"
+	"github.com/Ben-guanzhi/dbcore/masking"
 
 	"tablepro-go/internal/mcpcompact"
 )

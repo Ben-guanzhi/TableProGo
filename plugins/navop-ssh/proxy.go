@@ -26,8 +26,8 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/dbcore/dbcore/plugindriver"
-	"github.com/dbcore/dbcore/plugindriver/workbench"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore/plugindriver/workbench"
 )
 
 // tunnelInfo is the provider's answer for op=dial: how to reach the tunnel.

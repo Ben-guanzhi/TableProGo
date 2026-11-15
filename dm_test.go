@@ -18,7 +18,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // dmTestConn builds a DM connection pointing at a closed port: connecting must fail,

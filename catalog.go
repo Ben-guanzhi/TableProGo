@@ -8,14 +8,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/dm"
-	"github.com/dbcore/dbcore/mssql"
-	"github.com/dbcore/dbcore/mysql"
-	"github.com/dbcore/dbcore/oracle"
-	"github.com/dbcore/dbcore/postgres"
-	"github.com/dbcore/dbcore/sqlite"
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/dm"
+	"github.com/Ben-guanzhi/dbcore/mssql"
+	"github.com/Ben-guanzhi/dbcore/mysql"
+	"github.com/Ben-guanzhi/dbcore/oracle"
+	"github.com/Ben-guanzhi/dbcore/postgres"
+	"github.com/Ben-guanzhi/dbcore/sqlite"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 
 	"tablepro-go/internal/catalogmodel"
 )

@@ -11,7 +11,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 
 	"tablepro-go/internal/importfile"
 )

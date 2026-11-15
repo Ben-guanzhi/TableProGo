@@ -3,7 +3,7 @@ package paging
 import (
 	"testing"
 
-	"github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore/sqltext"
 
 	"tablepro-go/internal/catalogmodel"
 )

@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore/sqltext"
 )
 
 // NotebookCellData is one cell as the UI holds it.

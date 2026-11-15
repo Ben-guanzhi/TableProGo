@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // Value is the cell value type crossing the driver boundary (dbcore.Value).

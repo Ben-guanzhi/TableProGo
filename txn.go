@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 
 	"tablepro-go/internal/txn"
 )

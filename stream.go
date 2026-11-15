@@ -20,7 +20,7 @@ import (
 	"database/sql"
 	"time"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // streamBatchSize is how many rows go into one NDJSON line. Small enough that

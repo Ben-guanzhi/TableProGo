@@ -7,7 +7,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/dbcore/dbcore/dberror"
+	"github.com/Ben-guanzhi/dbcore/dberror"
 )
 
 // friendlyDBError decorates a driver error with an actionable hint when the

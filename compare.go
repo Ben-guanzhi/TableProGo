@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore/schemadiff"
+	"github.com/Ben-guanzhi/dbcore/schemadiff"
 )
 
 // This file is the client's side of schema comparison and synchronization. The

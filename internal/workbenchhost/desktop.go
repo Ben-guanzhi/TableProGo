@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore/plugindriver/workbench"
+	"github.com/Ben-guanzhi/dbcore/plugindriver/workbench"
 	"tablepro-go/internal/ctxcore"
 )
 

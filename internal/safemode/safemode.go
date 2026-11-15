@@ -19,7 +19,7 @@ package safemode
 import (
 	"strings"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // Levels.

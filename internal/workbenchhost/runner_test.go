@@ -42,8 +42,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/dbcore/dbcore/plugindriver"
-	"github.com/dbcore/dbcore/plugindriver/workbench"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore/plugindriver/workbench"
 )
 
 func main() {
@@ -271,8 +271,8 @@ func buildFakeSSHPlugin(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	goMod := "module fakesh\n\ngo 1.25\n\nrequire github.com/dbcore/dbcore v0.1.0\n\n" +
-		"replace github.com/dbcore/dbcore => " + filepath.ToSlash(root) + "\n"
+	goMod := "module fakesh\n\ngo 1.25\n\nrequire github.com/Ben-guanzhi/dbcore v0.1.0\n\n" +
+		"replace github.com/Ben-guanzhi/dbcore => " + filepath.ToSlash(root) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatal(err)
 	}

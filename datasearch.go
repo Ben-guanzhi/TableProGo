@@ -24,8 +24,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore"
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 )
 
 const (

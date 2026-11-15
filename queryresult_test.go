@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // The grid consumes the kernel's typed cells, so the JSON-facing conversion is

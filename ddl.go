@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/dbcore/dbcore/ddl"
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore/ddl"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 
 	"tablepro-go/internal/catalogmodel"
 )

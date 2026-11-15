@@ -29,9 +29,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/ddl"
-	"github.com/dbcore/dbcore/schemadiff"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/ddl"
+	"github.com/Ben-guanzhi/dbcore/schemadiff"
 	"tablepro-go/internal/importfile"
 	"tablepro-go/internal/transfer"
 )

@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 	"tablepro-go/internal/explainplan"
 )
 

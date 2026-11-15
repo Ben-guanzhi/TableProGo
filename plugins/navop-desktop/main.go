@@ -34,8 +34,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dbcore/dbcore/plugindriver"
-	"github.com/dbcore/dbcore/plugindriver/workbench"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore/plugindriver/workbench"
 )
 
 func main() {

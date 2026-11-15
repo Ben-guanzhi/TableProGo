@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore/sqltext"
 )
 
 func TestImportUpsertUpdatesExistingRows(t *testing.T) {

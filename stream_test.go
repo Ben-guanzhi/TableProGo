@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // collectStream runs StreamQuery and returns the events it produced.

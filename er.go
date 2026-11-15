@@ -6,7 +6,7 @@ import (
 	"log"
 	"sort"
 
-	"github.com/dbcore/dbcore"
+	"github.com/Ben-guanzhi/dbcore"
 )
 
 // ERColumn is one attribute of a table in the relationship diagram. It carries

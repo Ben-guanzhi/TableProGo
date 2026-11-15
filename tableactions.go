@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 )
 
 // What the sidebar's object menu can do to a table or a view. Each one is

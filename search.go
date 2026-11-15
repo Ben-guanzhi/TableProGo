@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dbcore/dbcore"
-	fuzzy "github.com/dbcore/dbcore/fuzzy"
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore"
+	fuzzy "github.com/Ben-guanzhi/dbcore/fuzzy"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 	"tablepro-go/internal/catalogsnap"
 )
 

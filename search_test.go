@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	fuzzy "github.com/dbcore/dbcore/fuzzy"
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	fuzzy "github.com/Ben-guanzhi/dbcore/fuzzy"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 )
 
 // sqliteDB opens an empty temporary database and hands back the connection the

@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dbcore/dbcore/schemadiff"
+	"github.com/Ben-guanzhi/dbcore/schemadiff"
 )
 
 // TestReclaimerSetActiveRelease tests the active/pending accounting. The

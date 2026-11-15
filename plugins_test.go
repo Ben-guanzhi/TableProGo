@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/dbcore/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
 )
 
 // fakePluginMain is a plugin that claims the engine "fakeengine" and answers the
@@ -31,8 +31,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/plugindriver"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/plugindriver"
 )
 
 func main() {
@@ -117,7 +117,7 @@ func buildFakeEnginePlugin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("abs: %v", err)
 	}
-	goMod := "module fakeengine\n\ngo 1.21\n\nrequire github.com/dbcore/dbcore v0.0.0\n\nreplace github.com/dbcore/dbcore => " +
+	goMod := "module fakeengine\n\ngo 1.21\n\nrequire github.com/Ben-guanzhi/dbcore v0.0.0\n\nreplace github.com/Ben-guanzhi/dbcore => " +
 		filepath.ToSlash(filepath.Join(root, "dbcore")) + "\n"
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
 		t.Fatalf("write go.mod: %v", err)

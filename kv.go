@@ -17,8 +17,8 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/dbcore/dbcore"
-	dbredis "github.com/dbcore/dbcore/redis"
+	"github.com/Ben-guanzhi/dbcore"
+	dbredis "github.com/Ben-guanzhi/dbcore/redis"
 )
 
 const (

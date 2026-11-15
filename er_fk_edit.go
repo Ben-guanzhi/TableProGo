@@ -9,8 +9,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/ddl"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/ddl"
 )
 
 // ERFKEditRequest 是 /api/er/fk 的请求体：一次对关系图里某张表外键的编辑。

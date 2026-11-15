@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/dbcore/dbcore"
-	tableprosql "github.com/dbcore/dbcore/sqltext"
+	"github.com/Ben-guanzhi/dbcore"
+	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 
 	"tablepro-go/internal/catalogmodel"
 )

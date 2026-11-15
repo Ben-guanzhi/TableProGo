@@ -12,8 +12,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/dbcore/dbcore"
-	"github.com/dbcore/dbcore/ddl"
+	"github.com/Ben-guanzhi/dbcore"
+	"github.com/Ben-guanzhi/dbcore/ddl"
 )
 
 // StructureEditSnapshot 是编辑前的目录快照，回滚据此渲染反向语句。
