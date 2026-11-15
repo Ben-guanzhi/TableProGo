@@ -1928,6 +1928,7 @@ useEffect(() => {
             >
               <FiRefreshCw size={14} />
             </button>
+            <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="插件 · 导入连接 · 无效对象" />
             <button
               className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowPlugins(true)}
@@ -1952,6 +1953,7 @@ useEffect(() => {
             >
               <FiCode size={14} />
             </button>
+            <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="工作台 · 控制台/终端/文件/监控/容器/消息" />
             <button
               className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowConsole(true)}
@@ -2000,6 +2002,7 @@ useEffect(() => {
             >
               <FiMessageSquare size={14} />
             </button>
+            <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="文档与扩展 · 笔记/远程桌面/AI/扩展/笔记本" />
             <button
               className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowNotes(true)}
@@ -2032,6 +2035,7 @@ useEffect(() => {
             >
               <FiPackage size={14} />
             </button>
+            <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="帮助" />
             <button
               className="p-1.5 text-secondary hover:text-ink"
               onClick={() => setShowAbout(true)}
