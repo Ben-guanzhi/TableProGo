@@ -849,7 +849,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <>
-    <div className="w-72 bg-panel border-r border-line flex flex-col min-h-0">
+    <div className="w-[260px] bg-panel border-r border-line flex flex-col min-h-0">
       <div className="p-2.5 border-b border-line flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-secondary">导航</span>
         <button className="text-secondary hover:text-ink p-1" onClick={onNewConnection} title="新建连接" aria-label="新建连接">
