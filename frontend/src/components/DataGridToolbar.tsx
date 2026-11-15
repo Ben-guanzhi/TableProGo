@@ -95,7 +95,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
       />
       {locate && (
         <button
-          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 text-muted hover:text-ink shrink-0"
+          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 text-muted hover:text-ink whitespace-nowrap shrink-0"
           onClick={onLocateClear}
           title="清空"
           aria-label="清空定位列的搜索词"
