@@ -2327,9 +2327,30 @@ useEffect(() => {
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center text-muted">
-              <div className="text-center">
-                <p className="text-2xl mb-2">TablePro Go</p>
-                <p className="text-sm">新建一个查询标签页开始使用</p>
+              <div className="text-center max-w-sm">
+                <p className="text-2xl mb-1">TablePro Go</p>
+                <p className="text-sm mb-5">连接一个数据库，或先开一个查询标签页</p>
+                {/* 首屏两步：成熟客户端（DBeaver/TablePlus/Beekeeper）都把
+                    "新建连接" 作为空态里的主操作，而不是等用户去找工具栏。 */}
+                <div className="flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded bg-accent text-white text-sm hover:opacity-90"
+                    onClick={() => {
+                      setEditingConnection(null)
+                      setShowConnectionDialog(true)
+                    }}
+                  >
+                    新建连接
+                  </button>
+                  <button
+                    type="button"
+                    className="px-3 py-1.5 rounded border border-line-strong text-sm hover:bg-panel"
+                    onClick={() => handleNewTab()}
+                  >
+                    新建查询
+                  </button>
+                </div>
               </div>
             </div>
           )}

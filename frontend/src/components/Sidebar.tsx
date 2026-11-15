@@ -875,7 +875,18 @@ const Sidebar: React.FC<SidebarProps> = ({
         {renderSections()}
 
         {roots.length === 0 && (
-          <div className="text-center text-muted text-xs py-3">还没有连接，点击右上角 + 新建</div>
+          <div className="text-center text-muted text-xs py-3">
+            <p className="mb-2">还没有连接</p>
+            {/* 一句话指向"右上角 +"，而那个 + 在窄侧栏里并不显眼；直接给按钮，
+                省掉一次视觉搜索。 */}
+            <button
+              type="button"
+              className="px-2 py-1 rounded border border-line-strong text-xs hover:bg-panel"
+              onClick={onNewConnection}
+            >
+              + 新建连接
+            </button>
+          </div>
         )}
       </div>
     </div>
