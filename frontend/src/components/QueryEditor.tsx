@@ -849,7 +849,7 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
 
   return (
     <div className="flex flex-col min-h-0 h-full">
-      <div className="flex items-center px-2 py-1.5 bg-panel border-b border-line gap-2 shrink-0">
+      <div className="flex items-center px-2 py-1.5 bg-panel border-b border-line gap-2 shrink-0 flex-wrap">
         {databaseOptions.length > 0 && (
           <div className="relative shrink-0">
             <FiDatabase

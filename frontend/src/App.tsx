@@ -1903,9 +1903,9 @@ useEffect(() => {
           >
             +
           </button>
-          <div className="ml-auto flex items-center gap-1 pr-2 shrink-0 overflow-x-auto min-w-0">
+          <div className="ml-auto flex items-center gap-1 pr-2 shrink-0 overflow-x-auto min-w-0 flex-wrap">
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={openCompareTab}
               title="结构对比 / 同步：把一个库的结构同步到另一个"
               aria-label="结构对比与同步"
@@ -1913,7 +1913,7 @@ useEffect(() => {
               <FiShuffle size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowTransfer(true)}
               title="数据传输：把表结构和数据复制到另一个连接"
               aria-label="数据传输"
@@ -1921,7 +1921,7 @@ useEffect(() => {
               <FiShare2 size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowRowSync(true)}
               title="行级同步：按主键把两张同名表的行对齐"
               aria-label="行级数据同步"
@@ -1930,7 +1930,7 @@ useEffect(() => {
             </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="插件 · 导入连接 · 无效对象" />
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowPlugins(true)}
               title="插件：查看/信任插件驱动"
               aria-label="插件"
@@ -1938,7 +1938,7 @@ useEffect(() => {
               <FiShield size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowImportConns(true)}
               title="导入连接：从 DBeaver / URL 列表 / CSV"
               aria-label="导入连接"
@@ -1946,7 +1946,7 @@ useEffect(() => {
               <FiDownload size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowObjectHealth(true)}
               title="无效对象：列出并重编译（Oracle）"
               aria-label="无效对象"
@@ -1955,7 +1955,7 @@ useEffect(() => {
             </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="工作台 · 控制台/终端/文件/监控/容器/消息" />
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowConsole(true)}
               title="控制台：执行插件声明的向量库/MQ 动作"
               aria-label="插件控制台"
@@ -1963,7 +1963,7 @@ useEffect(() => {
               <FiTerminal size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowTerminal(true)}
               title="终端：SSH 会话、分屏与广播（navop-ssh 插件）"
               aria-label="终端工作台"
@@ -1971,7 +1971,7 @@ useEffect(() => {
               <FiCode size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowFiles(true)}
               title="文件：SFTP 浏览/上传/下载（navop-ssh 插件）"
               aria-label="文件工作台"
@@ -1979,7 +1979,7 @@ useEffect(() => {
               <FiFolder size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowMonitor(true)}
               title="监控：host.stats 采样环（定时器为效应，卸载即停）"
               aria-label="监控工作台"
@@ -1987,7 +1987,7 @@ useEffect(() => {
               <FiActivity size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowContainers(true)}
               title="容器：经 SSH 隧道访问 docker（navop-containers 依赖 tunnel.proxy）"
               aria-label="容器工作台"
@@ -1995,7 +1995,7 @@ useEffect(() => {
               <FiBox size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowMqtt(true)}
               title="消息：MQTT 控制台（发布是发射，受 Safe Mode 扣留；订阅是获取）"
               aria-label="消息工作台"
@@ -2004,7 +2004,7 @@ useEffect(() => {
             </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="文档与扩展 · 笔记/远程桌面/AI/扩展/笔记本" />
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowNotes(true)}
               title="笔记：宿主本地文档（挂 nav.nodes）"
               aria-label="笔记"
@@ -2012,7 +2012,7 @@ useEffect(() => {
               <FiFileText size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowDesktop(true)}
               title="远程桌面：RDP（发射 + .rdp 清理逆）与 VNC 通道"
               aria-label="远程桌面"
@@ -2020,7 +2020,7 @@ useEffect(() => {
               <FiMonitor size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowAI(true)}
               title="AI 提供商：上下文由宿主附加，SQL 只预览不执行"
               aria-label="AI 助手"
@@ -2028,7 +2028,7 @@ useEffect(() => {
               <FiCpu size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowExtensions(true)}
               title="扩展：目录安装（摘要校验）+ 团队同步（秘密为 ref）"
               aria-label="扩展"
@@ -2037,7 +2037,7 @@ useEffect(() => {
             </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="帮助" />
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowAbout(true)}
               title="关于：版本与构建信息"
               aria-label="关于"
@@ -2045,7 +2045,7 @@ useEffect(() => {
               <FiInfo size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowNotebook(true)}
               title="笔记本：可互相引用的 SQL 单元格"
               aria-label="笔记本"
@@ -2053,7 +2053,7 @@ useEffect(() => {
               <FiBookOpen size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowAiPanel(current => !current)}
               title="AI 助手：问数据库"
               aria-label="AI 助手"
@@ -2061,7 +2061,7 @@ useEffect(() => {
               <FiMessageCircle size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setQuickOpen(true)}
               title="快速打开表 / 视图 (Ctrl+P)"
               aria-label="快速打开表或视图"
@@ -2069,7 +2069,7 @@ useEffect(() => {
               <FiSearch size={14} />
             </button>
             <button
-              className="p-1.5 text-secondary hover:text-ink"
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
               onClick={() => setShowShortcuts(true)}
               title="快捷键 (F1)"
               aria-label="查看快捷键说明"
@@ -2289,7 +2289,7 @@ useEffect(() => {
                   <FiLoader className="animate-spin" size={18} />
                   <span>执行中…</span>
                   <button
-                    className="px-2 py-0.5 rounded text-2xs text-secondary border border-line hover:text-ink hover:bg-raised"
+                    className="px-2 py-0.5 rounded text-2xs text-secondary border border-line hover:text-ink hover:bg-raised whitespace-nowrap"
                     onClick={() => cancelQuery(activeTabData.id)}
                     title="结果不再更新，仅隐藏等待提示（服务端仍会继续执行）"
                   >
@@ -2304,12 +2304,12 @@ useEffect(() => {
                       grid stays the default view (it holds the raw text and the
                       per-engine columns); the graph is the same data, drawn. */}
                   {activeTabData.plan && (
-                    <div className="flex items-center gap-2 px-3 py-1 bg-panel border-b border-line shrink-0">
+                    <div className="flex items-center gap-2 px-3 py-1 bg-panel border-b border-line shrink-0 flex-wrap">
                       <span className="text-2xs text-muted">
                         执行计划 · {activeTabData.plan.nodes} 个节点
                       </span>
                       <button
-                        className="px-2 py-0.5 rounded text-2xs border border-line text-secondary hover:text-ink hover:bg-raised"
+                        className="px-2 py-0.5 rounded text-2xs border border-line text-secondary hover:text-ink hover:bg-raised whitespace-nowrap"
                         onClick={() => setShowPlan(true)}
                       >
                         可视化
@@ -2339,7 +2339,7 @@ useEffect(() => {
                 <div className="flex items-center justify-center gap-2">
                   <button
                     type="button"
-                    className="px-3 py-1.5 rounded bg-accent text-white text-sm hover:opacity-90"
+                    className="px-3 py-1.5 rounded bg-accent text-white text-sm hover:opacity-90 whitespace-nowrap"
                     onClick={() => {
                       setEditingConnection(null)
                       setShowConnectionDialog(true)
@@ -2349,7 +2349,7 @@ useEffect(() => {
                   </button>
                   <button
                     type="button"
-                    className="px-3 py-1.5 rounded border border-line-strong text-sm hover:bg-panel"
+                    className="px-3 py-1.5 rounded border border-line-strong text-sm hover:bg-panel whitespace-nowrap"
                     onClick={() => handleNewTab()}
                   >
                     新建查询

@@ -76,7 +76,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
   onExport,
   onCopyInserts,
 }) => (
-  <div className="flex items-center gap-2 px-2 py-1 bg-panel border-b border-line shrink-0">
+  <div className="flex items-center gap-2 px-2 py-1 bg-panel border-b border-line shrink-0 flex-wrap">
     <div className="relative">
       <FiSearch
         size={11}
@@ -95,7 +95,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
       />
       {locate && (
         <button
-          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 text-muted hover:text-ink"
+          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 text-muted hover:text-ink shrink-0"
           onClick={onLocateClear}
           title="清空"
           aria-label="清空定位列的搜索词"
@@ -112,7 +112,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
 
     {isFiltered && (
       <button
-        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink"
+        className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs bg-raised text-secondary hover:text-ink whitespace-nowrap shrink-0"
         onClick={onClearViews}
         title="清除排序与所有列筛选"
       >
@@ -126,7 +126,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
     {editable && (
       <div className="flex items-center gap-1 pl-2 border-l border-line">
         <button
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-ink whitespace-nowrap hover:bg-raised"
           onClick={onAppendRow}
           title="新增一行：只有填过的列会写入，其余列交给数据库默认值"
         >
@@ -134,7 +134,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
           新增行
         </button>
         <button
-          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex items-center gap-1 px-1.5 py-0.5 rounded text-2xs text-secondary hover:text-ink whitespace-nowrap hover:bg-raised disabled:opacity-40 disabled:cursor-not-allowed"
           onClick={onDuplicateRow}
           disabled={!selected}
           title="复制选中的行：值一起带过来，主键留空交给数据库"
@@ -161,7 +161,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
     <div className="ml-auto relative flex items-center gap-1">
       {onImport && (
         <button
-          className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
+          className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink whitespace-nowrap hover:bg-raised"
           title="从 CSV / JSON 导入到这张表"
           onClick={onImport}
         >
@@ -170,7 +170,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
         </button>
       )}
       <button
-        className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink hover:bg-raised"
+        className="flex items-center gap-1 px-2 py-0.5 rounded text-2xs text-secondary hover:text-ink whitespace-nowrap hover:bg-raised"
         aria-haspopup="true"
         aria-expanded={!!exportMenu}
         title="导出当前视图：CSV / JSON / Markdown / SQL"
