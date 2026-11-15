@@ -1,5 +1,8 @@
 # TablePro Go
 
+<img src="build/appicon.png" width="96" alt="TablePro">
+
+
 A fast, lightweight database client built with Wails3 + Go, inspired by TablePro.
 
 ## Features
