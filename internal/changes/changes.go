@@ -306,6 +306,60 @@ func (c *context) keyWhere(original []interface{}) (string, error) {
 	return strings.Join(conditions, " AND "), nil
 }
 
+// isKeyPosition reports whether a result column is part of the row's key, which
+// the WHERE already constrains.
+func (c *context) isKeyPosition(pos int) bool {
+	for _, k := range c.keyPositions {
+		if k == pos {
+			return true
+		}
+	}
+	return false
+}
+
+// guardWhere renders the optimistic predicate for an UPDATE: every edited column
+// must still hold the value the grid read. It is what makes a row another writer
+// changed stop matching, so the statement affects zero rows instead of silently
+// overwriting that change (the lost-update window).
+//
+// Only edited columns are guarded. The row the grid holds carries every column,
+// and pinning an untouched one would turn someone else's harmless edit of some
+// other field into a conflict.
+//
+// The values travel as literals, exactly as the SET clause already does: this
+// package renders SQL text for a review dialog, so a placeholder would break the
+// statement the user is shown and approves.
+func (c *context) guardWhere(change RowChange) (string, error) {
+	conditions := make([]string, 0, len(change.Edits))
+	for _, edit := range change.Edits {
+		pos, ok := c.positions[strings.ToLower(edit.Column)]
+		if !ok {
+			// An edit naming a column the result does not carry is the caller's
+			// bug; literals() reports it, and this guard simply skips it.
+			continue
+		}
+		if c.isKeyPosition(pos) {
+			// The key predicate already pins this column; repeating it would only
+			// lengthen the statement the user reviews.
+			continue
+		}
+		var original interface{}
+		if pos < len(change.Original) {
+			original = change.Original[pos]
+		}
+		ident, colType, err := c.resolve(c.columns[pos])
+		if err != nil {
+			return "", err
+		}
+		test, err := Predicate(c.dbType, colType, ident, original)
+		if err != nil {
+			return "", err
+		}
+		conditions = append(conditions, test)
+	}
+	return strings.Join(conditions, " AND "), nil
+}
+
 // update returns an empty statement for a row whose edits all cancelled out.
 func (c *context) update(change RowChange) (Statement, error) {
 	_, _, assignments, err := c.literals(change.Edits)
@@ -318,6 +372,13 @@ func (c *context) update(change RowChange) (Statement, error) {
 	where, err := c.keyWhere(change.Original)
 	if err != nil {
 		return Statement{}, err
+	}
+	guard, err := c.guardWhere(change)
+	if err != nil {
+		return Statement{}, err
+	}
+	if guard != "" {
+		where = where + " AND " + guard
 	}
 	return Statement{
 		SQL:   fmt.Sprintf("UPDATE %s SET %s WHERE %s", c.name, strings.Join(assignments, ", "), where),

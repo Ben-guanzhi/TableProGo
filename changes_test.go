@@ -22,7 +22,7 @@ func TestUpdateUsesKeyColumnsAndDialectQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	want := "UPDATE [zs].[dbo].[t] SET [name] = N'O''Brien' WHERE [id] = 7"
+	want := "UPDATE [zs].[dbo].[t] SET [name] = N'O''Brien' WHERE [id] = 7 AND [name] = N'old'"
 	if statements[0] != want {
 		t.Errorf("got  %s\nwant %s", statements[0], want)
 	}
@@ -32,7 +32,7 @@ func TestUpdateUsesKeyColumnsAndDialectQuoting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if mysql[0] != "UPDATE `zs`.`t` SET `amount` = 2.75 WHERE `id` = 7" {
+	if mysql[0] != "UPDATE `zs`.`t` SET `amount` = 2.75 WHERE `id` = 7 AND `amount` = 1.50" {
 		t.Errorf("unexpected mysql statement: %s", mysql[0])
 	}
 }
@@ -224,7 +224,7 @@ func TestMixedQueueKeepsTheClientOrder(t *testing.T) {
 	}
 	want := []string{
 		`DELETE FROM "t" WHERE "id" = 1`,
-		`UPDATE "t" SET "name" = 'B' WHERE "id" = 2`,
+		`UPDATE "t" SET "name" = 'B' WHERE "id" = 2 AND "name" = 'b'`,
 		`INSERT INTO "t" ("name") VALUES ('c')`,
 	}
 	if strings.Join(statements, "\n") != strings.Join(want, "\n") {
@@ -242,7 +242,7 @@ func TestMixedQueueSkipsRowsWithNothingLeftToSave(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build failed: %v", err)
 	}
-	if len(statements) != 1 || statements[0] != `UPDATE "t" SET "name" = 'B' WHERE "id" = 2` {
+	if len(statements) != 1 || statements[0] != `UPDATE "t" SET "name" = 'B' WHERE "id" = 2 AND "name" = 'b'` {
 		t.Errorf("got %v", statements)
 	}
 }

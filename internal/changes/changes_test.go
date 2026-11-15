@@ -21,7 +21,7 @@ func TestBuildRendersUpdateInsertDelete(t *testing.T) {
 	if len(statements) != 3 {
 		t.Fatalf("statements = %v", statements)
 	}
-	if want := `UPDATE "items" SET "name" = 'b' WHERE "id" = 1`; statements[0] != want {
+	if want := `UPDATE "items" SET "name" = 'b' WHERE "id" = 1 AND "name" = 'a'`; statements[0] != want {
 		t.Errorf("update = %q, want %q", statements[0], want)
 	}
 	if want := `INSERT INTO "items" ("id", "name") VALUES (2, 'c')`; statements[1] != want {
