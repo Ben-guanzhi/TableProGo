@@ -225,6 +225,7 @@ func main() {
 
 	wailsApp := application.New(application.Options{
 		Name:        "TablePro Go",
+		Icon:        appIconPNG, // taskbar/window/exe icon: one artwork, tools/iconfamily
 		Description: "A fast, native database client built with Go and Wails.",
 		Services: []application.Service{
 			application.NewService(svc),
