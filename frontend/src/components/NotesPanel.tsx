@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { FiFileText, FiPlus, FiSave, FiTrash2, FiX } from 'react-icons/fi';
 import toast from 'react-hot-toast';
 import { DeleteNote, ListNotes, Note, SaveNote } from '../lib/workbench';
+import { onEnter } from '../lib/keyboard';
 
 // W-N1: the host-local note surface. Notes are the operator's scratch space next
 // to the data: one JSON file the HOST owns (no plugin, no process boundary), and a
@@ -108,10 +109,13 @@ const NotesPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             {notes.map(n => (
               <div
                 key={n.id}
+                role="button"
+                tabIndex={0}
                 className={`group flex items-center gap-1 px-2 py-1.5 text-2xs cursor-pointer border-b border-line ${
                   sel === n.id ? 'bg-raised text-ink' : 'text-secondary hover:bg-raised'
                 }`}
                 onClick={() => select(n)}
+                onKeyDown={onEnter(() => select(n))}
               >
                 <span className="flex-1 truncate">{n.title}</span>
                 <button

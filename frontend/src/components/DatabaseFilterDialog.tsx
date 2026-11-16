@@ -2,6 +2,7 @@ import React, { useId, useRef, useState } from 'react';
 import { FiAlertCircle, FiX } from 'react-icons/fi';
 import { Connection, DatabaseFilter } from '../types';
 import { useDialog } from '../dialog';
+import { onEnter } from '../lib/keyboard';
 
 interface DatabaseFilterDialogProps {
   connection: Connection;
@@ -62,10 +63,13 @@ const PatternList: React.FC<PatternListProps> = ({ label, placeholder, patterns,
           {patterns.map((pattern, i) => (
             <div
               key={pattern}
+              role="button"
+              tabIndex={0}
               className={`px-3 py-0.5 text-sm font-mono cursor-pointer ${
                 selected === i ? 'bg-accent text-on-accent' : 'text-ink hover:bg-raised'
               }`}
               onClick={() => setSelected(i)}
+              onKeyDown={onEnter(() => setSelected(i))}
             >
               {pattern}
             </div>
