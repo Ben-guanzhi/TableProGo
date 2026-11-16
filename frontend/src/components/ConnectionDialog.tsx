@@ -303,7 +303,9 @@ const ConnectionDialog: React.FC<ConnectionDialogProps> = ({ initialConfig, onAd
           </div>
 
           <div>
-            <label htmlFor="conn-name" className="block text-sm text-secondary mb-1">连接名称</label>
+            <label htmlFor="conn-name" className="block text-sm text-secondary mb-1">
+              连接名称 <span className="text-danger">*</span>
+            </label>
             <input
               id="conn-name"
               autoFocus
