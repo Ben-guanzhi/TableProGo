@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { FiActivity, FiAlertTriangle, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiFolder, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiPackage, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
+import { onEnter } from './lib/keyboard';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
 import BackupDialog from './components/BackupDialog';
 import RoutinesDialog from './components/RoutinesDialog';
@@ -1857,10 +1858,14 @@ useEffect(() => {
             return (
               <div
                 key={tab.id}
+                role="tab"
+                tabIndex={0}
+                aria-selected={activeTab === tab.id}
                 className={`flex items-center shrink-0 px-4 py-2 cursor-pointer border-r border-line ${
                   activeTab === tab.id ? 'bg-raised' : 'hover:bg-raised/60'
                 }`}
                 onClick={() => switchToTab(tab.id)}
+                onKeyDown={onEnter(() => switchToTab(tab.id))}
                 title={privateTitle(fullName, settings.privacyMode)}
               >
                 {ref &&
