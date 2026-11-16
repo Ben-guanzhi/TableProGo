@@ -132,9 +132,11 @@ func (c *Cache) Rows(src Source, connID string, limits Limits) ([]Match, bool) {
 		close(building)
 	}()
 
-	c.rows, c.ok = walk(src, connID, gen, limits)
-
+	// Write the walk's result under the lock: a third caller that arrives
+	// mid-walk sees built=true (claimed above) and reads c.rows on the fast
+	// path — the write and that read must not overlap. (-race caught this.)
 	c.mu.Lock()
+	c.rows, c.ok = walk(src, connID, gen, limits)
 	rows, ok := c.rows, c.ok
 	c.mu.Unlock()
 	return rows, ok
