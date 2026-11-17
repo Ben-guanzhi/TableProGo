@@ -237,6 +237,19 @@ export async function KillServerSession(connId: string, database: string, pid: s
   await post('/api/sessions/kill', { connId, database, pid });
 }
 
+// 服务器变量（只读；引擎不支持时后端返回说明性错误）。
+export interface ServerVar {
+  name: string;
+  value: string;
+  default?: string;
+  range?: string;
+  desc?: string;
+}
+
+export async function ListServerVariables(connId: string, database: string): Promise<ServerVar[]> {
+  return post('/api/server-vars', { connId, database });
+}
+
 
 export async function GetTables(connId: string, database: string, schema = ''): Promise<TableInfo[]> {
   return post('/api/tables', { connId, database, schema });

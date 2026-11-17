@@ -514,6 +514,9 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/sessions", 400, func(a *App, body connDatabaseRequest) (any, error) {
 		return a.ListServerSessions(body.ConnID, body.Database)
 	})
+	post(a, mux, "/api/server-vars", 400, func(a *App, body connDatabaseRequest) (any, error) {
+		return a.ListServerVariables(body.ConnID, body.Database)
+	})
 	post(a, mux, "/api/sessions/kill", 400, func(a *App, body sessionKillRequest) (any, error) {
 		return statusOK, a.KillServerSession(body.ConnID, body.Database, body.PID)
 	})
