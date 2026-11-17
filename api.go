@@ -155,6 +155,13 @@ type connDatabaseRequest struct {
 	Database string `json:"database"`
 }
 
+// sessionKillRequest 是终止会话的请求体：PID 由内核 ValidProcessID 校验。
+type sessionKillRequest struct {
+	ConnID   string `json:"connId"`
+	Database string `json:"database"`
+	PID      string `json:"pid"`
+}
+
 type tableRefRequest struct {
 	ConnID   string `json:"connId"`
 	Database string `json:"database"`
@@ -503,6 +510,12 @@ func (a *App) routes() *http.ServeMux {
 	})
 	post(a, mux, "/api/databases", 400, func(a *App, body connIDRequest) (any, error) {
 		return a.GetDatabases(body.ConnID)
+	})
+	post(a, mux, "/api/sessions", 400, func(a *App, body connDatabaseRequest) (any, error) {
+		return a.ListServerSessions(body.ConnID, body.Database)
+	})
+	post(a, mux, "/api/sessions/kill", 400, func(a *App, body sessionKillRequest) (any, error) {
+		return statusOK, a.KillServerSession(body.ConnID, body.Database, body.PID)
 	})
 	post(a, mux, "/api/tables", 400, func(a *App, body tableRefRequest) (any, error) {
 		return a.GetTables(body.ConnID, body.Database, body.Schema)

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FiActivity, FiAlertTriangle, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiFolder, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiPackage, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal } from 'react-icons/fi';
+import { FiActivity, FiAlertTriangle, FiBookOpen, FiBox, FiCode, FiCpu, FiDownload, FiFileText, FiInfo, FiEye, FiGitBranch, FiFolder, FiHelpCircle, FiKey, FiLoader, FiMessageCircle, FiMessageSquare, FiMonitor, FiPackage, FiRefreshCw, FiSearch, FiShare2, FiShield, FiShuffle, FiTable, FiTerminal, FiUsers } from 'react-icons/fi';
 import { Toaster } from 'react-hot-toast';
 import { onEnter } from './lib/keyboard';
 import Sidebar, { NewTableTarget } from './components/Sidebar';
@@ -33,6 +33,7 @@ import PluginPanel from './components/PluginPanel';
 import ExplainPlanView from './components/ExplainPlanView';
 import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import ObjectHealthDialog from './components/ObjectHealthDialog';
+import SessionsDialog from './components/SessionsDialog';
 import AboutDialog from './components/AboutDialog';
 import NotebookPanel from './components/NotebookPanel';
 import LoginScreen from './components/LoginScreen';
@@ -234,6 +235,7 @@ function App() {
   const [showImportConns, setShowImportConns] = useState(false);
   // W9: the Oracle invalid-object panel.
   const [showObjectHealth, setShowObjectHealth] = useState(false);
+  const [showSessions, setShowSessions] = useState(false);
   // W15: the about panel (build identity + opt-in update check).
   const [showAbout, setShowAbout] = useState(false);
   // W11b: the SQL notebook panel.
@@ -1958,6 +1960,14 @@ useEffect(() => {
             >
               <FiAlertTriangle size={14} />
             </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
+              onClick={() => setShowSessions(true)}
+              title="会话管理：列出并终止服务器会话"
+              aria-label="会话管理"
+            >
+              <FiUsers size={14} />
+            </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="工作台 · 控制台/终端/文件/监控/容器/消息" />
             <button
               className="p-1.5 text-secondary hover:text-ink shrink-0"
@@ -2483,6 +2493,14 @@ useEffect(() => {
           database={tabDatabase(activeTabData)}
           schema=""
           onClose={() => setShowObjectHealth(false)}
+        />
+      )}
+
+      {showSessions && activeConnection && (
+        <SessionsDialog
+          connId={activeConnection.id}
+          database={tabDatabase(activeTabData)}
+          onClose={() => setShowSessions(false)}
         />
       )}
 

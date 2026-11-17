@@ -174,6 +174,9 @@ var readOnlyRoutes = map[string]bool{
 	"/api/search":           true,
 	"/api/objects/search":   true,
 	"/api/data-search":      true,
+	// 会话列表是只读的；终止会话（/api/sessions/kill）是写操作——
+	// 只读模式下被默认拒绝（allowlist 注释的语义）。
+	"/api/sessions": true,
 	"/api/notebooks":        true,
 	"/api/notebooks/run":    true,
 	"/api/build-info":       true,

@@ -217,6 +217,27 @@ export async function GetDatabases(connId: string): Promise<string[]> {
   return post('/api/databases', { connId });
 }
 
+// 会话管理（内核 ProcessLister；引擎不支持时后端返回说明性错误）。
+export interface ProcSession {
+  id: string;
+  user: string;
+  client: string;
+  db: string;
+  state: string;
+  command: string;
+  query: string;
+  time: string;
+}
+
+export async function ListServerSessions(connId: string, database: string): Promise<ProcSession[]> {
+  return post('/api/sessions', { connId, database });
+}
+
+export async function KillServerSession(connId: string, database: string, pid: string): Promise<void> {
+  await post('/api/sessions/kill', { connId, database, pid });
+}
+
+
 export async function GetTables(connId: string, database: string, schema = ''): Promise<TableInfo[]> {
   return post('/api/tables', { connId, database, schema });
 }
