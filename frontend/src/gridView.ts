@@ -402,8 +402,20 @@ export const toMarkdown = (columns: ColumnLike[], rows: any[][]): string => {
 
 // A CSV field has to be quoted when it holds the very characters that do the
 // separating - a comma, a quote (doubled), or a newline.
+//
+// formulaGuard 防 CSV 公式注入（OWASP CSV Injection）：以 = + - @ 或制表/回车
+// 开头的单元格在 Excel / LibreOffice 里会被当公式执行（=cmd|… 可触发命令）。
+// 前缀单引号使其按文本显示；纯数字字面量豁免（-5、+3 不动），否则破坏用户的
+// 数值计算。
+export const formulaGuard = (text: string): string => {
+  if (text === '') return text;
+  if (text.trim() !== '' && !Number.isNaN(Number(text))) return text; // 纯数字不动
+  if (/^[=+\-@\t\r]/.test(text)) return `'${text}`;
+  return text;
+};
+
 const csvCell = (value: any): string => {
-  const text = cellText(value);
+  const text = formulaGuard(cellText(value));
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 };
 
