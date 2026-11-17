@@ -56,7 +56,7 @@ require (
 // tableproxlsx lives inside this repo, so it is pinned to the working tree
 // rather than to a tag. Both this module and tableproxlsx consume the shared
 // dialect layer from the sibling dbcore module (dbcore/sqltext).
-require github.com/Ben-guanzhi/dbcore v0.4.1
+require github.com/Ben-guanzhi/dbcore v0.5.0
 
 require (
 	github.com/Ben-guanzhi/TableProGo/tableproxlsx v0.1.0
