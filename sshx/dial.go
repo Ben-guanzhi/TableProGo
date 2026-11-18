@@ -202,13 +202,12 @@ func dialSSHOnceAt(cfg SSHConfig, dial sshDialer, target string) (*ssh.Client, e
 	if err != nil {
 		return nil, fmt.Errorf("ssh: connect to %s: %w", target, err)
 	}
-	// A desktop client cannot ask the user to verify a fingerprint on every
-	// connect, so the host key is accepted as-is (same trade-off as the
-	// reference clients). Documented here rather than silently implied.
+	// TOFU 主机密钥校验：首次连接记录公钥，后续必须一致（变更即拒绝并提示
+	// 可能是中间人）——与工作区其余客户端一致，不再盲目信任跳板机。
 	sshConn, chans, reqs, err := ssh.NewClientConn(conn, target, &ssh.ClientConfig{
 		User:            cfg.User,
 		Auth:            auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: defaultHostKeys.Callback(),
 		Timeout:         10 * time.Second,
 	})
 	if err != nil {
