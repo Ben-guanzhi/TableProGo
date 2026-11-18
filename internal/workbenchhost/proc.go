@@ -287,10 +287,12 @@ func (p *proc) kill() error {
 // hard kill if it does not go within a grace period.
 func (p *proc) Close() error {
 	p.call(context.Background(), plugindriver.MethodClose, nil, nil)
-	done := make(chan struct{})
-	go func() { _ = p.cmd.Wait(); close(done) }()
+	// 只等 wait() 的 deadCh——它是 cmd.Wait() 的唯一拥有者。这里再调一次
+	// Wait() 是 os/exec 的并发误用：两个 Wait 会同时写 Cmd 的内部
+	// awaitGoroutines 字段（-race 抓到 DATA RACE），且第二个 Wait 的返回
+	// 值没有意义（进程退出已由 wait() 记录在 exitErr）。
 	select {
-	case <-done:
+	case <-p.deadCh:
 		return nil
 	case <-time.After(3 * time.Second):
 		return p.kill()
