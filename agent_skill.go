@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 // W13: the agent skill file.
 //
@@ -46,7 +46,7 @@ func WriteAgentSkill() (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
 		return "", err
 	}
 	return path, nil
