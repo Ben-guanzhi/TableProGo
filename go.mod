@@ -1,6 +1,6 @@
 module tablepro-go
 
-go 1.25.0
+go 1.26.0
 
 require (
 	github.com/go-sql-driver/mysql v1.10.1
@@ -45,8 +45,8 @@ require (
 	github.com/xuri/efp v0.0.1 // indirect
 	github.com/xuri/nfp v0.0.2-0.20250530014748-2ddeb826f9a9 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
-	golang.org/x/sync v0.22.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
 	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
@@ -62,9 +62,9 @@ require (
 	github.com/Ben-guanzhi/TableProGo/tableproxlsx v0.1.0
 	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/pkg/sftp v1.13.12
-	golang.org/x/crypto v0.55.0
-	golang.org/x/net v0.58.0
-	golang.org/x/text v0.41.0
+	golang.org/x/crypto v0.59.0
+	golang.org/x/net v0.63.0
+	golang.org/x/text v0.44.0
 )
 
 replace github.com/Ben-guanzhi/TableProGo/tableproxlsx => ./tableproxlsx
