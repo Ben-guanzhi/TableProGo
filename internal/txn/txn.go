@@ -377,8 +377,8 @@ func firstLine(text string) string {
 	if i := strings.IndexByte(text, '\n'); i >= 0 {
 		text = text[:i]
 	}
-	if len(text) > 80 {
-		text = text[:80] + "…"
+	if r := []rune(text); len(r) > 80 {
+		text = string(r[:80]) + "…"
 	}
 	return text
 }

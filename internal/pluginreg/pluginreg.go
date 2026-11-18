@@ -354,8 +354,9 @@ func writeAtomic(path string, data []byte) error {
 
 // short abbreviates a digest for a one-line message.
 func short(s string) string {
-	if len(s) <= 12 {
+	r := []rune(s)
+	if len(r) <= 12 {
 		return s
 	}
-	return s[:12] + "…"
+	return string(r[:12]) + "…"
 }

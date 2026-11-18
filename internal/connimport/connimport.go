@@ -571,10 +571,11 @@ func trimBOM(b []byte) []byte {
 }
 
 func shorten(s string) string {
-	if len(s) <= 60 {
+	r := []rune(s)
+	if len(r) <= 60 {
 		return s
 	}
-	return s[:57] + "…"
+	return string(r[:57]) + "…"
 }
 
 func sortStrings(s []string) {

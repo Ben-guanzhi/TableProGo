@@ -568,8 +568,9 @@ func doJSON(ctx context.Context, client *http.Client, url, apiKey string, payloa
 // fill the UI.
 func truncate(text string, limit int) string {
 	text = strings.TrimSpace(text)
-	if len(text) <= limit {
+	r := []rune(text)
+	if len(r) <= limit {
 		return text
 	}
-	return text[:limit] + "…"
+	return string(r[:limit]) + "…"
 }
