@@ -35,6 +35,7 @@ import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import ObjectHealthDialog from './components/ObjectHealthDialog';
 import SessionsDialog from './components/SessionsDialog';
 import ServerVarsDialog from './components/ServerVarsDialog';
+import { ExportDictionary } from './api';
 import AboutDialog from './components/AboutDialog';
 import NotebookPanel from './components/NotebookPanel';
 import LoginScreen from './components/LoginScreen';
@@ -1977,6 +1978,25 @@ useEffect(() => {
               aria-label="服务器变量"
             >
               <FiList size={14} />
+            </button>
+            <button
+              className="p-1.5 text-secondary hover:text-ink shrink-0"
+              onClick={() => {
+                if (!activeConnection) return;
+                void ExportDictionary(activeConnection.id, tabDatabase(activeTabData))
+                  .then(({ doc, tables }) => {
+                    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+                    download(`data-dictionary-${stamp}.md`, 'text/markdown;charset=utf-8', doc);
+                    toast.success(`已导出 ${tables} 张表的结构文档`);
+                  })
+                  .catch((error: unknown) =>
+                    toast.error('数据字典导出失败：' + (error as Error).message),
+                  );
+              }}
+              title="数据字典：导出结构 Markdown"
+              aria-label="数据字典"
+            >
+              <FiBookOpen size={14} />
             </button>
             <span className="mx-0.5 h-4 w-px bg-line-strong" aria-hidden title="工作台 · 控制台/终端/文件/监控/容器/消息" />
             <button

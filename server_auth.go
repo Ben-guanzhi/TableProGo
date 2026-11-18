@@ -179,6 +179,8 @@ var readOnlyRoutes = map[string]bool{
 	"/api/sessions": true,
 	// 服务器变量查看是只读的。
 	"/api/server-vars": true,
+	// 数据字典导出只读（读结构 + 返回 Markdown 文本，写文件在前端）。
+	"/api/export-dictionary": true,
 	"/api/notebooks":        true,
 	"/api/notebooks/run":    true,
 	"/api/build-info":       true,

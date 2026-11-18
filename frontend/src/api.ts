@@ -233,6 +233,15 @@ export async function ListServerSessions(connId: string, database: string): Prom
   return post('/api/sessions', { connId, database });
 }
 
+// ExportDictionary 把连接的结构导出为 Markdown 数据字典（只读——写文件在
+// 前端，服务端只回文本）。
+export async function ExportDictionary(
+  connId: string,
+  database: string,
+): Promise<{ doc: string; tables: number }> {
+  return post('/api/export-dictionary', { connId, database });
+}
+
 export async function KillServerSession(connId: string, database: string, pid: string): Promise<void> {
   await post('/api/sessions/kill', { connId, database, pid });
 }
