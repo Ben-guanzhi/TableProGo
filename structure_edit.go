@@ -19,6 +19,11 @@ type ColumnEdit struct {
 	Type         string `json:"type"`
 	Nullable     bool   `json:"nullable"`
 	DefaultValue string `json:"defaultValue"`
+	// Original is the column's name when the editor opened it. A non-empty
+	// Original that differs from Name is a RENAME (the row keeps its identity:
+	// data survives, unlike the drop+add a name-only diff would render).
+	// Empty on rows the user added.
+	Original string `json:"original,omitempty"`
 	// IsNew marks rows the user added; Original holds the pre-edit type for
 	// change detection on existing rows.
 	IsNew bool `json:"isNew"`
@@ -125,10 +130,42 @@ func (a *App) buildStructureEdits(req StructureEditRequest) (StructureEditResult
 			return res, fmt.Errorf("第 %d 行的列名不合法：%w", i+1, err)
 		}
 		before, exists := currentByName[key]
+		// A rename arrives as a NEW name (no catalog row under it) plus
+		// Original (the name when the editor opened the row). Resolve the
+		// identity first: without this, a renamed column renders as drop+add
+		// (data loss) or a rename is silently dropped (AlterColumn only
+		// compares type/nullability/default). A row the user added has no
+		// Original and stays an ADD.
+		if !exists && want.Original != "" {
+			if orig, ok := currentByName[strings.ToLower(strings.TrimSpace(want.Original))]; ok {
+				before, exists = orig, true
+			}
+		}
 		if !exists {
 			col := ddl.Column{Name: name, Type: want.Type, Nullable: want.Nullable, DefaultValue: want.DefaultValue}
 			res.Statements = append(res.Statements, ddl.AddColumn(dbType, schema, req.Table, col))
 			continue
+		}
+		// Identity resolved against an existing column whose name differs:
+		// this row is a RENAME. Route it through the kernel's RenameColumn and
+		// carry the rest of the diff (type/nullability/default) under the NEW
+		// name — a rename+type change emits RENAME then ALTER on the new column.
+		if !strings.EqualFold(before.Name, name) {
+			// 注意不要用 CanAlterColumn 门控 RENAME：它表达的是"能否原地改
+			// 类型"（SQLite 不行），而 RENAME COLUMN 在 SQLite 3.25+ 是支持的
+			// ——能力不同，门控混用会让 SQLite 的改名被误拒。内核
+			// RenameColumn 自己拒绝真正不支持的引擎（MySQL 5.x）。
+			stmt, err := ddl.RenameColumn(dbType, schema, req.Table, before.Name, name)
+			if err != nil {
+				res.Warnings = append(res.Warnings, err.Error())
+				continue
+			}
+			res.Statements = append(res.Statements, stmt)
+			// The OLD name must count as kept, or the drop pass (which walks
+			// the catalog) would render a DROP for the very column the rename
+			// just re-labelled.
+			kept[strings.ToLower(before.Name)] = true
+			before.Name = name
 		}
 		typeChanged := !strings.EqualFold(before.Type, want.Type)
 		nullableChanged := before.Nullable != want.Nullable

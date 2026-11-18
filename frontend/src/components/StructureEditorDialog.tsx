@@ -45,7 +45,7 @@ const StructureEditorDialog: React.FC<StructureEditorDialogProps> = ({
   useDialog(panelRef, onClose);
   const [tab, setTab] = useState<Tab>('columns');
   const [rows, setRows] = useState<ColumnEdit[]>(() =>
-    columns.map(c => ({ name: c.name, type: c.type, nullable: c.nullable, defaultValue: c.defaultValue })),
+    columns.map(c => ({ name: c.name, type: c.type, nullable: c.nullable, defaultValue: c.defaultValue, original: c.name })),
   );
   const [indexRows, setIndexRows] = useState<IndexEditRow[]>(indexes);
   const [fkRows, setFkRows] = useState<ForeignKeyEditRow[]>(foreignKeys);

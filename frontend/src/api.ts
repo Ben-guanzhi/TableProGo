@@ -997,6 +997,9 @@ export interface ColumnEdit {
   type: string;
   nullable: boolean;
   defaultValue: string;
+  /** The column's name when the editor opened this row;
+   *  a rename is a non-empty original that differs from name. */
+  original?: string;
   isNew?: boolean;
 }
 
