@@ -174,6 +174,32 @@ function App() {
   const [connectedIds, setConnectedIds] = useState<string[]>([]);
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
+  // W-L1 (§336 lifecycle): a query tab's statement survives the restart. Only
+  // the lightweight identity fields are saved — never a result grid or KV
+  // payload — so the restore is cheap and cannot resurrect stale data.
+  useEffect(() => {
+    const raw = localStorage.getItem('tablepro.tabs.v1');
+    if (!raw) return;
+    try {
+      const saved = JSON.parse(raw) as Array<Pick<Tab, 'title' | 'query' | 'database' | 'connectionId'>>;
+      if (!Array.isArray(saved) || saved.length === 0) return;
+      const restored: Tab[] = saved.slice(0, 20).map((t, i) => ({
+        id: `restored-${Date.now()}-${i}`,
+        title: t.title || `Query ${i + 1}`,
+        query: t.query || '',
+        database: t.database,
+        connectionId: t.connectionId,
+        isDirty: false,
+      }));
+      setTabs(restored);
+      setActiveTab(restored[0].id);
+    } catch {
+      // A corrupt snapshot must not brick startup: drop it silently.
+      localStorage.removeItem('tablepro.tabs.v1');
+    }
+    // Run once on mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [showConnectionDialog, setShowConnectionDialog] = useState(false);
   const [importTarget, setImportTarget] = useState<TableRef | null>(null);
   const [editingConnection, setEditingConnection] = useState<Connection | null>(null);
@@ -425,6 +451,21 @@ function App() {
       toast.error(`断开失败：${(error as Error).message}`);
     }
   };
+
+  // Persist the query tabs' statements on every change (debounced by React's
+  // batching; a script's text is small, a result grid is never included).
+  useEffect(() => {
+    const light = tabs
+      .filter(t => t.kind === undefined || t.kind === 'query')
+      .slice(0, 20)
+      .map(t => ({ title: t.title, query: t.query, database: t.database, connectionId: t.connectionId }));
+    try {
+      localStorage.setItem('tablepro.tabs.v1', JSON.stringify(light));
+    } catch {
+      // Quota errors are non-fatal: the statements live on in the editor until
+      // the next successful save.
+    }
+  }, [tabs]);
 
   const handleNewTab = () => {
     const newTab: Tab = {
