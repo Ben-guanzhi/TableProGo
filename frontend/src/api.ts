@@ -121,10 +121,18 @@ export async function GetConnections(): Promise<Connection[]> {
 export interface PluginActionParam {
   name: string;
   label?: string;
-  // A display hint only: "text" | "number" | "textarea" | "select".
+  // A display hint only: "text" | "number" | "textarea" | "select" | "checkbox".
   kind?: string;
   required?: boolean;
   default?: string;
+  /** Direct spelling of select choices; older plugins use a JSON array in default. */
+  options?: string[];
+  /** One-line explanation rendered beside the field. */
+  help?: string;
+  /** Visible height of a textarea (0 = host default). */
+  rows?: number;
+  /** A select that returns a JSON array of chosen values. */
+  multiple?: boolean;
 }
 
 export interface PluginAction {

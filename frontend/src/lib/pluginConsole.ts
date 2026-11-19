@@ -9,7 +9,16 @@ import type { PluginActionParam } from '../api';
 // initialValues pre-fills a form from the params' declared defaults.
 export function initialValues(params: PluginActionParam[]): Record<string, string> {
   const out: Record<string, string> = {};
-  for (const p of params) out[p.name] = p.default ?? '';
+  for (const p of params) {
+    const d = p.default ?? '';
+    // A select's legacy default is a JSON array of CHOICES, not a value:
+    // pre-filling the field with it would show ["a","b"] as the selection.
+    if (p.kind === 'select' && (p.options?.length || /^\s*\[/.test(d))) {
+      out[p.name] = '';
+    } else {
+      out[p.name] = d;
+    }
+  }
   return out;
 }
 
@@ -29,6 +38,10 @@ export function argsOf(
     if (raw === '') continue;
     if (p.kind === 'number' && /^-?\d+(\.\d+)?$/.test(raw)) {
       out[p.name] = Number(raw);
+    } else if (p.kind === 'checkbox' && (raw === 'true' || raw === 'false')) {
+      out[p.name] = raw === 'true'; // a checkbox is a boolean, not "true"
+    } else if (p.multiple && /^\s*\[/.test(raw)) {
+      try { out[p.name] = JSON.parse(raw); } catch { out[p.name] = raw; }
     } else {
       out[p.name] = raw;
     }

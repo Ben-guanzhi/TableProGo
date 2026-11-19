@@ -63,3 +63,27 @@ test('cellText spells NULL instead of an empty cell', () => {
 test('cellText renders an object as JSON', () => {
   assert.equal(cellText({ a: 1 }), '{"a":1}');
 });
+
+// The declarative action form's newer field kinds (additive protocol evolution):
+// a select's legacy JSON-in-default is CHOICES not a value, a checkbox is a
+// boolean, and a multi-select is a JSON array of chosen values.
+test('initialValues does not pre-fill a select with its legacy JSON choices', () => {
+  const values = initialValues([
+    { name: 'fmt', kind: 'select', default: '["json","csv"]' },
+    { name: 'newfmt', kind: 'select', options: ['a', 'b'] },
+  ]);
+  assert.equal(values.fmt, '');
+  assert.equal(values.newfmt, '');
+});
+
+test('argsOf sends a checkbox as a boolean and a multi-select as an array', () => {
+  const args = argsOf(
+    [
+      { name: 'strict', kind: 'checkbox' },
+      { name: 'cols', kind: 'select', multiple: true },
+    ],
+    { strict: 'true', cols: '["id","name"]' },
+  );
+  assert.equal(args.strict, true);
+  assert.deepEqual(args.cols, ['id', 'name']);
+});

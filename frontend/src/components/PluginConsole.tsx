@@ -185,11 +185,34 @@ const PluginConsole: React.FC<PluginConsoleProps> = ({ connId, connName, onClose
                   {p.kind === 'textarea' ? (
                     <textarea
                       className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink font-mono focus:outline-none focus:border-accent"
-                      rows={3}
+                      rows={p.rows || 3}
                       value={values[p.name] ?? ''}
                       onChange={e => setValues(v => ({ ...v, [p.name]: e.target.value }))}
                       aria-label={p.label || p.name}
                     />
+                  ) : p.kind === 'select' ? (
+                    <select
+                      className="w-full bg-canvas border border-line-strong rounded px-2 py-1 text-xs text-ink focus:outline-none focus:border-accent"
+                      multiple={p.multiple || false}
+                      value={p.multiple ? undefined : (values[p.name] ?? '')}
+                      onChange={e => {
+                        const v = p.multiple
+                          ? JSON.stringify(Array.from(e.currentTarget.selectedOptions).map(o => o.value))
+                          : e.currentTarget.value;
+                        setValues(prev => ({ ...prev, [p.name]: v }));
+                      }}
+                      aria-label={p.label || p.name}
+                    >
+                      <option value="">—</option>
+                      {(p.options ?? (() => { try { const a = JSON.parse(p.default || '[]'); return Array.isArray(a) ? a : []; } catch { return []; } })()).map(o => (
+                        <option key={String(o)} value={String(o)}>{String(o)}</option>
+                      ))}
+                    </select>
+                  ) : p.kind === 'checkbox' ? (
+                    <input type="checkbox" className="w-4 h-4 accent-accent"
+                      checked={(values[p.name] ?? '') === 'true'}
+                      onChange={e => setValues(v => ({ ...v, [p.name]: String(e.target.checked) }))}
+                      aria-label={p.label || p.name} />
                   ) : (
                     <input
                       type={p.kind === 'number' ? 'number' : 'text'}
@@ -199,6 +222,7 @@ const PluginConsole: React.FC<PluginConsoleProps> = ({ connId, connName, onClose
                       aria-label={p.label || p.name}
                     />
                   )}
+                  {p.help && <span className="block text-2xs text-muted">{p.help}</span>}
                 </label>
               ))}
               <div className="flex items-center gap-2">

@@ -32,7 +32,7 @@ func TestTableActionStatementsByDialect(t *testing.T) {
 			name:     "drop a mysql view",
 			object:   objectNames{dbType: "mysql", objectType: "view", database: "shop", table: "cheap"},
 			action:   actionDrop,
-			expected: "DROP VIEW `shop`.`cheap`",
+			expected: "DROP VIEW IF EXISTS `shop`.`cheap`", // 内核渲染方言精确拼写（MSSQL 有 OBJECT_ID 守卫）
 		},
 		{
 			name:     "truncate keeps the schema",
