@@ -40,6 +40,11 @@ type QueryResult struct {
 	// Error carries the reason. The UI confirms, then re-sends through
 	// ExecuteQueryConfirmed.
 	NeedsConfirmation bool `json:"needsConfirmation,omitempty"`
+	// Sets carries the additional result sets when one statement answered with
+	// several (SQL Server batches, stored procedures, MySQL CALL). The first set
+	// is this struct's own columns/rows; the UI shows a "结果集 1/N" switcher.
+	// Absent means the single-set truth for engines that cannot carry more.
+	Sets []QueryResult `json:"sets,omitempty"`
 }
 
 // Column is the result-grid descriptor; the shape lives in catalogmodel.
@@ -589,7 +594,45 @@ func runSelectCtx(ctx context.Context, db *sql.DB, query string, args ...interfa
 
 // runDriverStatement runs one statement through the dbcore driver and maps the
 // kernel's result onto the shape the grid consumes.
+// mergeMultiResult folds the kernel's sets into the single primary result the
+// existing grids expect, with extras in Sets. First set stays primary so every
+// single-set caller renders unchanged.
+func mergeMultiResult(sets []*dbcore.QueryResult, err error) QueryResult {
+	if len(sets) == 0 {
+		return queryResultFrom(nil, err)
+	}
+	// The kernel's RunMulti returns "what was read so far WITH the error" so
+	// callers can show the sets before the failure. queryResultFrom drops the
+	// payload when err != nil — so render the sets with a nil error and attach
+	// the failure as a warning on the LAST set instead of hiding the data.
+	out := queryResultFrom(sets[0], nil)
+	for _, extra := range sets[1:] {
+		out.Sets = append(out.Sets, queryResultFrom(extra, nil))
+	}
+	if err != nil {
+		if len(out.Sets) > 0 {
+			last := &out.Sets[len(out.Sets)-1]
+			last.Error = friendlyDBError(err)
+		} else {
+			out.Error = friendlyDBError(err)
+		}
+	}
+	return out
+}
+
 func runDriverStatement(ctx context.Context, drv dbcore.SQLDriver, query string, start time.Time) QueryResult {
+	// A statement can answer with several grids. Only the multi-capable drivers
+	// (SQL Server batches / stored procedures, MySQL CALL) take this path; the
+	// others keep the single Execute. The first set stays the primary result so
+	// every existing caller and grid renders unchanged — extras ride in Sets.
+	if m, ok := dbcore.AsMultiResult(drv); ok {
+		sets, err := m.ExecuteMulti(ctx, query)
+		if len(sets) > 0 || err != nil {
+			out := mergeMultiResult(sets, err)
+			out.ExecutionTime = time.Since(start).Seconds()
+			return out
+		}
+	}
 	res, err := drv.Execute(ctx, query)
 	result := queryResultFrom(res, err)
 	result.ExecutionTime = time.Since(start).Seconds()

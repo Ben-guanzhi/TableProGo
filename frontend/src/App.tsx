@@ -234,6 +234,8 @@ function App() {
   const [showConsole, setShowConsole] = useState(false);
   // W11: the visual execution plan, opened from a plan result's toolbar.
   const [showPlan, setShowPlan] = useState(false);
+  // Multi-result sets from one statement (SQL Server batches / procedures).
+  const [resultSetIndex, setResultSetIndex] = useState(0);
   // W12: importing connections from another client.
   const [showImportConns, setShowImportConns] = useState(false);
   // W9: the Oracle invalid-object panel.
@@ -1676,6 +1678,8 @@ function App() {
   };
 
   const activeTabData = tabs.find(t => t.id === activeTab);
+  // Multi-result switcher: reset to the first grid when a new result arrives.
+  useEffect(() => { setResultSetIndex(0); }, [activeTabData?.result]);
 // 波 94（Navicat/TablePlus 惯例）：OS 窗口标题跟随活动标签的「连接 @ 库」，
 // 让多窗口/多连接时标题栏始终回答"这个窗口连的是哪台服务器"。隐私模式下
 // 传遮蔽后的名字（与树上的遮蔽口径一致，标题不能成为漏点）。
@@ -2364,8 +2368,29 @@ useEffect(() => {
                       </button>
                     </div>
                   )}
+                  {(() => {
+                    const all = [activeTabData.result, ...(activeTabData.result.sets ?? [])];
+                    const active = Math.min(resultSetIndex, all.length - 1);
+                    return all.length > 1 ? (
+                      <div className="flex items-center gap-1 px-2 py-1 border-b border-line-soft bg-raised/40">
+                        <span className="text-2xs text-secondary">结果集</span>
+                        {all.map((_, i) => (
+                          <button key={i} onClick={() => setResultSetIndex(i)}
+                            className={`px-2 py-0.5 rounded text-2xs ${
+                              i === active ? 'bg-accent text-on-accent' : 'border border-line text-secondary hover:bg-raised'
+                            }`}
+                            aria-label={`结果集 ${i + 1}`} aria-pressed={i === active}>
+                            {i + 1}
+                          </button>
+                        ))}
+                        <span className="text-2xs text-muted">{all[active]?.rows?.length ?? 0} 行</span>
+                      </div>
+                    ) : null;
+                  })()}
                   <DataGrid
-                    result={activeTabData.result}
+                    result={[activeTabData.result, ...(activeTabData.result.sets ?? [])][
+                      Math.min(resultSetIndex, activeTabData.result.sets?.length ?? 0)
+                    ] ?? activeTabData.result}
                     comments={activeTabData.comments}
                     showComments={settings.showColumnComments}
                     editSource={activeTabData.source}

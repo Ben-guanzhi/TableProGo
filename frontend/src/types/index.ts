@@ -137,6 +137,8 @@ export interface QueryResult {
   // the server for the page beside this one without counting rows past.
   startCursor?: string[];
   endCursor?: string[];
+  /** Additional result sets from one statement (SQL Server batches / procedures). */
+  sets?: QueryResult[];
 }
 
 // One key opened from the navigator: identity, remaining lifetime and the
