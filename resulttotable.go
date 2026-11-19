@@ -36,10 +36,10 @@ type resultColumn struct {
 
 // saveResultRequest 是保存结果到表的请求体。
 type saveResultRequest struct {
-	ConnID   string       `json:"connId"`
-	Database string       `json:"database"`
-	Table    string       `json:"table"`
-	Create   bool         `json:"create"` // true = 先 CREATE TABLE（列类型按文本）
+	ConnID   string         `json:"connId"`
+	Database string         `json:"database"`
+	Table    string         `json:"table"`
+	Create   bool           `json:"create"` // true = 先 CREATE TABLE（列类型按文本）
 	Columns  []resultColumn `json:"columns"`
 	Rows     [][]resultCell `json:"rows"`
 }
@@ -71,11 +71,28 @@ func (a *App) handleSaveResultToTable(w http.ResponseWriter, r *http.Request) {
 	}
 	dbType := string(drv.Kind())
 
-	// 列名经内核校验（换行注入向量，与结构编辑器同一闸门）。
+	// 执行路径的标识符与类型必须全部走内核校验——ddl.ident() 的裸名回退
+	// 是为 DDL 阅读 aid 设计的，被执行的 CREATE 不能用（§321 注入面复核）。
+	// 目标表名：不可引用的名字（换行/分号/引号）直接拒绝，而不是裸落到 SQL。
+	quotedTable, err := ddl.ValidatedIdent(dbType, body.Table)
+	if err != nil {
+		writeError(w, 400, fmt.Sprintf("目标表名不合法：%v", err))
+		return
+	}
 	names := make([]string, len(body.Columns))
 	for i, c := range body.Columns {
 		if _, err := ddl.ValidatedIdent(dbType, c.Name); err != nil {
 			writeError(w, 400, fmt.Sprintf("第 %d 列名不合法：%v", i+1, err))
+			return
+		}
+		// 列类型来自结果集元数据（用户可经自定义别名影响）——校验后
+		// 才进 CREATE TABLE 的列定义（"int; DROP TABLE…" 必须被拒）。
+		typ := strings.TrimSpace(c.Type)
+		if typ == "" {
+			typ = "TEXT"
+		}
+		if err := ddl.ValidateColumnType(dbType, typ); err != nil {
+			writeError(w, 400, fmt.Sprintf("第 %d 列类型不合法：%v", i+1, err))
 			return
 		}
 		names[i] = c.Name
@@ -105,12 +122,13 @@ func (a *App) handleSaveResultToTable(w http.ResponseWriter, r *http.Request) {
 	if body.Create {
 		cols := make([]ddl.Column, len(body.Columns))
 		for i, c := range body.Columns {
-			typ := c.Type
+			typ := strings.TrimSpace(c.Type)
 			if typ == "" {
 				typ = "TEXT"
 			}
 			cols[i] = ddl.Column{Name: c.Name, Type: typ}
 		}
+		// body.Table 已通过 ValidatedIdent（上面）——CreateTable 再引用一次是幂等的。
 		createStmt := ddl.CreateTable(dbType, "", body.Table, cols, nil, nil, nil)
 		if _, err := txDrv.ExecuteIn(tx, ctx, createStmt); err != nil {
 			rollbackOnErr(http.StatusInternalServerError, fmt.Errorf("建表失败: %w", err))
@@ -129,11 +147,8 @@ func (a *App) handleSaveResultToTable(w http.ResponseWriter, r *http.Request) {
 		quoted[i] = q
 		marks[i] = sqltext.Placeholder(dbType, i+1)
 	}
-	quotedTable, err := sqltext.QualifiedName(dbType, body.Table)
-	if err != nil {
-		rollbackOnErr(400, err)
-		return
-	}
+	// quotedTable 已在入口用 ValidatedIdent 校验（CREATE 与 INSERT 共用同一
+	// 个已校验的表名——不再有"校验过的给 INSERT、裸的给 CREATE"的分叉）。
 	stmt := "INSERT INTO " + quotedTable +
 		" (" + strings.Join(quoted, ", ") + ") VALUES (" + strings.Join(marks, ", ") + ")"
 
