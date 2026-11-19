@@ -13,7 +13,7 @@ import {
   rectangularSelection,
 } from '@codemirror/view';
 import { defaultKeymap, historyKeymap, history, indentWithTab, addCursorAbove, addCursorBelow,
-  simplifySelection } from '@codemirror/commands';
+  simplifySelection, toggleComment } from '@codemirror/commands';
 import { selectNextOccurrence, selectSelectionMatches } from '@codemirror/search';
 import { FiAlignLeft, FiList, FiStar, FiTrash2, FiX } from 'react-icons/fi';
 import {
@@ -647,6 +647,13 @@ const QueryEditor = forwardRef<QueryEditorHandle, QueryEditorProps>(function Que
                 void formatSQL();
                 return true;
               },
+            },
+            {
+              // Ctrl+/：SQL 客户端的标准注释切换（CodeMirror 内建，按选区
+              // 整块加/移除行注释——与内核 sqltext.ToggleLinesComment 同语义）。
+              key: 'Mod-/',
+              mac: 'Cmd-/',
+              run: toggleComment,
             },
             // W3-a: multi-cursor. CodeMirror 6 already ships the operations
             // (adding a cursor above/below, selecting the next occurrence), so
