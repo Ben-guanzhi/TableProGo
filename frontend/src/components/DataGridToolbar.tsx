@@ -47,7 +47,7 @@ export interface DataGridToolbarProps {
   onExportToggle: (rect: DOMRect) => void;
   onExportClose: () => void;
   canExportSQL: boolean;
-  onExport: (format: 'csv' | 'json' | 'markdown' | 'xlsx' | 'sql') => void;
+  onExport: (format: 'csv' | 'json' | 'markdown' | 'xlsx' | 'sql' | 'table') => void;
   onCopyInserts: () => void;
 }
 
@@ -198,6 +198,7 @@ const DataGridToolbar: React.FC<DataGridToolbarProps> = ({
           <div className="my-1 border-t border-line-soft" />
           <MenuItem label="SQL（INSERT 文件）" disabled={!canExportSQL} onClick={() => onExport('sql')} />
           <MenuItem label="复制为 INSERT" disabled={!canExportSQL} onClick={onCopyInserts} />
+          <MenuItem label="保存到表…" disabled={!canExportSQL} onClick={() => onExport('table')} />
           {!canExportSQL && (
             <div className="px-2.5 pt-1 text-2xs text-muted leading-snug">
               当前结果没有来源表（视图或自定义查询），生成不了 INSERT

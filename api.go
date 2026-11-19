@@ -520,6 +520,7 @@ func (a *App) routes() *http.ServeMux {
 	post(a, mux, "/api/export-dictionary", 500, func(a *App, body dictionaryRequest) (any, error) {
 		return a.exportDictionary(body)
 	})
+	mux.HandleFunc("/api/result-to-table", a.handleSaveResultToTable)
 	post(a, mux, "/api/sessions/kill", 400, func(a *App, body sessionKillRequest) (any, error) {
 		return statusOK, a.KillServerSession(body.ConnID, body.Database, body.PID)
 	})

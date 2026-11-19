@@ -144,6 +144,21 @@ export interface PluginAction {
   params?: PluginActionParam[];
 }
 
+// SaveResultToTable writes the grid's loaded rows into a target table (the
+// "export to table" path). The result rides back from the server as text plus a
+// NULL mask, because an empty string and a NULL are different values and JSON
+// cannot tell them apart.
+export async function SaveResultToTable(
+  connId: string,
+  database: string,
+  table: string,
+  create: boolean,
+  columns: { name: string; type?: string }[],
+  rows: { v: string; n?: boolean }[][],
+): Promise<{ rows: number; table: string }> {
+  return post('/api/result-to-table', { connId, database, table, create, columns, rows });
+}
+
 export async function GetPluginActions(connId: string): Promise<PluginAction[]> {
   return post('/api/plugin/actions', { connId });
 }

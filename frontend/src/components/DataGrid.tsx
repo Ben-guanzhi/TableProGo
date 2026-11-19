@@ -19,6 +19,7 @@ import { computeVisibleRange, ROW_HEIGHT, OVERSCAN, VisibleRange } from '../data
 import {
   buildView,
   cellText,
+  isNullValue,
   ColumnFilter,
   copyValues,
   cycleActive,
@@ -52,6 +53,7 @@ import FKPickerPanel from './FKPickerPanel';
 import FilterMenu, { MenuItem } from './FilterMenu';
 import ReviewDialog from './ReviewDialog';
 import DataGridToolbar from './DataGridToolbar';
+import SaveToTableDialog from './SaveToTableDialog';
 
 interface DataGridProps {
   result: QueryResult;
@@ -102,7 +104,7 @@ interface BodyRow {
 // The shapes the export menu offers. The two SQL ones are the same script taken
 // two different ways out; only the backend can render it, because only it knows
 // what each column holds.
-type ExportFormat = 'csv' | 'json' | 'markdown' | 'xlsx' | 'sql';
+type ExportFormat = 'csv' | 'json' | 'markdown' | 'xlsx' | 'sql' | 'table';
 
 // P1-8: past this many characters a tooltip is not a viewer — the cell shows a
 // preview and the full value opens in a dialog. The preview length keeps one
@@ -624,6 +626,35 @@ const DataGrid: React.FC<DataGridProps> = ({
     window.addEventListener('pointerup', up);
   };
 
+  // Save-to-table: the grid's loaded rows go into a target table (the
+  // "export to table" path). The rows that ride along are the visible ones —
+  // sorted and filtered, exactly like the CSV export — and each cell keeps a
+  // NULL flag, because an empty string and a NULL are different values.
+  const [showSaveToTable, setShowSaveToTable] = useState(false);
+  const saveToTablePayload = () => {
+    const visible = view.map(i => rows[i]);
+    return {
+      columns: columns.map(c => ({ name: c.name, type: c.type })),
+      rows: visible.map(row =>
+        columns.map((_, ci) => {
+          const v = row[ci];
+          return isNullValue(v) ? { v: '', n: true } : { v: cellText(v) };
+        }),
+      ),
+    };
+  };
+
+  const saveToTableDialog = showSaveToTable && editSource ? (
+    <SaveToTableDialog
+      connId={editSource.connId}
+      database={editSource.database}
+      columns={saveToTablePayload().columns}
+      rows={saveToTablePayload().rows}
+      defaultTable={exportName || 'exported_result'}
+      onClose={() => setShowSaveToTable(false)}
+    />
+  ) : null;
+
   const exportAs = async (format: ExportFormat) => {
     dispatchColumns({ type: 'exportMenuClose' });
     const stem = (exportName || 'result').replace(/[\\/:*?"<>|]+/g, '_');
@@ -650,6 +681,10 @@ const DataGrid: React.FC<DataGridProps> = ({
       } catch (error) {
         toast.error((error as Error).message, { duration: 8000 });
       }
+      return;
+    }
+    if (format === 'table') {
+      setShowSaveToTable(true);
       return;
     }
     if (!editSource) return;
@@ -1471,6 +1506,7 @@ const DataGrid: React.FC<DataGridProps> = ({
           </div>
         </div>
       )}
+      {saveToTableDialog}
     </div>
   );
 };
