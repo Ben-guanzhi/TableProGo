@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Ben-guanzhi/dbcore/ddl"
 	tableprosql "github.com/Ben-guanzhi/dbcore/sqltext"
 )
 
@@ -49,7 +50,9 @@ func tableActionStatement(o objectNames, action string) (string, error) {
 	switch action {
 	case actionDrop:
 		if view {
-			return "DROP VIEW " + current, nil
+			// 内核渲染方言拼写（MSSQL 的 IF OBJECT_ID 守卫 vs 其它
+			// DROP VIEW IF EXISTS）——与 DROP TABLE 的能力差异同源。
+			return ddl.DropView(o.dbType, current), nil
 		}
 		return "DROP TABLE " + current, nil
 
