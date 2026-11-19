@@ -95,6 +95,7 @@ interface SidebarProps {
   onRenameObject: (table: TableRef, newName: string) => Promise<void>;
   onDropObject: (table: TableRef) => Promise<void>;
   onTruncateObject: (table: TableRef) => Promise<void>;
+  onGenerateData: (table: TableRef) => void;
   onRenameKey: (key: TableRef, newName: string) => Promise<void>;
   onDeleteKey: (key: TableRef) => Promise<void>;
   onSetKeyTTL: (key: TableRef, seconds: number) => Promise<void>;
@@ -181,6 +182,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onRenameObject,
   onDropObject,
   onTruncateObject,
+  onGenerateData,
   onRenameKey,
   onDeleteKey,
   onSetKeyTTL,
@@ -785,6 +787,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       onCommitKeyRename={commitKeyRename}
       onCommitKeyTTL={commitKeyTTL}
       onRunAction={(n, action) => runAction(n, action)}
+      onGenerateData={n => onGenerateData(tableRefOf(n))}
       onRunKeyAction={(n, action) => runKeyAction(n, action)}
       onRefresh={refresh}
       onRefreshKeyParent={n => refresh(parentOfTable(n))}

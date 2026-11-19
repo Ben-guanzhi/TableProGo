@@ -13,6 +13,7 @@ export type MenuItemId =
   | 'copyDdl'
   | 'rename'
   | 'truncate'
+  | 'generateData'
   | 'drop'
   | 'refresh'
   | 'keyTtl'
@@ -66,7 +67,7 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
   }
   if (node.kind === 'table' || node.kind === 'view') {
     items.push('copyDdl', 'rename');
-    if (node.kind === 'table') items.push('truncate');
+    if (node.kind === 'table') items.push('truncate', 'generateData');
     items.push('drop');
   }
   items.push('refresh');

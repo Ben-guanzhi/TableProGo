@@ -34,6 +34,7 @@ import ExplainPlanView from './components/ExplainPlanView';
 import ImportConnectionsDialog from './components/ImportConnectionsDialog';
 import ObjectHealthDialog from './components/ObjectHealthDialog';
 import SessionsDialog from './components/SessionsDialog';
+import GenerateDataDialog from './components/GenerateDataDialog';
 import ServerVarsDialog from './components/ServerVarsDialog';
 import { ExportDictionary } from './api';
 import AboutDialog from './components/AboutDialog';
@@ -238,6 +239,7 @@ function App() {
   // W9: the Oracle invalid-object panel.
   const [showObjectHealth, setShowObjectHealth] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
+  const [genTarget, setGenTarget] = useState<TableRef | null>(null);
   const [showServerVars, setShowServerVars] = useState(false);
   // W15: the about panel (build identity + opt-in update check).
   const [showAbout, setShowAbout] = useState(false);
@@ -1842,6 +1844,7 @@ useEffect(() => {
         onRenameObject={handleRenameObject}
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
+  onGenerateData={setGenTarget}
         onRenameKey={handleRenameKVKey}
         onDeleteKey={handleDeleteKVKey}
         onSetKeyTTL={handleSetKVKeyTTL}
@@ -2526,6 +2529,13 @@ useEffect(() => {
         />
       )}
 
+      {genTarget && (
+        <GenerateDataDialog
+          target={genTarget}
+          onInsert={text => editorRef.current?.insertAtCursor(text)}
+          onClose={() => setGenTarget(null)}
+        />
+      )}
       {showSessions && activeConnection && (
         <SessionsDialog
           connId={activeConnection.id}

@@ -21,7 +21,7 @@ const node = (over: Partial<TreeNode> = {}): TreeNode => ({
 });
 
 test('a table can be emptied, dropped, renamed, copied and refreshed', () => {
-  assert.deepEqual(menuItemsFor(node()), ['copyDdl', 'rename', 'truncate', 'drop', 'refresh']);
+  assert.deepEqual(menuItemsFor(node()), ['copyDdl', 'rename', 'truncate', 'generateData', 'drop', 'refresh']);
 });
 
 test('a view has no truncate (it holds no rows of its own)', () => {

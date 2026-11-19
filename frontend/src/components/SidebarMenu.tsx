@@ -51,6 +51,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onCommitKeyRename: (node: TNode) => void;
   onCommitKeyTTL: (node: TNode) => void;
   onRunAction: (node: TNode, action: 'drop' | 'truncate') => void;
+  onGenerateData: (node: TNode) => void;
   onRunKeyAction: (node: TNode, action: 'delete') => void;
   onRefresh: (node: TNode) => void;
   onRefreshKeyParent: (node: TNode) => void;
@@ -256,6 +257,14 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
               onConfirm: () => props.onRunAction(node, 'truncate'),
             });
           }}
+        />
+      )}
+      {items.has('generateData') && (
+        <MenuItem
+          label="生成测试数据…"
+          icon={<FiCode size={11} />}
+          disabled={busy}
+          onClick={() => props.onGenerateData(node)}
         />
       )}
       {items.has('copyDdl') && (

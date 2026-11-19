@@ -144,6 +144,22 @@ export interface PluginAction {
   params?: PluginActionParam[];
 }
 
+// GenerateData asks the kernel for type-driven test INSERTs (deterministic
+// when a seed is given). Only text is returned — the user reviews and runs it.
+export async function GenerateData(
+  connId: string,
+  database: string,
+  schema: string,
+  table: string,
+  rows: number,
+  seed: number,
+  skipPrimaryKey: boolean,
+): Promise<{ statements: string[]; rows: number; seed: number }> {
+  return post('/api/generate-data', {
+    connId, database, schema, table, rows, seed, skipPrimaryKey,
+  });
+}
+
 // SaveResultToTable writes the grid's loaded rows into a target table (the
 // "export to table" path). The result rides back from the server as text plus a
 // NULL mask, because an empty string and a NULL are different values and JSON

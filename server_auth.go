@@ -181,6 +181,8 @@ var readOnlyRoutes = map[string]bool{
 	"/api/server-vars": true,
 	// 数据字典导出只读（读结构 + 返回 Markdown 文本，写文件在前端）。
 	"/api/export-dictionary": true,
+	// 数据生成只读（纯逻辑生成文本，不改库）。
+	"/api/generate-data": true,
 	"/api/notebooks":        true,
 	"/api/notebooks/run":    true,
 	"/api/build-info":       true,
