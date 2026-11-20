@@ -267,6 +267,7 @@ function App() {
   // W9: the Oracle invalid-object panel.
   const [showObjectHealth, setShowObjectHealth] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
+  const [showUsers, setShowUsers] = useState(false);
   const [genTarget, setGenTarget] = useState<TableRef | null>(null);
   const [showServerVars, setShowServerVars] = useState(false);
   // W15: the about panel (build identity + opt-in update check).
@@ -1890,6 +1891,7 @@ useEffect(() => {
         onDropObject={handleDropObject}
         onTruncateObject={handleTruncateObject}
   onGenerateData={setGenTarget}
+  onUsers={() => setShowUsers(true)}
         onRenameKey={handleRenameKVKey}
         onDeleteKey={handleDeleteKVKey}
         onSetKeyTTL={handleSetKVKeyTTL}

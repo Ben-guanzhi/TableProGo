@@ -522,6 +522,8 @@ func (a *App) routes() *http.ServeMux {
 	})
 	mux.HandleFunc("/api/result-to-table", a.handleSaveResultToTable)
 	mux.HandleFunc("/api/generate-data", a.handleGenerateData)
+	mux.HandleFunc("/api/user-list", a.handleUserList)
+	mux.HandleFunc("/api/user-ddl", a.handleUserDDL)
 	post(a, mux, "/api/sessions/kill", 400, func(a *App, body sessionKillRequest) (any, error) {
 		return statusOK, a.KillServerSession(body.ConnID, body.Database, body.PID)
 	})

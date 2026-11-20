@@ -31,14 +31,14 @@ test('a view has no truncate (it holds no rows of its own)', () => {
 test('a schema is a container: it gains a table, an ER diagram, routines, enums and backup', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'schema', key: 's|1', label: 'public', table: undefined })),
-    ['newTable', 'er', 'routines', 'enums', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'enums', 'backup', 'users', 'refresh'],
   );
 });
 
 test('a database is a container too, and owns the data search', () => {
   assert.deepEqual(
     menuItemsFor(node({ kind: 'database', key: 'd|1', label: 'app', schema: undefined, table: undefined })),
-    ['newTable', 'er', 'routines', 'enums', 'searchData', 'backup', 'refresh'],
+    ['newTable', 'er', 'routines', 'enums', 'searchData', 'backup', 'users', 'refresh'],
   );
 });
 

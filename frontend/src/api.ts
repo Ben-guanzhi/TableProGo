@@ -144,6 +144,25 @@ export interface PluginAction {
   params?: PluginActionParam[];
 }
 
+// GetUserList lists the login users the kernel's UserAdmin capability
+// reports for this connection (engine-dependent; SQLite reports engineOk=false).
+export async function GetUserList(connId: string, database: string): Promise<{
+  users: string[]; hosts?: string[]; engineOk: boolean; error?: string;
+}> {
+  return post('/api/user-list', { connId, database });
+}
+
+// GetUserDDL asks the kernel for the dialect-correct CREATE/DROP/GRANT
+// statement. The statement is displayed for confirmation before execution.
+export async function GetUserDDL(
+  connId: string, database: string, action: 'create' | 'drop' | 'grant',
+  user: string, host: string, password: string, grantDb: string,
+): Promise<{ sql: string }> {
+  return post('/api/user-ddl', {
+    connId, database, action, user, host, password, database2: grantDb,
+  });
+}
+
 // GenerateData asks the kernel for type-driven test INSERTs (deterministic
 // when a seed is given). Only text is returned — the user reviews and runs it.
 export async function GenerateData(

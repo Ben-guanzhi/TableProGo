@@ -20,7 +20,8 @@ export type MenuItemId =
   | 'keyRename'
   | 'keyDelete'
   | 'keyRefresh'
-  | 'backup';
+  | 'backup'
+  | 'users';
 
 // backupableEngine names the engines with an official single-file dump tool:
 // pg_dump / mysqldump for the two protocol families (including their
@@ -64,6 +65,8 @@ export function menuItemsFor(node: TreeNode): MenuItemId[] {
     // Native-tool backup (pg_dump/mysqldump/sqlite3) exists for the two
     // protocol families plus SQLite.
     if (backupableEngine(node.dbType)) items.push('backup');
+    // 用户管理跟随备份走 database 节点（同一批运维动作）。
+    items.push('users');
   }
   if (node.kind === 'table' || node.kind === 'view') {
     items.push('copyDdl', 'rename');

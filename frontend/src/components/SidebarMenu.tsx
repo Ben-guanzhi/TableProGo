@@ -1,17 +1,4 @@
-import {
-  FiClock,
-  FiCode,
-  FiCopy,
-  FiDownload,
-  FiEdit2,
-  FiGitBranch,
-  FiMinusCircle,
-  FiPlus,
-  FiRefreshCw,
-  FiSearch,
-  FiTag,
-  FiTrash2,
-} from 'react-icons/fi';
+import { FiClock, FiCode, FiCopy, FiDownload, FiEdit2, FiGitBranch, FiMinusCircle, FiPlus, FiRefreshCw, FiSearch, FiTag, FiTrash2, FiUserPlus } from 'react-icons/fi';
 
 import type { ConfirmRequest } from './ConfirmDialog';
 import type { TableRef } from '../types';
@@ -62,6 +49,7 @@ export interface SidebarMenuProps<TNode extends TreeNode = TreeNode> {
   onEnums: (node: TNode) => void;
   onSearchData: (node: TNode) => void;
   onBackup: (node: TNode) => void;
+  onUsers: (node: TNode) => void;
   onConfirm: (request: ConfirmRequest) => void;
 }
 
@@ -228,6 +216,16 @@ const SidebarMenu = <TNode extends TreeNode>(props: SidebarMenuProps<TNode>) => 
           onClick={() => {
             props.onClose();
             props.onBackup(node);
+          }}
+        />
+      )}
+      {items.has('users') && (
+        <MenuItem
+          label="用户管理…"
+          icon={<FiUserPlus size={11} />}
+          onClick={() => {
+            props.onClose();
+            props.onUsers(node);
           }}
         />
       )}
