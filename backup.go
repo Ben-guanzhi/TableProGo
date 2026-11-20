@@ -65,6 +65,23 @@ func nativeBackupSupported(dbType string) bool {
 	return isPostgresLike(dbType) || isMySQLLike(dbType) || builtinEngine(dbType) == "sqlite"
 }
 
+// atomicWriteResult 把工具的产物先写进 outPath+".tmp"，成功再 rename 到
+// 目标；任何失败都清理残片。dump 中途取消/断网/磁盘满时，用户要么拿到
+// 完整备份，要么保留旧备份——绝不会看到一份半截 SQL 假装成功。
+func atomicWriteResult(outPath string, write func(tmp string) error) error {
+	tmpPath := outPath + ".tmp"
+	_ = os.Remove(tmpPath) // 上一次崩溃遗留的残片
+	if err := write(tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	if err := os.Rename(tmpPath, outPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("备份完成但无法写入目标文件: %w", err)
+	}
+	return nil
+}
+
 // Backup 执行一次备份。postgres/mysql 走原生工具；其余引擎明确拒绝。
 func (a *App) Backup(req BackupRequest) (BackupResult, error) {
 	res := BackupResult{Log: []string{}}
@@ -99,14 +116,21 @@ func (a *App) Backup(req BackupRequest) (BackupResult, error) {
 		mode = "full"
 	}
 	host, port := conn.dialTarget()
-	switch {
-	case builtinEngine(conn.Type) == "sqlite":
-		err = a.runSQLiteDump(ctx, conn, log, req, mode)
-	case isPostgresLike(conn.Type):
-		err = a.runPgDump(ctx, conn, log, req, database, mode, host, port)
-	default:
-		err = a.runMysqlDump(ctx, conn, log, req, database, mode, host, port)
-	}
+	// 原子备份（§348）：工具先写同目录临时文件，全部成功后再 rename 到目标。
+	// 直接 --file=<target> 的写法在取消/网络断/磁盘满时留下半截 SQL，
+	// 用户会拿它去恢复——比没有备份更糟。
+	err = atomicWriteResult(req.OutPath, func(tmpPath string) error {
+		tmpReq := req
+		tmpReq.OutPath = tmpPath
+		switch {
+		case builtinEngine(conn.Type) == "sqlite":
+			return a.runSQLiteDump(ctx, conn, log, tmpReq, mode)
+		case isPostgresLike(conn.Type):
+			return a.runPgDump(ctx, conn, log, tmpReq, database, mode, host, port)
+		default:
+			return a.runMysqlDump(ctx, conn, log, tmpReq, database, mode, host, port)
+		}
+	})
 	if err == nil {
 		log.logf("完成")
 	}
