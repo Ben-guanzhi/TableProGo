@@ -48,13 +48,17 @@ func handle(req plugindriver.Request) plugindriver.Response {
 	case plugindriver.MethodConnListActions:
 		return plugindriver.Response{Result: mustJSON([]plugindriver.ConnAction{
 			{
-				ID: "build", Title: "构建 SELECT 语句", Group: "SQL 工具",
+				ID: "build", Title: "构建 SELECT 语句（多表 JOIN）", Group: "SQL 工具",
 				Params: []plugindriver.ConnActionParam{
-					{Name: "table", Label: "表", Kind: "text", Required: true, Default: ""},
-					{Name: "columns", Label: "列（逗号分隔）", Kind: "text", Required: false, Default: "*"},
+					{Name: "table", Label: "主表", Kind: "text", Required: true, Default: ""},
+					{Name: "alias", Label: "主表别名", Kind: "text", Required: false, Default: ""},
+					{Name: "columns", Label: "列（逗号分隔；t.col 限定；COUNT:id 聚合）", Kind: "text", Required: false, Default: "*"},
+					{Name: "joins", Label: "JOIN（JSON 数组：table/type/on/alias）", Kind: "textarea", Required: false, Rows: 4, Default: ""},
 					{Name: "where", Label: "WHERE（可选）", Kind: "text", Required: false, Default: ""},
+					{Name: "groupby", Label: "GROUP BY（可选，逗号分隔）", Kind: "text", Required: false, Default: ""},
 					{Name: "order", Label: "ORDER BY（可选）", Kind: "text", Required: false, Default: ""},
 					{Name: "limit", Label: "LIMIT（可选）", Kind: "number", Required: false, Default: ""},
+					{Name: "distinct", Label: "SELECT DISTINCT", Kind: "checkbox", Required: false, Default: "false"},
 				},
 			},
 		})}
@@ -76,13 +80,55 @@ func handle(req plugindriver.Request) plugindriver.Response {
 			var fields []sqltext.QBColumn
 			for _, c := range strings.Split(cols, ",") {
 				c = strings.TrimSpace(c)
-				if c != "" {
-					fields = append(fields, sqltext.QBColumn{Col: c})
+				if c == "" {
+					continue
 				}
+				field := sqltext.QBColumn{Col: c}
+				// 聚合简写：COUNT:id / SUM:amount / AVG:score / MIN:... / MAX:...
+				if agg, col, ok := strings.Cut(c, ":"); ok {
+					switch strings.ToUpper(agg) {
+					case "COUNT", "SUM", "AVG", "MIN", "MAX":
+						field = sqltext.QBColumn{Col: col, Agg: strings.ToUpper(agg)}
+					}
+				}
+				fields = append(fields, field)
 			}
 			spec := sqltext.SelectSpec{Table: table, Columns: fields}
+			spec.Alias, _ = p.Args["alias"].(string)
+			spec.Distinct, _ = p.Args["distinct"].(bool)
+
+			// JOIN：JSON 数组 [{table,type,on,alias}, ...]（内核 QBJoin 直驱）。
+			if raw, _ := p.Args["joins"].(string); strings.TrimSpace(raw) != "" {
+				var js []joinSpec
+				if err := json.Unmarshal([]byte(raw), &js); err != nil {
+					return plugindriver.Response{Error: "joins 必须是 JSON 数组: " + err.Error()}
+				}
+				for _, j := range js {
+					if j.Table == "" {
+						continue
+					}
+					join := sqltext.QBJoin{Table: j.Table, Alias: j.Alias, Type: strings.ToUpper(j.Type)}
+					if join.Type == "" {
+						join.Type = "INNER"
+					}
+					for _, on := range strings.Split(j.On, ",") {
+						if on = strings.TrimSpace(on); on != "" {
+							join.On = append(join.On, sqltext.QBCond{Kind: "raw", Raw: on})
+						}
+					}
+					spec.Joins = append(spec.Joins, join)
+				}
+			}
+
 			if s, _ := p.Args["where"].(string); s != "" {
 				spec.Where = []sqltext.QBCond{{Kind: "raw", Raw: s}}
+			}
+			if s, _ := p.Args["groupby"].(string); s != "" {
+				for _, g := range strings.Split(s, ",") {
+					if g = strings.TrimSpace(g); g != "" {
+						spec.GroupBy = append(spec.GroupBy, g)
+					}
+				}
 			}
 			if s, _ := p.Args["order"].(string); s != "" {
 				spec.OrderBy = []sqltext.QBOrder{{Col: s}}
@@ -100,6 +146,14 @@ func handle(req plugindriver.Request) plugindriver.Response {
 		}
 	}
 	return plugindriver.Response{Error: "unsupported method: " + req.Method}
+}
+
+// joinSpec 是插件线路层的 JOIN 描述（映射内核 sqltext.QBJoin）。
+type joinSpec struct {
+	Table string `json:"table"`
+	Alias string `json:"alias,omitempty"`
+	Type  string `json:"type,omitempty"` // INNER | LEFT | RIGHT | CROSS
+	On    string `json:"on,omitempty"`   // 逗号分隔的 ON 条件
 }
 
 func mustJSON(v any) json.RawMessage {
