@@ -12,6 +12,55 @@ import (
 	"github.com/Ben-guanzhi/dbcore/sqlite"
 )
 
+func TestReportLayoutDesigner(t *testing.T) {
+	layout := `{
+		"columns": [
+			{"name":"region","label":"区域","width":"30%"},
+			{"name":"amount","label":"金额","align":"right"}
+		],
+		"groups": ["region"],
+		"summary": ["amount"],
+		"theme": "dark"
+	}`
+	rows := `[{"region":"华东","amount":100},{"region":"华东","amount":200},{"region":"华北","amount":50}]`
+	resp := handle(plugindriver.Request{
+		Method: plugindriver.MethodConnRunAction,
+		Params: mustJSON(map[string]any{
+			"action": "layout",
+			"args":   map[string]any{"title": "区域报表", "layout": layout, "rows": rows},
+		}),
+	})
+	if resp.Error != "" {
+		t.Fatal(resp.Error)
+	}
+	var res plugindriver.ConnQueryResult
+	if err := json.Unmarshal(resp.Result, &res); err != nil {
+		t.Fatal(err)
+	}
+	out := res.Rows[0][0].(string)
+	for _, want := range []string{"区域报表", "华东", "小计", "合计", "350.00", "#1e1e1e", "text-align:right"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("layout html missing %q in:\n%s", want, out[:min(len(out), 400)])
+		}
+	}
+	if res.Rows[0][1] != float64(3) {
+		t.Errorf("rows = %v, want 3", res.Rows[0][1])
+	}
+}
+
+func TestReportLayoutBadJSON(t *testing.T) {
+	resp := handle(plugindriver.Request{
+		Method: plugindriver.MethodConnRunAction,
+		Params: mustJSON(map[string]any{
+			"action": "layout",
+			"args":   map[string]any{"title": "x", "layout": "not-json"},
+		}),
+	})
+	if resp.Error == "" {
+		t.Fatal("bad layout must error")
+	}
+}
+
 func TestReportFromDataSQLite(t *testing.T) {
 	db := filepath.Join(t.TempDir(), "r.db")
 	// 用内核直接建表——插件只负责查询与渲染。

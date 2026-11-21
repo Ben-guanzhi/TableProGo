@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Ben-guanzhi/dbcore"
@@ -63,6 +64,15 @@ func handle(req plugindriver.Request) plugindriver.Response {
 				},
 			},
 			{
+				ID: "layout", Title: "声明式布局报表（分组/汇总/列宽）", Group: "报表",
+				Params: []plugindriver.ConnActionParam{
+					{Name: "title", Label: "报表标题", Required: true, Default: ""},
+					{Name: "layout", Label: "布局 JSON（columns/groups/summary/theme）", Kind: "textarea", Required: true, Rows: 8, Default: ""},
+					{Name: "sql", Label: "查询 SQL（空=用 rows 手填）", Kind: "textarea", Rows: 4, Default: ""},
+					{Name: "rows", Label: "手填数据（JSON 对象数组，sql 为空时用）", Kind: "textarea", Rows: 5, Default: "[]"},
+				},
+			},
+			{
 				ID: "fromdata", Title: "从数据库生成报表（SQL → HTML）", Group: "报表",
 				Params: []plugindriver.ConnActionParam{
 					{Name: "title", Label: "报表标题", Required: true, Default: ""},
@@ -80,6 +90,8 @@ func handle(req plugindriver.Request) plugindriver.Response {
 			return plugindriver.Response{Error: err.Error()}
 		}
 		switch p.Action {
+		case "layout":
+			return reportLayout(p.Args)
 		case "fromdata":
 			return reportFromData(p.Args)
 		case "design":
@@ -180,6 +192,112 @@ func rowMaps(cols []string, vals [][]string) []map[string]any {
 		out = append(out, m)
 	}
 	return out
+}
+
+// layoutSpec 是声明式报表布局（等价 Navicat 设计器的"列配置/分组/汇总"。
+// 拖拽 WYSIWYG 归宿主 UI——插件消费其 JSON 表达）。
+type layoutSpec struct {
+	Columns []layoutColumn `json:"columns"`
+	Groups  []string       `json:"groups"`
+	Summary []string       `json:"summary"` // 需要合计的列名
+	Theme   string         `json:"theme"`
+}
+type layoutColumn struct {
+	Name  string `json:"name"`
+	Label string `json:"label,omitempty"`
+	Width string `json:"width,omitempty"` // CSS 宽度
+	Align string `json:"align,omitempty"` // left/right/center
+}
+
+func reportLayout(args map[string]any) plugindriver.Response {
+	title, _ := args["title"].(string)
+	raw, _ := args["layout"].(string)
+	if title == "" || strings.TrimSpace(raw) == "" {
+		return plugindriver.Response{Error: "缺少 title / layout"}
+	}
+	var spec layoutSpec
+	if err := json.Unmarshal([]byte(raw), &spec); err != nil {
+		return plugindriver.Response{Error: "layout 必须是 JSON: " + err.Error()}
+	}
+	if len(spec.Columns) == 0 {
+		return plugindriver.Response{Error: "layout.columns 不能为空"}
+	}
+
+	// 数据来源：SQL（现场拨号）或手填 rows。
+	var cols []string
+	var values [][]string
+	for _, c := range spec.Columns {
+		label := c.Label
+		if label == "" {
+			label = c.Name
+		}
+		cols = append(cols, label)
+	}
+	if sqlText, _ := args["sql"].(string); strings.TrimSpace(sqlText) != "" {
+		kind, _ := args["kind"].(string)
+		if kind == "" {
+			return plugindriver.Response{Error: "sql 模式需 kind"}
+		}
+		port := 0
+		if n, ok := args["port"].(float64); ok && n > 0 {
+			port = int(n)
+		}
+		str := func(k string) string { s, _ := args[k].(string); return s }
+		dbspec := dbcore.ConnSpec{Kind: dbcore.DatabaseKind(kind), Host: str("host"), Port: port,
+			User: str("user"), Password: str("password"), Database: str("database")}
+		if dbspec.Kind == dbcore.KindSQLite {
+			dbspec.File = dbspec.Database
+			dbspec.Database = ""
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		drv, err := dbcore.Open(ctx, dbspec, dbcore.PoolConfig{MaxOpen: 1})
+		if err != nil {
+			return plugindriver.Response{Error: "拨号失败: " + err.Error()}
+		}
+		defer drv.Close()
+		sqldrv, ok := drv.AsSQL()
+		if !ok {
+			return plugindriver.Response{Error: "该引擎无 SQL 面"}
+		}
+		res, err := sqldrv.Execute(ctx, sqlText)
+		if err != nil {
+			return plugindriver.Response{Error: "查询失败: " + err.Error()}
+		}
+		// 按 layout.columns.name 从结果列取（列名匹配，缺失留空）。
+		for _, row := range res.Rows {
+			m := map[string]string{}
+			for i, c := range res.Columns {
+				if i < len(row) {
+					m[strings.ToLower(c.Name)] = row[i].String()
+				}
+			}
+			var r []string
+			for _, lc := range spec.Columns {
+				r = append(r, m[strings.ToLower(lc.Name)])
+			}
+			values = append(values, r)
+		}
+	} else {
+		rowsRaw, _ := args["rows"].(string)
+		var rows []map[string]any
+		if err := json.Unmarshal([]byte(rowsRaw), &rows); err != nil {
+			return plugindriver.Response{Error: "rows 必须是 JSON 对象数组: " + err.Error()}
+		}
+		for _, row := range rows {
+			var r []string
+			for _, lc := range spec.Columns {
+				r = append(r, fmt.Sprintf("%v", row[lc.Name]))
+			}
+			values = append(values, r)
+		}
+	}
+
+	html := renderLayoutHTML(title, spec, cols, values)
+	return plugindriver.Response{Result: mustJSON(&plugindriver.ConnQueryResult{
+		Columns: []plugindriver.ConnColumn{{Name: "html"}, {Name: "rows"}},
+		Rows:    [][]any{{html, len(values)}},
+	})}
 }
 
 func mustJSON(v any) json.RawMessage {
