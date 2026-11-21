@@ -63,6 +63,12 @@ func handle(req plugindriver.Request) plugindriver.Response {
 				},
 			},
 			{
+				ID: "history", Title: "指标历史曲线数据（会话级）", Group: "监控",
+				Params: []plugindriver.ConnActionParam{
+					{Name: "metric", Label: "指标名（空=全部）", Default: ""},
+				},
+			},
+			{
 				ID: "collect", Title: "采集服务器实时指标", Group: "监控",
 				Params: []plugindriver.ConnActionParam{
 					{Name: "kind", Label: "引擎", Required: true, Default: "mysql"},
@@ -81,6 +87,17 @@ func handle(req plugindriver.Request) plugindriver.Response {
 		switch p.Action {
 		case "collect":
 			return collectMetrics(p.Args)
+		case "history":
+			metric, _ := p.Args["metric"].(string)
+			points := snapshot(metric)
+			cols := []plugindriver.ConnColumn{
+				{Name: "at"}, {Name: "metric"}, {Name: "value"}, {Name: "group"}, {Name: "status"},
+			}
+			var rows [][]any
+			for _, s := range points {
+				rows = append(rows, []any{s.At, s.Metric, s.Value, s.Group, s.Status})
+			}
+			return plugindriver.Response{Result: mustJSON(&plugindriver.ConnQueryResult{Columns: cols, Rows: rows})}
 		case "check":
 			raw, _ := p.Args["metrics"].(string)
 			var ms []metricIn
@@ -150,6 +167,8 @@ func collectMetrics(args map[string]any) plugindriver.Response {
 	}
 	cols := []plugindriver.ConnColumn{{Name: "metric"}, {Name: "value"}, {Name: "group"}, {Name: "status"}}
 	var rows [][]any
+	var collected []sample
+	stamp := nowStamp()
 	for _, m := range metrics {
 		status := "OK"
 		if limit, ok := thresholds[m.Label]; ok {
@@ -158,7 +177,9 @@ func collectMetrics(args map[string]any) plugindriver.Response {
 			}
 		}
 		rows = append(rows, []any{m.Label, m.Value, m.Group, status})
+		collected = append(collected, sample{At: stamp, Metric: m.Label, Value: m.Value, Group: m.Group, Status: status})
 	}
+	appendSample(collected) // 有状态 ring：每次采集都进历史（§400）
 	return plugindriver.Response{Result: mustJSON(&plugindriver.ConnQueryResult{Columns: cols, Rows: rows})}
 }
 
